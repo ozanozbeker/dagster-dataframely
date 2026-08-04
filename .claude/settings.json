@@ -1,0 +1,21 @@
+{
+  "extraKnownMarketplaces": {
+    "dagster": {
+      "source": {
+        "source": "github",
+        "repo": "dagster-io/skills"
+      }
+    },
+    "polars": {
+      "source": {
+        "source": "github",
+        "repo": "polars-inc/skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "dagster-expert@dagster": true,
+    "dignified-python@dagster": true,
+    "polars@polars": true
+  }
+}

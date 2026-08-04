@@ -1,0 +1,115 @@
+# Ruff configuration file
+# See: https://docs.astral.sh/ruff/
+
+target-version = "py312"
+
+[lint]
+select = ["ALL"]
+ignore = [
+  # No per-file copyright headers; a single top-level LICENSE covers the project
+  "CPY001",  # flake8-copyright
+
+  # Recommended rules to disable per the docs
+  "COM812",  # flake8-commas
+  "COM819",  # flake8-commas
+  "D206",  # pydocstyle
+  "D207",  # pydocstyle
+  "D208",  # pydocstyle
+  "D300",  # pydocstyle
+  "E111",  # pycodestyle Error
+  "E114",  # pycodestyle Error
+  "E117",  # pycodestyle Error
+  "E501",  # pycodestyle Error
+  "Q",  # flake8-quotes
+  "W191",  # pycodestyle Warning
+]
+unfixable = [
+  "F401",  # Pyflakes > unused-import
+  "T20",  # flake8-print > ALL
+]
+
+[lint.pep8-naming]
+classmethod-decorators = ["dataframely.rule"]
+
+[lint.per-file-ignores]
+# __init__.py related ignores
+"**/__init__.py" = [
+  "D104",  # pydocstyle > undocumented-public-package
+  "F401",  # Pyflakes > unused-import
+]
+# Marimo notebook related ignores
+"**/notebooks/**" = [
+  "ANN",  # flake8-annotations > ALL
+  "B018",  # flake8-bugbear > useless-expression
+  "D",  # pydocstyle > ALL
+  "ERA001",  # eradicate > commented-out-code
+  "INP001",  # flake8-implicit-namespace-package > implicit-namespace-package
+  "N802",  # pep8-naming > invalid-function-name
+  "N806",  # pep8-naming > non-lowercase-variable-in-function (marimo cell vars)
+  "PLC0415",  # Pylint Convention > import-outside-top-level (marimo cell imports)
+  "PLR1711",  # Pylint Refactor > useless-return (marimo cell return)
+  "PLR2004",  # Pylint Refactor > magic-value-comparison
+  "S608",  # flake8-bandit > hardcoded-sql-expression (local DuckDB f-string SQL)
+  "T20",  # flake8-print > ALL
+]
+# Pytest related ignores
+"**/tests/**/*.py" = [
+  "ANN",  # flake8-annotations > ALL
+  "ARG001",  # flake8-unused-arguments > unused-function-argument
+  "D",  # pydocstyle > ALL
+  "FBT001",  # flake8-boolean-trap > boolean-type-hint-positional-argument
+  "INP001",  # flake8-implicit-namespace-package > implicit-namespace-package
+  "PLR0913",  # Pylint Refactor > too-many-arguments
+  "PLR2004",  # Pylint Refactor > magic-value-comparison
+  "S101",  # flake8-bandit > assert
+  "SLF001",  # flake8-self > private-member-access
+]
+# Script related ignores (any scripts/ directory, at any depth)
+"**/scripts/**/*.py" = [
+  "D",  # pydocstyle > ALL
+  "INP001",  # flake8-no-pep420 > implicit-namespace-package
+  "T20",  # flake8-print > ALL
+]
+# Typer related ignores
+"**/cli/**" = [
+  "ARG001",  # flake8-unused-arguments > unused-function-argument
+  "FBT001",  # flake8-boolean-trap > boolean-type-hint-positional-argument
+  "FBT002",  # flake8-boolean-trap > boolean-default-value-positional-argument
+  "PLR0913",  # Pylint Refactor > too-many-arguments
+  "T20",  # flake8-print > ALL
+  "TRY301",  # tryceratops > raise-within-try
+]
+# Dagster related ignores
+# A definitions.py holds the code location entry point and nothing else, so both
+# the module and its `defs()` would be documenting the same one fact.
+"**/definitions.py" = [
+  "D100",
+  "D103",
+]
+# Asset/op/sensor modules.
+"**/defs/**" = [
+  "PLR0913",  # Pylint Refactor > too-many-arguments
+  "INP001",  # flake8-no-pep420 > implicit-namespace-package
+]
+
+[lint.flake8-type-checking]
+runtime-evaluated-base-classes = [
+  "dagster.Config",
+  "dagster.ConfigurableResource",
+  "dagster.ConfigurableIOManager",
+  "pydantic.BaseModel",
+]
+runtime-evaluated-decorators = [
+  "dagster.asset",
+  "dagster.multi_asset",
+  "dagster.graph_asset",
+  "dagster.op",
+  "dagster.asset_check",
+]
+
+[lint.pydocstyle]
+convention = "google"
+
+[format]
+docstring-code-format = true
+line-ending = "lf"

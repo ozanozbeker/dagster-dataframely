@@ -1,0 +1,25 @@
+# Global configuration options
+[global]
+enable = ["ALL"]
+disable = [
+  # Heading Rules
+  "MD024",  # Multiple headings with the same content
+  "MD063",  # Heading text capitalization style
+]
+exclude = [
+  "CHANGELOG.md",
+  "LICENSE.md",
+  # Vendored upstream skills; keep byte-identical to their source repos
+  ".claude",
+]
+respect-gitignore = true
+flavor = "quarto"
+line-length = 120
+
+# Rule configuration options
+[MD013]
+line-length = 0
+code-blocks = false
+reflow = true
+reflow-mode = "sentence-per-line"
+severity = "info"
