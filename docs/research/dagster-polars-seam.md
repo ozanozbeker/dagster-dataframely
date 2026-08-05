@@ -104,11 +104,13 @@ def get_metadata(self, context, obj) -> dict[str, MetadataValue]:
     metadata.update(self._get_patito_metadata(context))
     ...
 
+
 def _get_patito_metadata(self, context: OutputContext) -> dict[str, MetadataValue]:
     # this only returns a non-empty dict if Patito is installed and a Patito model is used as type annotation
     try:
         import patito as pt
         from dagster_polars.patito import get_patito_metadata
+
         if context.dagster_type.typing_type is not None and issubclass(
             context.dagster_type.typing_type, pt.DataFrame
         ):
@@ -183,16 +185,23 @@ Probe (throwaway venv, not this repo's `.venv`): a `DataframelyTypeRouter` appen
 class DyFrameBase(pl.DataFrame):
     schema_: type[dy.Schema]
 
+
 class DyTypeRouter(tr.BaseTypeRouter):
     @staticmethod
     def match(context, typing_type):
         return isinstance(typing_type, type) and issubclass(typing_type, DyFrameBase)
+
     @property
-    def is_base_type(self): return False
+    def is_base_type(self):
+        return False
+
     @property
-    def inner_type(self): return pl.DataFrame
+    def inner_type(self):
+        return pl.DataFrame
+
     def dump(self, obj, path, dump_fn):
         dump_fn(self.context, self.typing_type.schema_.validate(obj, cast=True), path)
+
 
 tr.TYPE_ROUTERS.append(DyTypeRouter)
 ```

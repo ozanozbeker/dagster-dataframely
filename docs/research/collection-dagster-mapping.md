@@ -79,16 +79,18 @@ A schema-level failure in `orders` silently removes rows from `customers`:
 
 ```python
 class ShopData(dy.Collection):
-    customers: dy.LazyFrame[CustomerSchema]   # customer_id PK
-    orders: dy.LazyFrame[OrderSchema]         # (customer_id, order_id) PK, amount min=0
+    customers: dy.LazyFrame[CustomerSchema]  # customer_id PK
+    orders: dy.LazyFrame[OrderSchema]  # (customer_id, order_id) PK, amount min=0
 
     @dy.filter()
     def customer_must_have_order(self) -> pl.LazyFrame:
         return self.customers.join(self.orders, on="customer_id", how="semi")
 
+
 customers = pl.DataFrame({"customer_id": [1, 2], "name": ["a", "b"]})
-orders = pl.DataFrame({"customer_id": [1, 2], "order_id": [10, 20],
-                       "amount": [5.0, -1.0]})   # customer 2's ONLY order is invalid
+orders = pl.DataFrame(
+    {"customer_id": [1, 2], "order_id": [10, 20], "amount": [5.0, -1.0]}
+)  # customer 2's ONLY order is invalid
 
 res = ShopData.filter({"customers": customers, "orders": orders})
 ```
@@ -160,7 +162,9 @@ A collection with no `@dy.filter` at all still cascades:
 ```python
 class Shop(dy.Collection):
     customers: dy.LazyFrame[CS]
-    orders: Annotated[dy.LazyFrame[OS], dy.CollectionMember(propagate_row_failures=True)]
+    orders: Annotated[
+        dy.LazyFrame[OS], dy.CollectionMember(propagate_row_failures=True)
+    ]
     # no @dy.filter defined anywhere
 ```
 
@@ -190,17 +194,24 @@ Full materialization with per-member checks, real parquet on disk, and a downstr
 ```python
 @dg.multi_asset(
     outs={m: dg.AssetOut(key=m, dagster_type=pl.LazyFrame) for m in MEMBERS},
-    check_specs=[...],   # as above
+    check_specs=[...],  # as above
 )
 def shop_multi():
     res = Shop.filter({"customers": cust, "orders": ords})
     for m in MEMBERS:
         n = res.failure[m].counts().get("name_not_banned", 0)
-        yield dg.Output(getattr(res.result, m), output_name=m,
-                        metadata={"quarantined_rows": res.failure[m].invalid().height})
-        yield dg.AssetCheckResult(asset_key=dg.AssetKey(m),
-                                  check_name="collection_name_not_banned",
-                                  passed=n == 0, metadata={"rows_removed": n})
+        yield dg.Output(
+            getattr(res.result, m),
+            output_name=m,
+            metadata={"quarantined_rows": res.failure[m].invalid().height},
+        )
+        yield dg.AssetCheckResult(
+            asset_key=dg.AssetKey(m),
+            check_name="collection_name_not_banned",
+            passed=n == 0,
+            metadata={"rows_removed": n},
+        )
+
 
 @dg.asset
 def only_orders(orders) -> int:
@@ -336,7 +347,7 @@ Ruled out against dagster-polars 0.27.12, but its failures are worth recording.
 
 ```python
 class CollectionIOManager(dg.UPathIOManager):
-    extension = None                       # the "file" is a directory
+    extension = None  # the "file" is a directory
 
     def dump_to_path(self, context, obj, path):
         path.mkdir(parents=True, exist_ok=True)
