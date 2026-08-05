@@ -11,6 +11,8 @@ exclude = [
   "LICENSE.md",
   # Vendored upstream skills; keep byte-identical to their source repos
   ".claude",
+  "docs/agents/",
+  "docs/adr/",
 ]
 respect-gitignore = true
 flavor = "quarto"
