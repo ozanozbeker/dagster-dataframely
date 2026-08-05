@@ -1,0 +1,4 @@
+# The probe builds its own venv and Dagster instance in place; none of it is source.
+.venv/
+dagster_home/
+storage/

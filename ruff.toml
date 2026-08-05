@@ -2,6 +2,8 @@
 # See: https://docs.astral.sh/ruff/
 
 target-version = "py312"
+include = ["src", "tests"]
+extend-exclude = ["docs/probes/"]
 
 [lint]
 select = ["ALL"]
