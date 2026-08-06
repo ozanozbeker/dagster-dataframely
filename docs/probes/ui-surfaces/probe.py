@@ -13,6 +13,8 @@ Groups (asset `group_name`, alphabetical so they sort in the UI):
 
 from __future__ import annotations
 
+import datetime as dt
+import decimal
 import re
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ import pandas as pd
 import pandera as pa
 import patito as pt
 import polars as pl
+from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
 from dagster._core.definitions.metadata.table import (
     TableColumn,
     TableColumnConstraints,
@@ -83,7 +86,7 @@ class OrdersSchema(dy.Schema):
     )
 
     @dy.rule()
-    def cancelled_orders_are_zero_amount() -> pl.Expr:
+    def cancelled_orders_are_zero_amount(self) -> pl.Expr:
         return (pl.col("status") != "cancelled") | (pl.col("amount") == 0)
 
 
@@ -497,6 +500,819 @@ def orders_with_quarantine():
         )
 
 
+# ---------------------------------------------------------------------------
+# A richer schema, used only by the groups below. It deliberately contains one
+# instance of every case that makes rule text hard:
+#
+#   - a long regex, which cannot fit a constraint pill
+#   - a @dy.rule() WITH a docstring and one WITHOUT
+#   - a named check={...} and an anonymous check=lambda
+#   - is_in with several values
+#   - a composite primary key
+# ---------------------------------------------------------------------------
+
+
+class OrdersRich(dy.Schema):
+    """A customer order, with every hard-to-render rule shape."""
+
+    order_id = dy.String(primary_key=True, description="Merchant-facing order id.")
+    customer_id = dy.Integer(primary_key=True, description="FK to customers.")
+    email = dy.String(
+        regex=r"^[^@]+@[^@]+\.[a-z]{2,}$",
+        max_length=254,
+        description="Contact email at time of order.",
+        metadata={"pii": "true"},
+    )
+    amount = dy.Float64(
+        min=0, max=10_000, description="Order total, USD.", metadata={"unit": "USD"}
+    )
+    priority = dy.Integer(is_in=[1, 2, 3], nullable=True, description="1 = highest.")
+    sku = dy.String(
+        min_length=8,
+        max_length=8,
+        unique=True,
+        check={"upper_only": lambda col: col == col.str.to_uppercase()},
+        description="Stock keeping unit.",
+    )
+    region = dy.String(
+        check=lambda col: col.str.len_bytes() == 2, description="ISO-3166-2 region."
+    )
+
+    @dy.rule()
+    def cancelled_orders_are_zero_amount(self) -> pl.Expr:
+        """A cancelled order must carry a zero amount."""
+        return (pl.col("amount") >= 0) | (pl.col("priority") == 1)
+
+    @dy.rule()
+    def priority_orders_ship_domestic(self) -> pl.Expr:
+        return (pl.col("priority") != 1) | (pl.col("region") == "US")
+
+
+PILL_CAP = 26
+
+
+def _truncated(text: str) -> str:
+    """What the Columns tab actually shows before you hover."""
+    return text if len(text) <= PILL_CAP else text[: PILL_CAP - 1] + "…"
+
+
+def _rule_docstring(schema: type[dy.Schema], rule_name: str) -> str | None:
+    factory = getattr(schema, rule_name, None)
+    doc = getattr(getattr(factory, "validation_fn", None), "__doc__", None)
+    return doc.strip().splitlines()[0] if doc else None
+
+
+def render_unified(schema: type[dy.Schema], rule_name: str) -> str:
+    """One renderer, one fallback ladder: constraint -> docstring -> rule name.
+
+    The same string is used on every surface; the check surface prefixes the
+    column name, because a bare '>= 0' means nothing in a flat list.
+    """
+    if rule_name == "primary_key":
+        keys = ", ".join(n for n, c in schema.columns().items() if c.primary_key)
+        return f"primary key ({keys})"
+    if "|" not in rule_name:
+        return _rule_docstring(schema, rule_name) or rule_name
+
+    name, kind = rule_name.split("|", 1)
+    col = schema.columns()[name]
+    match kind:
+        case "nullability":
+            return "not null"
+        case "unique":
+            return "unique"
+        case "min":
+            return f">= {col.min}"
+        case "max":
+            return f"<= {col.max}"
+        case "min_exclusive":
+            return f"> {col.min_exclusive}"
+        case "max_exclusive":
+            return f"< {col.max_exclusive}"
+        case "min_length":
+            return f"length >= {col.min_length}"
+        case "max_length":
+            return f"length <= {col.max_length}"
+        case "regex":
+            return f"matches {col.regex}"
+        case "is_in":
+            return "in (" + ", ".join(str(v) for v in col.is_in) + ")"
+        case "check":
+            return "custom check"
+        case _ if kind.startswith("check__"):
+            return kind.removeprefix("check__")
+        case _:
+            return kind
+
+
+def render_pill_terse(schema: type[dy.Schema], rule_name: str) -> str:
+    """Per-surface variant: the pill deliberately degrades to fit PILL_CAP.
+
+    Anything whose value cannot fit is named rather than shown, and the value
+    moves to the asset check, which has room for it.
+    """
+    if "|" in rule_name:
+        name, kind = rule_name.split("|", 1)
+        col = schema.columns()[name]
+        match kind:
+            case "regex":
+                return "matches regex"
+            case "is_in":
+                return f"in {len(col.is_in)} values"
+            case "check":
+                return "custom check"
+            case _ if kind.startswith("check__"):
+                return "check: " + kind.removeprefix("check__")
+    return render_unified(schema, rule_name)
+
+
+def render_check_description(
+    schema: type[dy.Schema], rule_name: str, *, prose: bool
+) -> str:
+    """What goes in AssetCheckSpec(description=...)."""
+    if "|" not in rule_name:
+        return render_unified(schema, rule_name)
+    name, _ = rule_name.split("|", 1)
+    body = render_unified(schema, rule_name)
+    if not prose:
+        return f"{name} {body}"
+    return f"Every row must satisfy: {name} {body}."
+
+
+def ruletext_table_schema(schema: type[dy.Schema], *, terse_pills: bool) -> TableSchema:
+    render_pill = render_pill_terse if terse_pills else render_unified
+    columns = []
+    for name, column in schema.columns().items():
+        other = [
+            render_pill(schema, f"{name}|{rule}")
+            for rule in column.validation_rules(pl.col(name))
+            if rule not in FIRST_CLASS_RULES
+        ]
+        if column.primary_key:
+            other.insert(0, "primary key")
+        columns.append(
+            TableColumn(
+                name=name,
+                type=str(column.dtype),
+                description=column.description,
+                constraints=TableColumnConstraints(
+                    nullable=column.nullable,
+                    unique=column.unique or column.primary_key,
+                    other=other,
+                ),
+                tags={k: str(v) for k, v in (column.metadata or {}).items()},
+            )
+        )
+    table_level = [
+        render_pill(schema, rule)
+        for rule in schema._validation_rules(with_cast=False)  # noqa: SLF001
+        if "|" not in rule
+    ]
+    return TableSchema(columns=columns, constraints=TableConstraints(other=table_level))
+
+
+RICH_RULES = list(OrdersRich._validation_rules(with_cast=False))  # noqa: SLF001
+RICH_EXPRS = OrdersRich._validation_rules(with_cast=False)  # noqa: SLF001
+
+
+def rich_frame() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "order_id": ["A-1", "A-2", "A-3"],
+            "customer_id": [1, 2, 3],
+            "email": ["a@example.com", "b@example.com", "c@example.com"],
+            "amount": [12.5, 0.0, 99.0],
+            "priority": [1, 2, None],
+            "sku": ["ABCD-123", "EFGH-456", "IJKL-789"],
+            "region": ["US", "CA", "US"],
+        }
+    )
+
+
+def _ruletext_asset(
+    name: str, *, terse_pills: bool, prose_descriptions: bool, note: str
+) -> dg.AssetsDefinition:
+    check_specs = [
+        dg.AssetCheckSpec(
+            name=f"dy_rule__{rule.replace('|', '__')}",
+            asset=name,
+            description=render_check_description(
+                OrdersRich, rule, prose=prose_descriptions
+            ),
+            blocking=False,
+        )
+        for rule in RICH_RULES
+    ]
+
+    @dg.multi_asset(
+        outs={
+            name: dg.AssetOut(
+                io_manager_key="fs_io_manager",
+                metadata={
+                    "dagster/column_schema": ruletext_table_schema(
+                        OrdersRich, terse_pills=terse_pills
+                    )
+                },
+                description=note,
+            )
+        },
+        group_name="e_ruletext",
+        check_specs=check_specs,
+        name=name,
+    )
+    def _asset():
+        yield dg.Output(rich_frame(), output_name=name)
+        for rule in RICH_RULES:
+            yield dg.AssetCheckResult(
+                check_name=f"dy_rule__{rule.replace('|', '__')}",
+                asset_key=dg.AssetKey(name),
+                passed=rule != "email|regex",
+                severity=dg.AssetCheckSeverity.WARN,
+                metadata={
+                    "dy_rule": rule,
+                    "dy_rule__expr": str(RICH_EXPRS[rule].expr),
+                    "rows failing": 1 if rule == "email|regex" else 0,
+                },
+            )
+
+    return _asset
+
+
+ruletext_unified = _ruletext_asset(
+    "ruletext_unified",
+    terse_pills=False,
+    prose_descriptions=False,
+    note=(
+        "ONE RENDERER. The same string on every surface; the check list adds a "
+        "column-name prefix. Watch email's regex pill truncate, and watch "
+        "dy_rule__priority_orders_ship_domestic fall back to its own name because "
+        "it has no docstring."
+    ),
+)
+
+ruletext_per_surface = _ruletext_asset(
+    "ruletext_per_surface",
+    terse_pills=True,
+    prose_descriptions=True,
+    note=(
+        "PER-SURFACE. Pills degrade on purpose to stay under the truncation cap "
+        "('matches regex', 'in 3 values'); the value moves to the check description, "
+        "which is also written as a sentence. Compare the Columns tab and the Checks "
+        "tab against ruletext_unified."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
+# f_primarykey - dataframely models the PK as ONE schema-level rule
+# (`as_struct("order_id","customer_id").is_unique()`), even for a single column.
+# Dagster has no first-class PK concept: only nullable / unique / other.
+# ---------------------------------------------------------------------------
+
+
+def pk_table_schema(schema: type[dy.Schema], style: str) -> TableSchema:
+    keys = [n for n, c in schema.columns().items() if c.primary_key]
+    columns = []
+    for name, column in schema.columns().items():
+        other = []
+        if column.primary_key and style in ("column", "both"):
+            other.append("primary key")
+        if column.primary_key and style in ("column_composite", "conditional"):
+            other.append("primary key")
+        # `unique` is TRUE only when the column itself is declared unique. A column
+        # in a COMPOSITE primary key is not unique on its own - dataframely checks
+        # `as_struct(...).is_unique()`, and {"a": ["x","x","y"], "b": [1,2,1]} passes.
+        unique = column.unique if style == "top" else (column.unique or column.primary_key)
+        columns.append(
+            TableColumn(
+                name=name,
+                type=str(column.dtype),
+                description=column.description,
+                constraints=TableColumnConstraints(
+                    nullable=column.nullable,
+                    unique=unique,
+                    other=other,
+                ),
+            )
+        )
+    table_other = []
+    if style in ("table", "both"):
+        table_other.append("primary key (" + ", ".join(keys) + ")")
+    # The conditional rule: the table-level row appears only when it has something
+    # the per-column pills cannot say, i.e. that the key spans more than one column.
+    if style == "conditional" and len(keys) > 1:
+        table_other.append("composite primary key (" + ", ".join(keys) + ")")
+    # `top`: the key is stated ONCE, table-level, and nowhere else. PK columns carry
+    # no pill - they already read `not null` (dataframely forbids a nullable PK), and
+    # `unique` is deliberately NOT claimed for them.
+    if style == "top":
+        table_other.append("PK: " + ", ".join(keys))
+    return TableSchema(columns=columns, constraints=TableConstraints(other=table_other))
+
+
+class OrdersSinglePK(dy.Schema):
+    """The same shape, but with a single-column primary key."""
+
+    order_id = dy.String(primary_key=True, description="Merchant-facing order id.")
+    customer_id = dy.Integer(description="FK to customers.")
+    amount = dy.Float64(min=0, max=10_000, description="Order total, USD.")
+
+
+def _pk_asset(
+    style: str, note: str, schema: type[dy.Schema] = OrdersRich, suffix: str = ""
+) -> dg.AssetsDefinition:
+    @dg.asset(
+        name=f"pk_{style}{suffix}",
+        group_name="f_primarykey",
+        io_manager_key="fs_io_manager",
+        metadata={"dagster/column_schema": pk_table_schema(schema, style)},
+        description=note,
+    )
+    def _asset() -> pl.DataFrame:
+        return rich_frame().select(list(schema.columns()))
+
+    return _asset
+
+
+pk_table = _pk_asset(
+    "table",
+    "PK as a TABLE-LEVEL constraint only: 'primary key (order_id, customer_id)'. Mirrors how dataframely models it.",
+)
+pk_column = _pk_asset(
+    "column",
+    "PK as a per-column PILL only. Composite-ness is implied by two columns carrying it, never stated.",
+)
+pk_both = _pk_asset(
+    "both", "PK on BOTH surfaces. Is the duplication redundant or reassuring?"
+)
+pk_conditional_composite = _pk_asset(
+    "conditional",
+    "THE CONDITIONAL RULE, composite branch. Every PK column gets a 'primary key' pill, "
+    "AND the table-level row says 'composite primary key (order_id, customer_id)' because "
+    "that is the one thing the pills cannot say.",
+    suffix="_composite",
+)
+pk_top_composite = _pk_asset(
+    "top",
+    "THE KEY STATED ONCE, at the top: 'PK: order_id, customer_id'. No per-column pill. "
+    "PK columns already read `not null` (dataframely forbids a nullable PK), and they are "
+    "deliberately NOT marked `unique` - only the tuple is unique.",
+    suffix="_composite",
+)
+pk_top_single = _pk_asset(
+    "top",
+    "Same rule, single-column key: 'PK: order_id'. Here the column IS genuinely unique, "
+    "but the pill is still not drawn - the top row says it.",
+    schema=OrdersSinglePK,
+    suffix="_single",
+)
+pk_conditional_single = _pk_asset(
+    "conditional",
+    "THE CONDITIONAL RULE, single branch. One 'primary key' pill on order_id and NO "
+    "table-level row at all - it would only restate the pill.",
+    schema=OrdersSinglePK,
+    suffix="_single",
+)
+
+
+# ---------------------------------------------------------------------------
+# g_extras - the surfaces #14 added: the schema-carrier row, the kind badge,
+# IO-manager facts, and the four markdown statistics tables.
+# ---------------------------------------------------------------------------
+
+
+def _md(df: pl.DataFrame) -> dg.MetadataValue:
+    with pl.Config(
+        tbl_formatting="ASCII_MARKDOWN",
+        tbl_hide_column_data_types=True,
+        tbl_hide_dataframe_shape=True,
+        tbl_rows=-1,
+    ):
+        return dg.MetadataValue.md(str(df))
+
+
+def _stats_tables(df: pl.DataFrame) -> dict[str, dg.MetadataValue]:
+    numeric = df.select(pl.selectors.numeric())
+    string = df.select(pl.selectors.string())
+    out: dict[str, dg.MetadataValue] = {}
+    if numeric.width:
+        out["dy_stats__numeric"] = _md(
+            pl.DataFrame(
+                [
+                    {
+                        "variable": c,
+                        "count": numeric[c].len(),
+                        "null_count": numeric[c].null_count(),
+                        "mean": numeric[c].mean(),
+                        "std": numeric[c].std(),
+                        "min": numeric[c].min(),
+                        "p50": numeric[c].median(),
+                        "max": numeric[c].max(),
+                    }
+                    for c in numeric.columns
+                ]
+            )
+        )
+    if string.width:
+        out["dy_stats__string"] = _md(
+            pl.DataFrame(
+                [
+                    {
+                        "variable": c,
+                        "count": string[c].len(),
+                        "null_count": string[c].null_count(),
+                        "n_unique": string[c].n_unique(),
+                        "min_len": string[c].str.len_bytes().min(),
+                        "max_len": string[c].str.len_bytes().max(),
+                        "n_empty": int((string[c].str.len_bytes() == 0).sum()),
+                    }
+                    for c in string.columns
+                ]
+            )
+        )
+    out["dy_stats__temporal"] = _md(
+        pl.DataFrame(
+            {
+                "variable": ["placed_at", "elapsed"],
+                "count": [3, 3],
+                "null_count": [0, 1],
+                "min": ["2024-01-01 00:00:00", None],
+                "max": ["2024-01-09 00:00:00", None],
+                "span": ["8d", "1m 30s"],
+            }
+        )
+    )
+    out["dy_stats__boolean"] = _md(
+        pl.DataFrame(
+            {
+                "variable": ["is_gift"],
+                "count": [3],
+                "null_count": [0],
+                "n_true": [1],
+                "n_false": [2],
+                "true_rate": [0.333],
+            }
+        )
+    )
+    return out
+
+
+# Three candidate key-naming schemes. `stats` (bare) is already taken by
+# dagster-polars' get_polars_metadata, so an unprefixed `stats/...` sits directly
+# beside a key another integration owns.
+KEY_SCHEMES = {
+    "bare": ("stats/", "", "dagster_dataframely/schema"),
+    "dy": ("dy/stats/", "dy/", "dagster_dataframely/schema"),
+    "full": (
+        "dagster_dataframely/stats/",
+        "dagster_dataframely/",
+        "dagster_dataframely/schema",
+    ),
+}
+
+
+def _extras_asset(scheme: str) -> dg.AssetsDefinition:
+    stats_prefix, fact_prefix, schema_key = KEY_SCHEMES[scheme]
+
+    @dg.asset(
+        name=f"extras_keys_{scheme}",
+        group_name="g_extras",
+        io_manager_key="fs_io_manager",
+        metadata={
+            # The live schema carrier from #14, now via ObjectMetadataValue - the
+            # supported API for this. Renders as the bare class name; .instance
+            # reaches the IO manager on both write and read. Passing the raw class
+            # instead is deprecated and renders '[SchemaMeta] (unserializable)'.
+            schema_key: ObjectMetadataValue(
+                OrdersRich.__name__, instance=OrdersRich
+            ),
+            "dagster/column_schema": ruletext_table_schema(
+                OrdersRich, terse_pills=False
+            ),
+            "dagster/storage_kind": "parquet",
+        },
+        kinds={"polars", "parquet"},
+        description=(
+            f"KEY NAMING: {scheme!r}. Four stats tables plus the schema carrier and "
+            "the IO-manager facts. Open the Metadata accordion and judge the width "
+            "of the key column against the other two extras_keys_* assets."
+        ),
+    )
+    def _asset(context) -> pl.DataFrame:
+        df = rich_frame()
+        context.add_output_metadata(
+            {
+                "dagster/row_count": df.height,
+                "path": f"storage/fs/extras_keys_{scheme}",
+                f"{fact_prefix}bytes_written": 4096,
+                f"{fact_prefix}parquet/compression": "zstd",
+                **{
+                    stats_prefix + family.removeprefix("dy_stats__"): value
+                    for family, value in _stats_tables(df).items()
+                },
+            }
+        )
+        return df
+
+    return _asset
+
+
+@dg.asset(
+    group_name="g_extras",
+    io_manager_key="fs_io_manager",
+    description=(
+        "MARKDOWN RENDERING. The same table five ways, to isolate why the last row "
+        "renders with boxes around its values. The polars source is clean GFM with "
+        "zero non-ASCII characters, so the cause is in Dagster's renderer."
+    ),
+)
+def extras_md_variants(context) -> pl.DataFrame:
+    df = rich_frame()
+    stats = pl.DataFrame(
+        [
+            {
+                "variable": c,
+                "count": df[c].len(),
+                "null_count": df[c].null_count(),
+                "n_unique": df[c].n_unique(),
+            }
+            for c in df.columns
+        ]
+    )
+    with pl.Config(
+        tbl_formatting="ASCII_MARKDOWN",
+        tbl_hide_column_data_types=True,
+        tbl_hide_dataframe_shape=True,
+        tbl_rows=-1,
+    ):
+        raw = str(stats)
+
+    context.add_output_metadata(
+        {
+            # 1. exactly what the probe emits today
+            "md/as_is": dg.MetadataValue.md(raw),
+            # 2. terminate the final row
+            "md/trailing_newline": dg.MetadataValue.md(raw + "\n"),
+            # 3. isolate the table as its own block
+            "md/blank_lines": dg.MetadataValue.md("\n" + raw + "\n\n"),
+            # 4. a heading above it, forcing a block boundary
+            "md/with_heading": dg.MetadataValue.md("#### stats\n\n" + raw + "\n"),
+            # 5. not markdown at all - Dagster's own table renderer, for contrast
+            "md/table_value": dg.MetadataValue.table(
+                records=[
+                    dg.TableRecord(dict(zip(stats.columns, row)))
+                    for row in stats.iter_rows()
+                ]
+            ),
+        }
+    )
+    return df
+
+
+STATS_FRAME = pl.DataFrame(
+    {
+        "amount": [12.5, 0.0, 99.0, None],
+        "price": [decimal.Decimal("1.25"), decimal.Decimal("3.5"), decimal.Decimal("99.999"), None],
+        "priority": [1, 2, 3, 1],
+        "region": ["US", "CA", "US", ""],
+        "sku": ["ABCD-123", "EFGH-4567", "IJKL-89", "MNOP-0"],
+        "placed_at": [
+            dt.datetime(2024, 1, 1),
+            dt.datetime(2024, 1, 5),
+            dt.datetime(2024, 1, 9),
+            None,
+        ],
+        "elapsed": [
+            dt.timedelta(days=8),
+            dt.timedelta(minutes=1, seconds=30),
+            dt.timedelta(hours=2, minutes=5),
+            None,
+        ],
+        "is_gift": [True, False, False, None],
+    },
+    schema_overrides={"price": pl.Decimal(10, 3)},
+)
+
+
+def _human_duration(micros: int | None) -> str | None:
+    """polars' own repr style: '8d', '1m 30s', '2h 5m'. Not reachable via the API."""
+    if micros is None:
+        return None
+    sign, micros = ("-" if micros < 0 else ""), abs(micros)
+    days, rem = divmod(micros, 86_400_000_000)
+    hours, rem = divmod(rem, 3_600_000_000)
+    minutes, rem = divmod(rem, 60_000_000)
+    seconds, micros = divmod(rem, 1_000_000)
+    parts = [
+        f"{v}{u}"
+        for v, u in ((days, "d"), (hours, "h"), (minutes, "m"), (seconds, "s"))
+        if v
+    ]
+    if micros:
+        parts.append(f"{micros}µs")
+    return sign + (" ".join(parts[:2]) if parts else "0s")
+
+
+def _cell(v: Any) -> Any:
+    """Coerce a numeric stat to a TableRecord-legal cell, WITHOUT rounding.
+
+    Decimal is the reason this is not optional: pl.selectors.numeric() picks up
+    Decimal columns, Series.min()/max() return decimal.Decimal, and TableRecord
+    rejects it. (Series.mean() already coerces to float; min/max do not.)
+
+    Used for min/max/p25/p75 - values that exist in the data, so they are shown
+    as they are. A very high-precision Decimal loses digits through float(); that
+    is display-only and the exact value is still in the table.
+    """
+    if v is None or isinstance(v, bool | int):
+        return v
+    return float(v)
+
+
+def _rounded(v: Any) -> Any:
+    """As _cell, but rounded to <=4 dp. Only for COMPUTED statistics - mean, std,
+    median, true_rate - which are derived, not values anyone stored.
+    """
+    c = _cell(v)
+    return round(c, 4) if isinstance(c, float) else c
+
+
+def _records(rows: list[dict]) -> dg.MetadataValue:
+    return dg.MetadataValue.table(records=[dg.TableRecord(r) for r in rows])
+
+
+def _native_stats(df: pl.DataFrame, *, human_duration: bool) -> dict[str, Any]:
+    """Typed polars expressions throughout; strings only at the final display step."""
+    out: dict[str, Any] = {}
+
+    numeric = df.select(pl.selectors.numeric())
+    if numeric.width:
+        out["stats/numeric"] = _records(
+            [
+                {
+                    "variable": c,
+                    "count": numeric[c].len(),
+                    "null_count": numeric[c].null_count(),
+                    "mean": _rounded(numeric[c].mean()),
+                    "std": _rounded(numeric[c].std()),
+                    "min": _cell(numeric[c].min()),
+                    "p50": _rounded(numeric[c].median()),
+                    "max": _cell(numeric[c].max()),
+                }
+                for c in numeric.columns
+            ]
+        )
+
+    string = df.select(pl.selectors.string())
+    if string.width:
+        out["stats/string"] = _records(
+            [
+                {
+                    "variable": c,
+                    "count": string[c].len(),
+                    "null_count": string[c].null_count(),
+                    "n_unique": string[c].n_unique(),
+                    "min_len": string[c].str.len_bytes().min(),
+                    "max_len": string[c].str.len_bytes().max(),
+                    "n_empty": int((string[c].str.len_bytes() == 0).sum()),
+                }
+                for c in string.columns
+            ]
+        )
+
+    temporal = df.select(pl.selectors.temporal())
+    if temporal.width:
+        rows = []
+        for c in temporal.columns:
+            s = temporal[c]
+            lo, hi = s.min(), s.max()
+            span = (hi - lo) if (lo is not None and hi is not None) else None
+            def fmt(v: Any, *, dtype: Any = s.dtype) -> str | None:
+                # min()/max() skip nulls, so v is None only for an all-null column.
+                if v is None:
+                    return None
+                if dtype != pl.Duration:
+                    return str(v)
+                if human_duration:
+                    return _human_duration(int(v.total_seconds() * 1_000_000))
+                return pl.Series([v]).dt.to_string()[0]
+            rows.append(
+                {
+                    "variable": c,
+                    "count": s.len(),
+                    "null_count": s.null_count(),
+                    "min": fmt(lo),
+                    "max": fmt(hi),
+                    "span": (
+                        _human_duration(int(span.total_seconds() * 1_000_000))
+                        if (span is not None and human_duration)
+                        else (None if span is None else str(span))
+                    ),
+                }
+            )
+        out["stats/temporal"] = _records(rows)
+
+    boolean = df.select(pl.selectors.boolean())
+    if boolean.width:
+        out["stats/boolean"] = _records(
+            [
+                {
+                    "variable": c,
+                    "count": boolean[c].len(),
+                    "null_count": boolean[c].null_count(),
+                    "n_true": int(boolean[c].sum() or 0),
+                    "n_false": int((~boolean[c]).sum() or 0),
+                    "true_rate": _rounded(boolean[c].mean()),
+                }
+                for c in boolean.columns
+            ]
+        )
+    return out
+
+
+def _native_stats_asset(name: str, *, human_duration: bool, note: str):
+    @dg.asset(name=name, group_name="g_extras", io_manager_key="fs_io_manager",
+              description=note)
+    def _asset(context) -> pl.DataFrame:
+        context.add_output_metadata(
+            {
+                "dagster/row_count": STATS_FRAME.height,
+                **_native_stats(STATS_FRAME, human_duration=human_duration),
+            }
+        )
+        return STATS_FRAME
+
+    return _asset
+
+
+extras_stats_iso = _native_stats_asset(
+    "extras_stats_iso",
+    human_duration=False,
+    note=(
+        "ALL FOUR FAMILIES as MetadataValue.table. Durations via polars' own "
+        "dt.to_string(): ISO-8601, 'P8D' / 'PT1M30S'. One rule, null-safe, no code "
+        "of ours to test."
+    ),
+)
+extras_stats_human = _native_stats_asset(
+    "extras_stats_human",
+    human_duration=True,
+    note=(
+        "IDENTICAL, except durations are formatted by us in polars' repr style: "
+        "'8d' / '1m 30s' / '2h 5m'. Friendlier, but it is our code and our tests. "
+        "Compare the temporal table against extras_stats_iso."
+    ),
+)
+
+
+extras_keys_bare = _extras_asset("bare")
+extras_keys_dy = _extras_asset("dy")
+extras_keys_full = _extras_asset("full")
+
+
+@dg.asset(
+    group_name="g_extras",
+    io_manager_key="fs_io_manager",
+    metadata={
+        "dagster/column_schema": ruletext_table_schema(OrdersRich, terse_pills=False)
+    },
+    description=(
+        "ONE MERGED STATS TABLE instead of four. Same numbers, one accordion row, "
+        "but the columns are heterogeneous by construction (mean beside min_len). "
+        "Compare density against extras_four_stats_tables."
+    ),
+)
+def extras_one_stats_table(context) -> pl.DataFrame:
+    df = rich_frame()
+    context.add_output_metadata(
+        {
+            "dagster/row_count": df.height,
+            "dy_stats": _md(
+                pl.DataFrame(
+                    [
+                        {
+                            "variable": c,
+                            "family": "numeric"
+                            if df[c].dtype.is_numeric()
+                            else "string",
+                            "count": df[c].len(),
+                            "null_count": df[c].null_count(),
+                            "mean": str(df[c].mean())
+                            if df[c].dtype.is_numeric()
+                            else None,
+                            "n_unique": str(df[c].n_unique())
+                            if not df[c].dtype.is_numeric()
+                            else None,
+                        }
+                        for c in df.columns
+                    ]
+                )
+            ),
+        }
+    )
+    return df
+
+
 defs = dg.Definitions(
     assets=[
         pandera_orders,
@@ -510,6 +1326,22 @@ defs = dg.Definitions(
         pills_raw_expr,
         pills_none,
         orders_with_quarantine,
+        ruletext_unified,
+        ruletext_per_surface,
+        pk_table,
+        pk_column,
+        pk_both,
+        pk_conditional_composite,
+        pk_conditional_single,
+        pk_top_composite,
+        pk_top_single,
+        extras_md_variants,
+        extras_stats_iso,
+        extras_stats_human,
+        extras_keys_bare,
+        extras_keys_dy,
+        extras_keys_full,
+        extras_one_stats_table,
     ],
     resources={
         "fs_io_manager": dg.FilesystemIOManager(base_dir=str(STORAGE / "fs")),
