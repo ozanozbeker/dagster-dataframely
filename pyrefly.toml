@@ -1,0 +1,15 @@
+# Pyrefly configuration file
+# See: https://pyrefly.org/en/docs/configuration/
+
+preset = "strict"
+
+project-includes = ["src", "docs"]
+
+# ui-surfaces is a self-contained sub-project with its own venv and dependency
+# set (dagster-pandera, dagster-polars[patito]) that must not leak into the
+# repo's .venv - the root project cannot meaningfully type-check code against
+# an environment it does not own.
+project-excludes = ["archive", "docs/probes/ui-surfaces"]
+
+# Probe scripts import their siblings as top-level modules (`import _core`).
+search-path = ["src", "docs/probes/front-door"]

@@ -84,9 +84,9 @@ files = '^(.*/)?(pyproject\.toml|uv\.lock)$'
 pass_filenames = false
 
 [[repos.hooks]]
-id = "ty"
-name = "ty"
-entry = "uv run ty check"
+id = "pyrefly"
+name = "pyrefly"
+entry = "uv run pyrefly check"
 language = "system"
 types = ["python"]
 pass_filenames = false

@@ -47,10 +47,10 @@ dev = [
   "dagster-graphql>=1.13.16",
   "dagster-webserver>=1.13.16",
   "prek>=0.4.12",
+  "pyrefly>=1.2.0",
   "pytest>=9.1.1",
   "ruff>=0.16.1",
   "rumdl>=0.2.50",
-  "ty>=0.0.66",
 ]
 
 [build-system]
