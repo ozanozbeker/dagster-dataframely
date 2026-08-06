@@ -5,6 +5,7 @@ disable = [
   # Heading Rules
   "MD024",  # Multiple headings with the same content
   "MD063",  # Heading text capitalization style
+  "MD082",  # No content before the next heading
 ]
 exclude = [
   "CHANGELOG.md",

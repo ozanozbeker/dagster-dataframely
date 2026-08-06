@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-import re
 from pathlib import Path
 from typing import Any
 
@@ -264,7 +263,7 @@ def quarantine_table_schema(schema: type[dy.Schema]) -> TableSchema:
             type="String",
             description=f"Outcome of rule {rule!r}: 'valid' / 'invalid' / 'unknown'.",
         )
-        for rule in schema._validation_rules(with_cast=False)  # noqa: SLF001
+        for rule in schema._validation_rules(with_cast=False)
     ]
     return TableSchema(columns=mirrored + rule_columns)
 
@@ -404,7 +403,7 @@ pills_none = _pill_asset(
 
 RULE_TO_CHECK = {
     rule: f"dy_rule__{rule.replace('|', '__')}"
-    for rule in OrdersSchema._validation_rules(with_cast=False)  # noqa: SLF001
+    for rule in OrdersSchema._validation_rules(with_cast=False)
 }
 
 CHECK_SPECS = [
@@ -665,14 +664,14 @@ def ruletext_table_schema(schema: type[dy.Schema], *, terse_pills: bool) -> Tabl
         )
     table_level = [
         render_pill(schema, rule)
-        for rule in schema._validation_rules(with_cast=False)  # noqa: SLF001
+        for rule in schema._validation_rules(with_cast=False)
         if "|" not in rule
     ]
     return TableSchema(columns=columns, constraints=TableConstraints(other=table_level))
 
 
-RICH_RULES = list(OrdersRich._validation_rules(with_cast=False))  # noqa: SLF001
-RICH_EXPRS = OrdersRich._validation_rules(with_cast=False)  # noqa: SLF001
+RICH_RULES = list(OrdersRich._validation_rules(with_cast=False))
+RICH_EXPRS = OrdersRich._validation_rules(with_cast=False)
 
 
 def rich_frame() -> pl.DataFrame:
@@ -782,7 +781,9 @@ def pk_table_schema(schema: type[dy.Schema], style: str) -> TableSchema:
         # `unique` is TRUE only when the column itself is declared unique. A column
         # in a COMPOSITE primary key is not unique on its own - dataframely checks
         # `as_struct(...).is_unique()`, and {"a": ["x","x","y"], "b": [1,2,1]} passes.
-        unique = column.unique if style == "top" else (column.unique or column.primary_key)
+        unique = (
+            column.unique if style == "top" else (column.unique or column.primary_key)
+        )
         columns.append(
             TableColumn(
                 name=name,
@@ -983,9 +984,7 @@ def _extras_asset(scheme: str) -> dg.AssetsDefinition:
             # supported API for this. Renders as the bare class name; .instance
             # reaches the IO manager on both write and read. Passing the raw class
             # instead is deprecated and renders '[SchemaMeta] (unserializable)'.
-            schema_key: ObjectMetadataValue(
-                OrdersRich.__name__, instance=OrdersRich
-            ),
+            schema_key: ObjectMetadataValue(OrdersRich.__name__, instance=OrdersRich),
             "dagster/column_schema": ruletext_table_schema(
                 OrdersRich, terse_pills=False
             ),
@@ -1060,7 +1059,7 @@ def extras_md_variants(context) -> pl.DataFrame:
             # 5. not markdown at all - Dagster's own table renderer, for contrast
             "md/table_value": dg.MetadataValue.table(
                 records=[
-                    dg.TableRecord(dict(zip(stats.columns, row)))
+                    dg.TableRecord(dict(zip(stats.columns, row, strict=True)))
                     for row in stats.iter_rows()
                 ]
             ),
@@ -1072,7 +1071,12 @@ def extras_md_variants(context) -> pl.DataFrame:
 STATS_FRAME = pl.DataFrame(
     {
         "amount": [12.5, 0.0, 99.0, None],
-        "price": [decimal.Decimal("1.25"), decimal.Decimal("3.5"), decimal.Decimal("99.999"), None],
+        "price": [
+            decimal.Decimal("1.25"),
+            decimal.Decimal("3.5"),
+            decimal.Decimal("99.999"),
+            None,
+        ],
         "priority": [1, 2, 3, 1],
         "region": ["US", "CA", "US", ""],
         "sku": ["ABCD-123", "EFGH-4567", "IJKL-89", "MNOP-0"],
@@ -1187,6 +1191,7 @@ def _native_stats(df: pl.DataFrame, *, human_duration: bool) -> dict[str, Any]:
             s = temporal[c]
             lo, hi = s.min(), s.max()
             span = (hi - lo) if (lo is not None and hi is not None) else None
+
             def fmt(v: Any, *, dtype: Any = s.dtype) -> str | None:
                 # min()/max() skip nulls, so v is None only for an all-null column.
                 if v is None:
@@ -1196,6 +1201,7 @@ def _native_stats(df: pl.DataFrame, *, human_duration: bool) -> dict[str, Any]:
                 if human_duration:
                     return _human_duration(int(v.total_seconds() * 1_000_000))
                 return pl.Series([v]).dt.to_string()[0]
+
             rows.append(
                 {
                     "variable": c,
@@ -1231,8 +1237,12 @@ def _native_stats(df: pl.DataFrame, *, human_duration: bool) -> dict[str, Any]:
 
 
 def _native_stats_asset(name: str, *, human_duration: bool, note: str):
-    @dg.asset(name=name, group_name="g_extras", io_manager_key="fs_io_manager",
-              description=note)
+    @dg.asset(
+        name=name,
+        group_name="g_extras",
+        io_manager_key="fs_io_manager",
+        description=note,
+    )
     def _asset(context) -> pl.DataFrame:
         context.add_output_metadata(
             {

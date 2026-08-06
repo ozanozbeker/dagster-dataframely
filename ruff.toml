@@ -2,8 +2,10 @@
 # See: https://docs.astral.sh/ruff/
 
 target-version = "py312"
-include = ["src", "tests"]
-extend-exclude = ["docs/probes/"]
+
+# Keep direct `ruff` runs aligned with prek (global `exclude = "archive/"`) and
+# pyrefly (`project-excludes`): the archive is reference-only and stays unlinted.
+extend-exclude = ["archive"]
 
 [lint]
 select = ["ALL"]
@@ -71,6 +73,29 @@ classmethod-decorators = ["dataframely.rule"]
   "D",  # pydocstyle > ALL
   "INP001",  # flake8-no-pep420 > implicit-namespace-package
   "T20",  # flake8-print > ALL
+]
+# The kept UI probe: its specimens are frozen evidence, so they are linted but
+# not reshaped. Annotations on specimen asset fns are load-bearing in Dagster
+# (they feed the output-type surface the probe measures), `self` on @dy.rule
+# bodies is the #10 workaround, and renderer complexity belongs to the specimen.
+"docs/probes/ui-surfaces/probe.py" = [
+  "ANN",  # flake8-annotations > ALL
+  "C901",  # mccabe > complex-structure
+  "N804",  # pep8-naming > invalid-first-argument-name-for-class-method
+  "PLR0911",  # Pylint Refactor > too-many-return-statements
+  "PLR0912",  # Pylint Refactor > too-many-branches
+]
+# Probe related ignores: executable demo scripts under docs/probes/, linted for
+# quality but exempt from rules that fight what a probe is for
+"docs/probes/**/*.py" = [
+  "ANN401",  # flake8-annotations > any-type (passthrough **kwargs mirror Dagster's dynamic surface)
+  "D",  # pydocstyle > ALL (module docstrings carry the context; demo fns stay bare)
+  "DTZ001",  # flake8-datetimez > call-datetime-without-tzinfo (sample stamps are naive by schema design)
+  "INP001",  # flake8-no-pep420 > implicit-namespace-package
+  "PLR0913",  # Pylint Refactor > too-many-arguments (the door signature under test)
+  "PLR2004",  # Pylint Refactor > magic-value-comparison (demo data)
+  "SLF001",  # flake8-self > private-member-access (Schema._validation_rules: banked pin-and-assert, #8)
+  "T20",  # flake8-print > ALL (demos print their state)
 ]
 # Typer related ignores
 "**/cli/**" = [
