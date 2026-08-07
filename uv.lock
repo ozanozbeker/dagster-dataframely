@@ -210,6 +210,8 @@ dependencies = [
     { name = "dagster" },
     { name = "dataframely" },
     { name = "polars" },
+    { name = "pydantic" },
+    { name = "universal-pathlib" },
 ]
 
 [package.dev-dependencies]
@@ -228,6 +230,8 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.13.16" },
     { name = "dataframely", specifier = ">=3.0.0" },
     { name = "polars", specifier = ">=1.43.2" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "universal-pathlib", specifier = ">=0.2.0" },
 ]
 
 [package.metadata.requires-dev]

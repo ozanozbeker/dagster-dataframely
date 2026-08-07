@@ -34,6 +34,11 @@ dependencies = [
   "dagster>=1.13.16",
   "dataframely>=3.0.0",
   "polars>=1.43.2",
+  # Imported directly by the IO manager. Both already arrive with `dagster`, but a direct
+  # import of a transitive dependency breaks silently if the intermediary ever drops it.
+  # Dagster's `universal-pathlib` requirement is already gated on the Python version.
+  "pydantic>=2",
+  "universal-pathlib>=0.2.0",
 ]
 
 [project.urls]

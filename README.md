@@ -4,14 +4,15 @@ Dataframely plugin for Dagster.
 
 > [!WARNING]
 > **Pre-release placeholder.**
-> This package is under active design and ships no functionality yet — the name is reserved on PyPI while the design spec is finalized.
+> This package is under active design and ships no functionality yet.
+> The name is reserved on PyPI while the design spec is finalized.
 > Do not depend on it.
 > Follow [issue #1](https://github.com/ozanozbeker/dagster-dataframely/issues/1) for progress.
 
 ## What it will do
 
 [dataframely](https://github.com/Quantco/dataframely) declares schemas and validation rules for [polars](https://pola.rs) data frames.
-[Dagster](https://dagster.io) has first-class surfaces for data contracts — column schema metadata and asset checks.
+[Dagster](https://dagster.io) has first-class surfaces for data contracts: column schema metadata and asset checks.
 This package connects the two:
 
 - **Asset checks derived from your schema.**
@@ -20,10 +21,12 @@ This package connects the two:
   Your schema populates Dagster's Columns tab automatically.
 - **Quarantine, opt-in.**
   Declare a second output and failing rows are routed there with per-rule attribution instead of failing the run.
-- **IO-manager agnostic.**
-  The package ships no IO manager, so `dagster-polars`, Delta, DuckDB, or a custom one all work unchanged.
+- **Storage in the box.**
+  `DataframelyParquetIOManager` writes `.parquet` to a local directory or to `s3://`, `gs://` and `az://`, and it is the supported path.
 
 Dependencies are `dagster` and `dataframely` (plus `polars`) only.
+The IO manager imports `universal-pathlib` and `pydantic` directly, so both are declared too.
+Both already ship with `dagster`, so nothing new lands in your environment.
 
 ## Installation
 
