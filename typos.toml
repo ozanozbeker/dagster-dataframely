@@ -1,0 +1,5 @@
+# Typos configuration file
+# See: https://github.com/crate-ci/typos
+
+[files]
+extend-exclude = ["*.toml"]
