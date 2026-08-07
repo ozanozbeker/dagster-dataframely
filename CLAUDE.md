@@ -6,6 +6,10 @@ Guidance for agents working in this repo.
 
 Per-repo configuration for the mattpocock engineering skills.
 
+The user-level skills: dagster-expert, polars, dataframely and the polars MCP are also relevant.
+
+Docstring Guide: <https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings>
+
 ### Issue tracker
 
 Issues live as GitHub issues in `ozanozbeker/dagster-dataframely`, driven by the `gh` CLI.
