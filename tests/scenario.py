@@ -1,4 +1,4 @@
-"""The one `Orders` schema and the four frames the whole effort runs against.
+"""The one `Orders` schema and the frames the whole effort runs against.
 
 Lifted from `docs/probes/front-door/_scenario.py` and widened to the cases the rest of the effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description ladders have to distinguish.
 
@@ -144,6 +144,22 @@ def mixed_orders() -> pl.DataFrame:
             _row(
                 "ORD-6", "f@example.com", "0.00", 1, "paid"
             ),  # paid_orders_have_amount
+        ]
+    )
+
+
+def cooccurring_orders() -> pl.DataFrame:
+    """Three valid rows and one that trips three rules at once.
+
+    The fifth frame, added by #19. The other four reject at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would be indistinguishable from a working one.
+    """
+    return _frame(
+        [
+            _row("ORD-1", "a@example.com", "10.00", 1, "new"),
+            _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
+            _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
+            # amount|min, email|check__lowercase and paid_orders_have_amount together.
+            _row("ORD-4", "D@example.com", "-1.00", 1, "paid"),
         ]
     )
 

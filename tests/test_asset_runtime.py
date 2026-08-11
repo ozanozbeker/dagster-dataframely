@@ -1,10 +1,11 @@
 """Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
 
-The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. Three of the five state-machine outcomes are reachable without a quarantine, and those are the three here; the other two arrive with #19.
+The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine outcomes are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 import dagster as dg
 import polars as pl
@@ -13,6 +14,7 @@ from polars.testing import assert_frame_equal
 
 from dagster_dataframely import (
     DataframelyParquetIOManager,
+    NothingSurvivedError,
     SchemaGateError,
     ValidationAbortError,
     dataframely_asset,
@@ -20,6 +22,7 @@ from dagster_dataframely import (
 from tests.scenario import (
     Orders,
     clean_orders,
+    cooccurring_orders,
     hopeless_orders,
     mixed_orders,
     wrong_dtype_orders,
@@ -52,6 +55,17 @@ def _evaluations(
     return {e.check_name: e for e in result.get_asset_check_evaluations()}
 
 
+def _materialized(
+    result: dg.ExecuteInProcessResult,
+) -> dict[dg.AssetKey, Mapping[str, dg.MetadataValue[Any]]]:
+    """Every materialization the run emitted, keyed by asset, with its metadata."""
+    return {
+        event.asset_key: event.step_materialization_data.materialization.metadata
+        for event in result.get_asset_materialization_events()
+        if event.asset_key is not None
+    }
+
+
 # --- a clean frame ---
 def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
     result = _materialize(tmp_path, _raw_orders, orders)
@@ -63,12 +77,7 @@ def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
 def test_a_clean_run_emits_row_count(tmp_path: Path):
     """The good count specifically, so `dg.build_metadata_bounds_checks` needs no knob from this package."""
     result = _materialize(tmp_path, _raw_orders, orders)
-    event = next(
-        e
-        for e in result.get_asset_materialization_events()
-        if e.asset_key == dg.AssetKey(["orders"])
-    )
-    metadata = dict(event.step_materialization_data.materialization.metadata)
+    metadata = _materialized(result)[dg.AssetKey(["orders"])]
 
     assert metadata["dagster/row_count"].value == 3
 
@@ -254,6 +263,14 @@ def test_rejected_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
     assert "never discards rows on your behalf" in str(raised.value)
 
 
+def test_the_abort_names_the_quarantine_as_the_fix(tmp_path: Path):
+    """This error is the one place a user who has not read the README learns the option exists, so it names the keyword rather than gesturing at it."""
+    with pytest.raises(ValidationAbortError) as raised:
+        _materialize(tmp_path, _mixed)
+
+    assert "quarantine=dg.AssetOut()" in str(raised.value)
+
+
 def test_the_abort_writes_nothing(tmp_path: Path):
     result = _materialize(tmp_path, _mixed, raise_on_error=False)
 
@@ -279,7 +296,7 @@ def test_the_abort_still_reports_every_rule(tmp_path: Path):
 
 
 def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
-    """Indistinguishable from the mixed frame today, because with no quarantine both discard everything. #19 is what makes them differ, so this pins `hopeless_orders` as still hopeless until then."""
+    """With no quarantine the two frames are indistinguishable, because both discard everything. Declaring one is what makes them differ."""
 
     @dataframely_asset(schema=Orders, name="orders")
     def hopeless() -> pl.DataFrame:
@@ -299,3 +316,188 @@ def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
 
     assert rules
     assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
+
+
+# --- rejected rows with a quarantine, some surviving ---
+_GOOD_KEY = dg.AssetKey(["orders"])
+_QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
+
+
+@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+def _quarantined() -> pl.DataFrame:
+    return mixed_orders()
+
+
+def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
+    """The middle case: 3 good rows land, 3 bad ones are inspectable, and downstream proceeds."""
+    result = _materialize(tmp_path, _quarantined)
+
+    assert result.success
+    assert set(_materialized(result)) == {_GOOD_KEY, _QUARANTINE_KEY}
+    assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
+    assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 3
+
+
+def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
+    """Consent to partial data was given by declaring the out, so a rejected row is a warning rather than a failure."""
+    evaluations = _evaluations(_materialize(tmp_path, _quarantined))
+    failed = {name for name, e in evaluations.items() if not e.passed}
+    rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
+
+    assert failed == {
+        "dy_rule__amount__min",
+        "dy_rule__email__check__lowercase",
+        "dy_rule__paid_orders_have_amount",
+    }
+    assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules)
+
+
+def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
+    """Landing the survivors is only worth anything if the run does not stop there. The rule checks are non-blocking, so a `WARN` never holds a consumer back."""
+    seen: dict[str, int] = {}
+
+    @dg.asset(name="reconciled")
+    def reconciled(orders: pl.DataFrame) -> None:
+        seen["rows"] = len(orders)
+
+    result = _materialize(tmp_path, _quarantined, reconciled)
+
+    assert result.success
+    assert seen == {"rows": 3}
+
+
+def test_the_quarantine_holds_the_original_columns_plus_one_outcome_per_rule(
+    tmp_path: Path,
+):
+    """`invalid()` was rejected as the content: check-metadata samples are bounded, so without per-row attribution here it exists nowhere at volume."""
+    _materialize(tmp_path, _quarantined)
+    quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+    checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__dtypes"}
+
+    assert quarantine.columns[: len(Orders.columns())] == list(Orders.columns())
+    assert set(quarantine.columns) == set(Orders.columns()) | set(outcomes)
+    # Byte-identical to the check names, asserted against the written frame rather than
+    # only the declaration, so the two surfaces cannot drift apart.
+    assert set(outcomes) == checks
+
+
+def test_the_outcome_columns_are_cast_from_enum_to_string(tmp_path: Path):
+    """Mandatory, not defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`."""
+    _materialize(tmp_path, _quarantined)
+    quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+
+    assert all(quarantine.schema[name] == pl.String for name in outcomes)
+
+
+def test_an_outcome_column_says_which_rule_rejected_which_row(tmp_path: Path):
+    _materialize(tmp_path, _quarantined)
+    quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
+        "order_id"
+    )
+    rejected_by_min = quarantine.filter(pl.col("dy_rule__amount__min") == "invalid")
+
+    assert quarantine["dy_rule__amount__min"].to_list() == [
+        "invalid",
+        "valid",
+        "valid",
+    ]
+    assert rejected_by_min["order_id"].to_list() == ["ORD-4"]
+
+
+def test_the_quarantine_emits_its_own_row_count(tmp_path: Path):
+    metadata = _materialized(_materialize(tmp_path, _quarantined))
+
+    assert metadata[_GOOD_KEY]["dagster/row_count"].value == 3
+    assert metadata[_QUARANTINE_KEY]["dagster/row_count"].value == 3
+
+
+def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
+    """One broken upstream field tripping three rules at once is one row here, not three unrelated counts."""
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def cooccurring() -> pl.DataFrame:
+        return cooccurring_orders()
+
+    metadata = _materialized(_materialize(tmp_path, cooccurring))
+    cooccurrence = metadata[_QUARANTINE_KEY]["cooccurrence"]
+
+    assert isinstance(cooccurrence, dg.TableMetadataValue)
+    assert [dict(record.data) for record in cooccurrence.records] == [
+        {
+            "rules": (
+                "dy_rule__amount__min, dy_rule__email__check__lowercase, "
+                "dy_rule__paid_orders_have_amount"
+            ),
+            "count": 1,
+        }
+    ]
+
+
+def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
+    """An empty quarantine partition then means something."""
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def spotless() -> pl.DataFrame:
+        return clean_orders()
+
+    result = _materialize(tmp_path, spotless)
+
+    assert result.success
+    assert set(_materialized(result)) == {_GOOD_KEY}
+    assert not (tmp_path / "orders_quarantine.parquet").exists()
+
+
+# --- rejected rows with a quarantine, none surviving ---
+@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+def _nothing_survived() -> pl.DataFrame:
+    return hopeless_orders()
+
+
+def test_nothing_surviving_materializes_the_quarantine_and_skips_the_good_out(
+    tmp_path: Path,
+):
+    """The load-bearing case: an empty table must never silently replace a last-known-good snapshot."""
+    result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
+
+    assert not result.success
+    assert set(_materialized(result)) == {_QUARANTINE_KEY}
+    assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 2
+    assert not (tmp_path / "orders.parquet").exists()
+
+
+def test_nothing_surviving_leaves_the_last_known_good_table_intact(tmp_path: Path):
+    """The same key, written clean and then run again on a frame nothing survives."""
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def spotless() -> pl.DataFrame:
+        return clean_orders()
+
+    _materialize(tmp_path, spotless)
+    _materialize(tmp_path, _nothing_survived, raise_on_error=False)
+
+    assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
+
+
+def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
+    with pytest.raises(NothingSurvivedError) as raised:
+        _materialize(tmp_path, _nothing_survived)
+
+    assert "Orders rejected all 2 rows" in str(raised.value)
+    assert "2 by 'amount|min'" in str(raised.value)
+    assert "orders_quarantine" in str(raised.value)
+
+
+def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
+    """Severity is the run's outcome, not the rule's: nothing landed in the good table, so nothing is a warning."""
+    result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
+    evaluations = _evaluations(result)
+    rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
+
+    assert evaluations["dy_schema__dtypes"].passed
+    assert rules
+    assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
+    assert (
+        dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value == 2
+    )

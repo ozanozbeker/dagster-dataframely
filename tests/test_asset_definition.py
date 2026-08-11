@@ -19,6 +19,7 @@ from dagster_dataframely import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
+    QuarantineSettingError,
     ReservedColumnError,
     dataframely_asset,
 )
@@ -122,7 +123,7 @@ class _Warehouse(dg.ConfigurableResource[None]):
 
 
 def test_every_forwarded_multi_asset_parameter_reaches_the_definition():
-    """Thirteen of the fifteen at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: one changes the asset key rather than landing unchanged, and the other cannot share an op with `backfill_policy`."""
+    """Twelve of the fourteen at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: one changes the asset key rather than landing unchanged, and the other cannot share an op with `backfill_policy`."""
     partitions = dg.StaticPartitionsDefinition(["a", "b"])
     retry = dg.RetryPolicy(max_retries=2)
     backfill = dg.BackfillPolicy.single_run()
@@ -139,7 +140,6 @@ def test_every_forwarded_multi_asset_parameter_reaches_the_definition():
         backfill_policy=backfill,
         op_tags={"team": "data"},
         resource_defs={"warehouse": _Warehouse(dsn="postgres://")},
-        group_name="sales",
         retry_policy=retry,
         code_version="v1",
     )
@@ -164,7 +164,6 @@ def test_every_forwarded_multi_asset_parameter_reaches_the_definition():
     assert forwarded.backfill_policy == backfill
     assert forwarded.op.tags["team"] == "data"
     assert sorted(forwarded.resource_defs) == ["warehouse"]
-    assert spec.group_name == "sales"
     assert forwarded.op.retry_policy == retry
     assert spec.code_version == "v1"
 
@@ -180,13 +179,14 @@ def test_pool_reaches_the_underlying_op():
 
 
 def test_asset_level_parameters_reach_the_out():
-    """All seven at once. `@dg.multi_asset` has no per-out vocabulary, so these land on the `AssetOut` rather than being forwarded. Same names as `@dg.asset` uses, because the door is designed for one table."""
+    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them; `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which is what leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the door is designed for one table."""
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
     @dataframely_asset(
         schema=Orders,
         io_manager_key="warehouse",
+        group_name="sales",
         metadata={"sla_hours": 4},
         tags={"layer": "silver"},
         owners=["team:data"],
@@ -201,6 +201,7 @@ def test_asset_level_parameters_reach_the_out():
     key = dg.AssetKey(["routed"])
 
     assert routed.node_def.output_dict["routed"].io_manager_key == "warehouse"
+    assert spec.group_name == "sales"
     assert routed.metadata_by_key[key]["sla_hours"] == 4
     assert spec.tags["layer"] == "silver"
     assert list(spec.owners) == ["team:data"]
@@ -334,6 +335,219 @@ def test_the_schema_carrier_holds_the_live_class_under_an_explicit_label():
     assert carrier.instance is Orders
 
 
+# --- the quarantine ---
+@dataframely_asset(schema=Orders, quarantine=dg.AssetOut(), group_name="sales")
+def quarantined() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+_QUARANTINE_KEY = dg.AssetKey(["quarantined_quarantine"])
+
+
+def test_declaring_a_quarantine_adds_a_second_out():
+    """Its presence alone is the failure policy. There is no flag to disagree with it."""
+    assert quarantined.keys == {dg.AssetKey(["quarantined"]), _QUARANTINE_KEY}
+
+
+def test_the_quarantine_out_is_not_required_either():
+    """The clean run skips it, and the nothing-survived path skips the good one."""
+    assert all(spec.skippable for spec in quarantined.specs)
+
+
+def test_the_quarantine_key_is_a_sibling_that_inherits_the_prefix():
+    """The two land next to each other with no configuration."""
+
+    @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=dg.AssetOut())
+    def prefixed_quarantine() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert prefixed_quarantine.keys == {
+        dg.AssetKey(["sales", "prefixed_quarantine"]),
+        dg.AssetKey(["sales", "prefixed_quarantine_quarantine"]),
+    }
+
+
+def test_an_explicit_key_overrides_the_sibling_completely():
+    """The sensitive-data case, at zero cost: a different key, group, owner set and IO manager."""
+
+    @dataframely_asset(
+        schema=Orders,
+        key_prefix="sales",
+        group_name="sales",
+        io_manager_key="warehouse",
+        quarantine=dg.AssetOut(
+            key=dg.AssetKey(["restricted", "orders"]),
+            group_name="restricted",
+            owners=["team:security"],
+            io_manager_key="vault",
+        ),
+    )
+    def routed_quarantine() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    key = dg.AssetKey(["restricted", "orders"])
+    spec = {s.key: s for s in routed_quarantine.specs}[key]
+
+    assert key in routed_quarantine.keys
+    assert spec.group_name == "restricted"
+    assert list(spec.owners) == ["team:security"]
+    assert (
+        routed_quarantine.node_def.output_dict[
+            "routed_quarantine_quarantine"
+        ].io_manager_key
+        == "vault"
+    )
+
+
+def test_the_quarantine_inherits_the_io_manager_key_when_it_names_none():
+    """One declaration stores both tables together, and routing the rejected rows elsewhere stays a one-word change."""
+
+    @dataframely_asset(
+        schema=Orders, io_manager_key="warehouse", quarantine=dg.AssetOut()
+    )
+    def shared_storage() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    outputs = shared_storage.node_def.output_dict
+
+    assert outputs["shared_storage"].io_manager_key == "warehouse"
+    assert outputs["shared_storage_quarantine"].io_manager_key == "warehouse"
+
+
+def test_the_quarantine_inherits_the_group_when_it_names_none():
+    """Dagster refuses `group_name` on the `multi_asset` as soon as an out names one, so the door sets it per out and inherits it here explicitly."""
+    assert quarantined.group_names_by_key == {
+        dg.AssetKey(["quarantined"]): "sales",
+        _QUARANTINE_KEY: "sales",
+    }
+
+
+def test_the_quarantine_inherits_the_partitioning():
+    """It lives on the `multi_asset`, so a partitioned asset cannot produce an unpartitioned pile of bad rows."""
+    partitions = dg.StaticPartitionsDefinition(["a", "b"])
+
+    @dataframely_asset(
+        schema=Orders, partitions_def=partitions, quarantine=dg.AssetOut()
+    )
+    def partitioned() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert all(spec.partitions_def == partitions for spec in partitioned.specs)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        dg.AssetOut(automation_condition=dg.AutomationCondition.eager()),
+        dg.AssetOut(
+            freshness_policy=dg.FreshnessPolicy.time_window(
+                fail_window=dt.timedelta(hours=24)
+            )
+        ),
+        dg.AssetOut(code_version="v1"),
+    ],
+    ids=["automation_condition", "freshness_policy", "code_version"],
+)
+def test_a_setting_that_cannot_differ_between_the_outs_raises_at_definition_time(
+    setting: dg.AssetOut,
+):
+    """`can_subset` is absent, so one step always produces both tables. A condition or a policy that differs between them cannot be true of either, and inheriting silently would discard something the engineer wrote."""
+    with pytest.raises(QuarantineSettingError) as raised:
+
+        @dataframely_asset(schema=Orders, quarantine=setting)
+        def contested() -> pl.DataFrame:
+            return pl.DataFrame()
+
+    assert "One step always produces both tables" in str(raised.value)
+
+
+def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_good_out():
+    """The `AssetOut` cannot contest these, but the door's own values do not reach the quarantine either.
+
+    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the good asset's condition already requests, since neither out can execute alone.
+    """
+    condition = dg.AutomationCondition.eager()
+    freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
+
+    @dataframely_asset(
+        schema=Orders,
+        automation_condition=condition,
+        freshness_policy=freshness,
+        quarantine=dg.AssetOut(),
+    )
+    def scheduled() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    specs = {spec.key: spec for spec in scheduled.specs}
+    good = specs[dg.AssetKey(["scheduled"])]
+    bad = specs[dg.AssetKey(["scheduled_quarantine"])]
+
+    assert good.automation_condition == condition
+    assert good.freshness_policy == freshness
+    assert bad.automation_condition is None
+    assert bad.freshness_policy is None
+
+
+def test_the_quarantine_setting_error_names_the_setting_and_the_door():
+    with pytest.raises(QuarantineSettingError) as raised:
+
+        @dataframely_asset(schema=Orders, quarantine=dg.AssetOut(code_version="v1"))
+        def contested() -> pl.DataFrame:
+            return pl.DataFrame()
+
+    assert "code_version" in str(raised.value)
+    assert "dataframely_asset" in str(raised.value)
+
+
+def _quarantine_columns() -> dict[str, dg.TableColumn]:
+    table_schema = quarantined.metadata_by_key[_QUARANTINE_KEY][_COLUMN_SCHEMA_KEY]
+    return {column.name: column for column in table_schema.columns}
+
+
+def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
+    columns = _quarantine_columns()
+    amount = columns["amount"]
+
+    assert list(columns)[: len(Orders.columns())] == list(Orders.columns())
+    assert amount.type == "Decimal(precision=10, scale=2)"
+    assert amount.description == "Line total in account currency."
+    assert amount.tags == {"owner": "finance", "pii": "False"}
+
+
+def test_the_quarantine_mirror_carries_no_constraint():
+    """These rows are here precisely because they violate them."""
+    assert all(
+        column.constraints == dg.TableColumnConstraints()
+        for column in _quarantine_columns().values()
+    )
+
+
+def test_the_quarantine_declares_one_string_outcome_column_per_rule():
+    """Named byte-identically to the asset checks, so an engineer carries the string across by eye."""
+    columns = _quarantine_columns()
+    outcomes = {name: columns[name] for name in columns if name.startswith("dy_rule__")}
+    expected = {f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES}
+
+    assert set(outcomes) == expected
+    assert expected <= set(_specs_by_name(quarantined))
+    assert all(column.type == "String" for column in outcomes.values())
+
+
+def test_each_outcome_column_is_described_as_the_outcome_of_its_rule():
+    assert _quarantine_columns()["dy_rule__amount__min"].description == (
+        "Outcome of rule 'amount|min': 'valid' / 'invalid' / 'unknown'."
+    )
+
+
+def test_the_quarantine_carries_no_schema_carrier():
+    """The quarantine frame is not schema-shaped: it has an outcome column per rule. Handing the IO manager an `Orders` carrier for it would be a lie on the read path."""
+    assert _SCHEMA_CARRIER_KEY not in quarantined.metadata_by_key[_QUARANTINE_KEY]
+
+
+def test_no_quarantine_means_one_out():
+    assert orders.keys == {dg.AssetKey(["orders"])}
+
+
 # --- definition-time errors ---
 def test_a_user_column_in_the_reserved_namespace_raises():
     class Reserved(dy.Schema):
@@ -415,17 +629,25 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
 # --- the door's own contract with dagster ---
 # Parameters `dg.multi_asset` has that the door deliberately does not forward.
 _NOT_FORWARDED = {
-    "outs",  # door-owned: the door builds the out from the schema
+    "outs",  # door-owned: the door builds both outs from the schema
     "check_specs",  # door-owned: derived from the schema, never contested
     "specs",  # door-owned: the alternative spelling of `outs`
     "can_subset",  # deliberately absent (#4): a subset executes but saves nothing
-    "internal_asset_deps",  # nothing to wire: the door emits a single out
+    "internal_asset_deps",  # nothing to wire: neither out feeds the other
+    # Refused by `multi_asset` outright when any out names one, so it lands on the
+    # outs, which is what leaves the quarantine free to claim a group of its own.
+    "group_name",
 }
-_DOOR_OWNED = {"schema", "key_prefix"}
+_DOOR_OWNED = {"schema", "key_prefix", "quarantine"}
 
-# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead, which is why they are absent from its signature.
+# The door-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
+# one of them: it is `dg.asset` vocabulary that the door happens to own the meaning of.
+_NO_DG_ASSET_COUNTERPART = {"schema", "quarantine"}
+
+# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
 _ASSET_LEVEL = {
     "io_manager_key",
+    "group_name",
     "metadata",
     "tags",
     "owners",
@@ -450,7 +672,9 @@ def test_the_door_speaks_dg_assets_vocabulary():
 
     Asserted in both directions, like the `multi_asset` pin: nothing the door offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
     """
-    door = set(inspect.signature(dataframely_asset).parameters) - {"schema"}
+    door = (
+        set(inspect.signature(dataframely_asset).parameters) - _NO_DG_ASSET_COUNTERPART
+    )
     upstream = set(inspect.signature(dg.asset).parameters) - {"compute_fn", "kwargs"}
 
     assert door <= upstream, f"no longer on dg.asset: {door - upstream}"

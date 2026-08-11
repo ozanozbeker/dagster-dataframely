@@ -6,6 +6,7 @@ This module carries no `from __future__ import annotations`. At a 3.12 floor it 
 """
 
 import functools
+import inspect
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from typing import Any
@@ -15,8 +16,11 @@ import dataframely as dy
 import polars as pl
 
 from dagster_dataframely.checks import check_specs
-from dagster_dataframely.errors import CollectionNotSupportedError
-from dagster_dataframely.metadata import schema_metadata
+from dagster_dataframely.errors import (
+    CollectionNotSupportedError,
+    QuarantineSettingError,
+)
+from dagster_dataframely.metadata import _quarantine_metadata, schema_metadata
 from dagster_dataframely.runtime import AssetYield, process
 
 TransformFn = Callable[..., pl.DataFrame | pl.LazyFrame]
@@ -38,14 +42,98 @@ AssetDep = (
     | dg.AssetDep
 )
 
+# Every `dg.AssetOut` setting, read off its constructor rather than transcribed, so a new Dagster parameter is carried through the rebuild without this file being touched.
+# `kwargs` is the constructor's own catch-all, not a setting.
+_ASSET_OUT_SETTINGS = frozenset(inspect.signature(dg.AssetOut.__init__).parameters) - {
+    "self",
+    "kwargs",
+}
+
+# Door-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The gate and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a transform is not a virtual asset.
+_DOOR_OWNED_SETTINGS = frozenset({"is_required", "dagster_type", "is_virtual"})
+
+# Settings one step cannot hold two of. `partitions_def` and `backfill_policy` need no entry: they live on the `multi_asset`, so both outs carry them identically by construction. That is the property these three lack.
+_CONTESTED_SETTINGS = ("automation_condition", "freshness_policy", "code_version")
+
+
+def _rebuild(out: dg.AssetOut, overrides: Mapping[str, Any]) -> dg.AssetOut:
+    """Reconstructs a `dg.AssetOut` with the door's overrides applied.
+
+    It is immutable with no `_replace`, so the only route is to read its attributes back out and build a new one. That works because every constructor parameter currently has a readable attribute of the same name, which is an undocumented upstream property asserted by its own test: a parameter Dagster adds whose attribute is named differently would drop the user's value silently.
+
+    `getattr` is deliberately unguarded for the same reason. A missing attribute is the failure the pin exists to catch, and swallowing it here would hide it.
+
+    Args:
+        out: The out to read settings off.
+        overrides: Settings the door imposes, applied over what the out carries.
+
+    Returns:
+        A new out carrying the user's settings with the overrides applied.
+    """
+    settings = {
+        name: getattr(out, name) for name in _ASSET_OUT_SETTINGS - _DOOR_OWNED_SETTINGS
+    }
+    return dg.AssetOut(**settings | dict(overrides))
+
+
+def _quarantine_out(
+    quarantine: dg.AssetOut,
+    *,
+    schema: type[dy.Schema],
+    key: dg.AssetKey,
+    io_manager_key: str | None,
+    group_name: str | None,
+) -> dg.AssetOut:
+    """Composes the passed `dg.AssetOut` with the door's own parameters.
+
+    `dg.AssetOut` is already the typed container for everything quarantine-specific, so the door takes one rather than growing a second two-valued container that could disagree with it. What it costs is a rule per setting that also exists on the door:
+
+    - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: rejected rows to a different key and ownership domain.
+    - `metadata` is free too, but `dagster/column_schema` is applied over it, exactly as on the good out: the Columns tab is what the decorator is for, so a colliding user key loses.
+    - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the rejected rows elsewhere stays a one-word change.
+    - The three in `_CONTESTED_SETTINGS` raise.
+
+    The door's own `automation_condition` and `freshness_policy` stay on the good out rather than reaching this one. A freshness policy here would fail forever on a healthy pipeline, because a clean run skips the quarantine by design; and a condition here would request a step the good asset's condition already requests, since neither out can execute alone.
+
+    Args:
+        quarantine: The out the user declared, verbatim.
+        schema: The schema whose rejected rows the out holds.
+        key: The default sibling key, used only when the user named neither a key nor a prefix.
+        io_manager_key: The good out's manager, inherited when the quarantine names none.
+        group_name: The good out's group, inherited when the quarantine names none.
+
+    Returns:
+        The out to hand `@dg.multi_asset`.
+
+    Raises:
+        QuarantineSettingError: The out sets something one step cannot hold two of.
+    """
+    for setting in _CONTESTED_SETTINGS:
+        if getattr(quarantine, setting) is not None:
+            raise QuarantineSettingError(setting)
+
+    overrides: dict[str, Any] = {
+        "is_required": False,
+        # The package's key is applied last, as on the good out.
+        "metadata": {**(quarantine.metadata or {}), **_quarantine_metadata(schema)},
+        "io_manager_key": quarantine.io_manager_key or io_manager_key,
+        "group_name": quarantine.group_name or group_name,
+    }
+    # Naming either one is a complete override, and Dagster rejects both together.
+    if quarantine.key is None and not quarantine.key_prefix:
+        overrides["key"] = key
+    return _rebuild(quarantine, overrides)
+
 
 def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     *,
     # --- door-owned ---
     schema: type[dy.Schema],
+    quarantine: dg.AssetOut | None = None,
     key_prefix: str | Sequence[str] | None = None,
-    # --- carried to the asset itself, matching @dg.asset's vocabulary ---
+    # --- carried to the outs themselves, matching @dg.asset's vocabulary ---
     io_manager_key: str | None = None,
+    group_name: str | None = None,
     metadata: Mapping[str, Any] | None = None,
     tags: Mapping[str, str] | None = None,
     owners: Sequence[str] | None = None,
@@ -57,8 +145,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     ins: Mapping[str, dg.AssetIn] | None = None,
     deps: Iterable[AssetDep] | None = None,
     description: str | None = None,
-    # Narrower than Dagster's own six-member union, deliberately: a mapping is the
-    # spelling worth a static guarantee, and the rest are legacy.
+    # --- Narrower than Dagster's own six-member union, deliberately: a mapping is the spelling worth a static guarantee, and the rest are legacy. ---
     config_schema: Mapping[str, Any] | None = None,
     required_resource_keys: AbstractSet[str] | None = None,
     partitions_def: dg.PartitionsDefinition[str] | None = None,
@@ -66,7 +153,6 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     backfill_policy: dg.BackfillPolicy | None = None,
     op_tags: Mapping[str, Any] | None = None,
     resource_defs: Mapping[str, object] | None = None,
-    group_name: str | None = None,
     retry_policy: dg.RetryPolicy | None = None,
     code_version: str | None = None,
     pool: str | None = None,
@@ -77,12 +163,14 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 
     The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`. It takes no `context` parameter; the wrapper reaches the context itself.
 
-    **Every row has to be good.** A run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. There is no lenient mode and no strict flag, deliberately: landing the survivors and dropping the rest is precisely the failure this package exists to make visible, so it is not reachable by configuration. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
+    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a rejected row costs is visible in the definition and cannot disagree with what the asset declares.
+
+    With no quarantine, every row has to be good: a run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
 
         good, _ = Orders.filter(raw_orders)
         return good
 
-    Routing rejected rows to a sibling asset instead of failing is planned work, tracked in issue #19.
+    With a quarantine, rejected rows land in a sibling asset carrying the original columns plus one outcome column per rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the good output rather than emptying it.
 
     Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `outs`, `check_specs` and `specs` are surfaces this decorator owns and are simply absent, so they cannot be contested. `can_subset` is absent too: a subset executes but saves nothing.
 
@@ -90,8 +178,10 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 
     Args:
         schema: The dataframely schema the transform's output must satisfy.
-        key_prefix: Prefix for the asset key. The checks follow it automatically.
-        io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one (#19).
+        quarantine: Where rejected rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how rejected rows reach a separate storage and ownership domain. Its key defaults to a sibling of the good asset and its IO manager to the good asset's.
+        key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
+        io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
+        group_name: Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
         metadata: Definition metadata to carry alongside the schema's own. `dagster/column_schema` and `dagster_dataframely/schema` are the package's and win a collision.
         tags: Asset tags, for filtering and grouping in the catalog.
         owners: Asset owners, as emails or `team:<name>`.
@@ -109,16 +199,16 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         backfill_policy: How Dagster backfills this asset's partitions.
         op_tags: Tags on the underlying op, for run launcher and executor routing.
         resource_defs: Resources bound to this asset specifically.
-        group_name: Asset group.
         retry_policy: Retry policy for the underlying op.
         code_version: Version string for change-based staleness.
         pool: Concurrency pool the underlying op runs in.
 
     Returns:
-        A decorator producing a `multi_asset` with one out and one check per rule.
+        A decorator producing a `multi_asset` with one check per rule, and a second out when a quarantine is declared.
 
     Raises:
         CollectionNotSupportedError: `schema` is a `dy.Collection`.
+        QuarantineSettingError: The quarantine's `dg.AssetOut` sets something one step cannot hold two of.
 
     Example:
         >>> import dagster as dg
@@ -128,7 +218,9 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         >>> class Orders(dy.Schema):
         ...     order_id = dy.String(primary_key=True)
         ...     amount = dy.Float64(nullable=False, min=0.0)
-        >>> @dd.dataframely_asset(schema=Orders, group_name="sales")
+        >>> @dd.dataframely_asset(
+        ...     schema=Orders, quarantine=dg.AssetOut(), group_name="sales"
+        ... )
         ... def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
         ...     return raw_orders.select("order_id", "amount")
     """
@@ -147,36 +239,50 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         "backfill_policy": backfill_policy,
         "op_tags": op_tags,
         "resource_defs": resource_defs,
-        "group_name": group_name,
         "retry_policy": retry_policy,
         "code_version": code_version,
         "pool": pool,
     }
 
     def decorate(fn: TransformFn) -> dg.AssetsDefinition:
-        asset_name = name or fn.__name__
+        asset_name: str = name or fn.__name__
         prefix: list[str] = []
         if key_prefix is not None:
             prefix = [key_prefix] if isinstance(key_prefix, str) else list(key_prefix)
         key = dg.AssetKey([*prefix, asset_name])
 
+        outs = {
+            asset_name: dg.AssetOut(
+                key=key,
+                # The gate and both abort paths end the step without yielding.
+                is_required=False,
+                # The package's two keys are applied last, so a user cannot accidentally displace the Columns tab or the schema carrier.
+                metadata={**(metadata or {}), **schema_metadata(schema)},
+                io_manager_key=io_manager_key,
+                tags=tags,
+                owners=owners,
+                kinds=set(kinds) if kinds else None,
+                automation_condition=automation_condition,
+                freshness_policy=freshness_policy,
+                # Not forwarded to the `multi_asset`, which refuses it outright when any out names one. Naming it here is what leaves the quarantine free to claim a group of its own.
+                group_name=group_name,
+            )
+        }
+        quarantine_name: str | None = None
+        if quarantine is not None:
+            quarantine_name = f"{asset_name}_quarantine"
+            outs[quarantine_name] = _quarantine_out(
+                quarantine,
+                schema=schema,
+                # The default key is a sibling inheriting the good asset's prefix, so the two land next to each other with no configuration.
+                key=dg.AssetKey([*prefix, quarantine_name]),
+                io_manager_key=io_manager_key,
+                group_name=group_name,
+            )
+
         @dg.multi_asset(
             name=asset_name,
-            outs={
-                asset_name: dg.AssetOut(
-                    key=key,
-                    # The gate and the abort path both end the step without yielding.
-                    is_required=False,
-                    # The package's two keys are applied last, so a user cannot accidentally displace the Columns tab or the schema carrier.
-                    metadata={**(metadata or {}), **schema_metadata(schema)},
-                    io_manager_key=io_manager_key,
-                    tags=tags,
-                    owners=owners,
-                    kinds=set(kinds) if kinds else None,
-                    automation_condition=automation_condition,
-                    freshness_policy=freshness_policy,
-                )
-            },
+            outs=outs,
             check_specs=check_specs(schema, asset=key),
             **forwarded,
         )
@@ -188,6 +294,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
                 fn(*args, **kwargs),
                 context=dg.AssetExecutionContext.get(),
                 good_out=asset_name,
+                quarantine_out=quarantine_name,
             )
 
         return compute

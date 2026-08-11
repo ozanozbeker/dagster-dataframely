@@ -26,14 +26,12 @@ class ReservedColumnError(DagsterDataframelyError):
             columns: The column names inside the reserved namespace.
             prefix: The reserved prefix itself.
         """
-        culprits = ", ".join(f"'{column}'" for column in columns)
+        culprits: str = ", ".join(f"'{column}'" for column in columns)
         plural, verb, pronoun = (
             ("", "uses", "it") if len(columns) == 1 else ("s", "use", "them")
         )
         super().__init__(
-            f"Column{plural} {culprits} of {schema_name} {verb} the reserved "
-            f"'{prefix}' prefix. Rename {pronoun}. This package generates every "
-            f"check name and quarantine column under that namespace."
+            f"Column{plural} {culprits} of {schema_name} {verb} the reserved '{prefix}' prefix. Rename {pronoun}. This package generates every check name and quarantine column under that namespace."
         )
 
 
@@ -53,9 +51,7 @@ class CheckNameCollisionError(DagsterDataframelyError):
             name: The asset-check name they both rewrite to.
         """
         super().__init__(
-            f"Rules '{first}' and '{second}' of {schema_name} both become "
-            f"asset-check name '{name}' after the '|' -> '__' rewrite. "
-            f"Rename one of them."
+            f"Rules '{first}' and '{second}' of {schema_name} both become asset-check name '{name}' after the '|' -> '__' rewrite. Rename one of them."
         )
 
 
@@ -89,21 +85,23 @@ class SchemaGateError(DagsterDataframelyError):
             schema_name: The schema the frame failed to match.
             problems: One mapping of `column`, `expected` and `actual` per offending column.
         """
-        culprits = ", ".join(
-            f"'{problem['column']}' (expected {problem['expected']}, "
-            f"got {problem['actual']})"
+        culprits: str = ", ".join(
+            f"'{problem['column']}' (expected {problem['expected']}, got {problem['actual']})"
             for problem in problems
         )
         plural, verb = ("", "does") if len(problems) == 1 else ("s", "do")
         super().__init__(
-            f"Column{plural} {culprits} {verb} not match {schema_name}. "
-            f"Fix the transform, or cast deliberately with `{schema_name}.cast(frame)` "
-            f"in the asset body. This package never casts on your behalf."
+            f"Column{plural} {culprits} {verb} not match {schema_name}. Fix the transform, or cast deliberately with `{schema_name}.cast(frame)` in the asset body. This package never casts on your behalf."
         )
 
 
+def _culprits(counts: Mapping[str, int]) -> str:
+    """Renders a `FailureInfo.counts()` as prose, for the two errors that report damage."""
+    return ", ".join(f"{count} by '{rule}'" for rule, count in counts.items())
+
+
 class ValidationAbortError(DagsterDataframelyError):
-    """Rows were rejected, so the asset writes nothing.
+    """Rows were rejected and no quarantine is declared, so the asset writes nothing.
 
     Without somewhere to route rejected rows, every row has to be good. Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration: a drop is a line the engineer writes in the asset body, the way a cast is.
     """
@@ -111,22 +109,58 @@ class ValidationAbortError(DagsterDataframelyError):
     def __init__(
         self, schema_name: str, rejected: int, counts: Mapping[str, int]
     ) -> None:
-        """States the damage per rule, and the two fixes that exist today.
+        """States the damage per rule, and the three fixes.
 
-        The fix clause will name `quarantine=` once that out exists (#19). Until then it would send the reader to a keyword argument the door does not accept, and an error message is a promise.
+        Naming `quarantine=` is what makes this error the one place a user who has not read the README learns the option exists. It could only be named once the door accepted the keyword (#19); before that it would have sent the reader to a `TypeError`.
 
         Args:
             schema_name: The schema that rejected the rows.
             rejected: How many rows were rejected.
             counts: Failure count per rule, for the rules that rejected anything. The counts can sum past `rejected`, because one row can break several rules.
         """
-        culprits = ", ".join(f"{count} by '{rule}'" for rule, count in counts.items())
         plural = "" if rejected == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected {rejected} row{plural}, {culprits}. Nothing "
-            f"was written, so the last-known-good table survives. Fix the rows "
-            f"upstream, or drop them deliberately in the asset body. This package "
-            f"never discards rows on your behalf."
+            f"{schema_name} rejected {rejected} row{plural}, {_culprits(counts)}. Nothing was written, so the last-known-good table survives. Fix the rows upstream, route them to a sibling asset with `quarantine=dg.AssetOut()`, or drop them deliberately in the asset body. This package never discards rows on your behalf."
+        )
+
+
+class NothingSurvivedError(DagsterDataframelyError):
+    """Every row was rejected, so only the quarantine was written.
+
+    The good output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
+    """
+
+    def __init__(
+        self, schema_name: str, rejected: int, counts: Mapping[str, int], key: str
+    ) -> None:
+        """States the damage per rule and where every row went.
+
+        Args:
+            schema_name: The schema that rejected the rows.
+            rejected: How many rows were rejected, which is all of them.
+            counts: Failure count per rule, for the rules that rejected anything.
+            key: The quarantine's asset key, rendered, so the message says where to look.
+        """
+        plural = "" if rejected == 1 else "s"
+        super().__init__(
+            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the good output was skipped rather than written empty, so the last-known-good table survives."
+        )
+
+
+class QuarantineSettingError(DagsterDataframelyError):
+    """The quarantine's `dg.AssetOut` sets something that cannot differ between the two outs.
+
+    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the door's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
+    """
+
+    def __init__(self, setting: str) -> None:
+        """Names the setting and the reason one step cannot hold two of it.
+
+        Args:
+            setting: The `dg.AssetOut` parameter that was set.
+        """
+        super().__init__(
+            f"The quarantine's `dg.AssetOut` sets `{setting}`. One step always produces both tables, so a `{setting}` that differs between them cannot be true of either. Pass it to `dataframely_asset` instead, where it covers both."
         )
 
 
@@ -145,10 +179,10 @@ class UnwritableDtypeError(DagsterDataframelyError):
             extension: The file extension being written, e.g. `.parquet`.
             columns: The offending column names, mapped to their dtypes.
         """
-        culprits = ", ".join(f"'{name}' ({dtype})" for name, dtype in columns.items())
+        culprits: str = ", ".join(
+            f"'{name}' ({dtype})" for name, dtype in columns.items()
+        )
         plural, pronoun = ("", "it") if len(columns) == 1 else ("s", "them")
         super().__init__(
-            f"Column{plural} {culprits} cannot be written to {extension}. "
-            f"Convert or drop {pronoun} in the asset body. "
-            f"This IO manager never casts on your behalf."
+            f"Column{plural} {culprits} cannot be written to {extension}. Convert or drop {pronoun} in the asset body. This IO manager never casts on your behalf."
         )
