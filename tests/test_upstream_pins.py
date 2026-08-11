@@ -3,6 +3,9 @@
 These test upstream, not this package. Each one pins a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "dataframely changed" rather than "something broke".
 """
 
+import inspect
+
+import dagster as dg
 import dataframely as dy
 import polars as pl
 from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
@@ -91,6 +94,32 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
     assert (
         details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item() == "invalid"
     )
+
+
+def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
+    """`FailureInfo.cooccurrence_counts()` still returns counts keyed by the set of rules a row broke together."""
+    # #19 emits this as the quarantine's `cooccurrence` metadata, which is what makes one broken upstream field tripping three rules at once visible as one row rather than as three unrelated counts.
+    # Documented upstream, but the key type is the load-bearing part: a `frozenset` is unordered, so the package sorts it before rendering and a tuple here would silently change that rendering.
+    _, failure = Orders.filter(_MIXED_ORDERS)
+    cooccurrence = failure.cooccurrence_counts()
+
+    assert all(isinstance(rules, frozenset) for rules in cooccurrence)
+    assert sum(cooccurrence.values()) == len(failure)
+    assert cooccurrence[frozenset({"amount|min"})] == 1
+
+
+def test_every_asset_out_parameter_has_a_readable_attribute_of_the_same_name():
+    """`dg.AssetOut` is still readable back out of every one of its constructor parameters."""
+    # #19 rebuilds the quarantine's `AssetOut` from its attributes, because it is immutable and has no `_replace`. A parameter Dagster adds whose attribute is named differently would be dropped silently, taking the user's value with it, so the property the rebuild rests on is asserted rather than assumed.
+    # `kwargs` is the constructor's own catch-all, not a setting.
+    parameters = set(inspect.signature(dg.AssetOut.__init__).parameters) - {
+        "self",
+        "kwargs",
+    }
+    out = dg.AssetOut()
+
+    assert parameters
+    assert {name for name in parameters if not hasattr(out, name)} == set()
 
 
 def test_object_metadata_value_carries_a_live_python_object():

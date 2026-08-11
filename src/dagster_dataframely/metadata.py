@@ -11,6 +11,8 @@ from dagster._core.definitions.metadata.metadata_value import (
     ObjectMetadataValue,
 )
 
+from dagster_dataframely.naming import check_name, validation_rules
+
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"
 
@@ -56,6 +58,44 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     )
 
 
+def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
+    """Projects the quarantine's shape onto its own Columns tab.
+
+    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` pill on a column full of nulls would state something false about every row in the table.
+
+    Its own function rather than a flag on `table_schema`, even though the two comprehensions read alike today. They are about to diverge: `table_schema` gains constraint pills and a table-level primary key with the renderer (#20), and every one of those is a claim this table cannot make.
+
+    Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` dataframely produces, because the cast happens before the write.
+
+    Args:
+        schema: The schema whose rejected rows this table holds.
+
+    Returns:
+        A table schema: the schema's columns in their own order, then the rules in theirs.
+    """
+    return dg.TableSchema(
+        columns=[
+            dg.TableColumn(
+                name=name,
+                type=str(column.dtype),
+                description=column.description,
+                tags=_tags(column),
+            )
+            for name, column in schema.columns().items()
+        ]
+        + [
+            dg.TableColumn(
+                name=check_name(rule),
+                type="String",
+                description=(
+                    f"Outcome of rule '{rule}': 'valid' / 'invalid' / 'unknown'."
+                ),
+            )
+            for rule in validation_rules(schema)
+        ]
+    )
+
+
 def schema_metadata(
     schema: type[dy.Schema],
 ) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
@@ -82,3 +122,17 @@ def schema_metadata(
         # A raw class here is deprecated upstream, so the carrier is explicit.
         SCHEMA_CARRIER_KEY: ObjectMetadataValue(schema.__name__, instance=schema),
     }
+
+
+def _quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
+    """Builds the definition metadata the quarantine out declares.
+
+    The Columns tab only. No schema carrier: the quarantine frame is not schema-shaped, so handing the IO manager an `Orders` carrier for it would be a lie on the read path.
+
+    Args:
+        schema: The schema whose rejected rows the out holds.
+
+    Returns:
+        A mapping to hand to `dg.AssetOut(metadata=...)`.
+    """
+    return {_COLUMN_SCHEMA_KEY: quarantine_table_schema(schema)}
