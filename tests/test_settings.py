@@ -2,11 +2,12 @@
 
 `resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The knobs the package ships are exercised through it, and a fake setting covers the one tier a shipped knob cannot reach: its own default is valid by construction.
 
-A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed.
+A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed. A directory is here for the tier none of the three has: a package default of `None`, which is a value this knob means something by rather than the absence of one.
 """
 
 import importlib
 import pkgutil
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -19,7 +20,9 @@ from dagster_dataframely._settings import (
     MULTI_COLUMN_RULES,
     ROW_SAMPLE,
     STATISTICS,
+    TEMP_DIR,
     _Count,
+    _Directory,
     _Flag,
     _Setting,
 )
@@ -27,6 +30,7 @@ from dagster_dataframely._settings import (
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
+_TEMP_DIR_ENV = "DAGSTER_DATAFRAMELY_TEMP_DIR"
 
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow: it is what a user without one gets.
 _WRONG: Any = "per_column"
@@ -38,6 +42,9 @@ _YES: Any = True
 # The same, for the two-valued shape. It is the environment tier's own spelling, which is what makes it the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
 
+# The same, for the shape that holds a path. A `Path` is what a user reaches for, and the shape holds the string spelling instead.
+_PATH_OBJECT: Any = Path("/scratch")
+
 # A setting whose package default is already outside its own vocabulary. The shipped knobs cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
 _BROKEN = _Setting[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
 
@@ -47,6 +54,9 @@ _BROKEN_COUNT = _Count(name="fake_count", default=-1)
 # And one along again: a flag whose default is the word for a value rather than the value.
 _BROKEN_FLAG = _Flag(name="fake_flag", default=_WORD)
 
+# And the last: a directory whose default is the empty path, which is the only wrong value this shape has.
+_BROKEN_DIRECTORY = _Directory(name="fake_directory", default="")
+
 
 def test_a_knob_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
@@ -54,6 +64,7 @@ def test_a_knob_nobody_touched_is_the_package_default():
     assert STATISTICS.resolve(None) is True
     assert MAX_FAILURE_SAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
+    assert TEMP_DIR.resolve(None) is None
 
 
 def test_the_environment_variable_beats_the_package_default(
@@ -79,6 +90,7 @@ def test_every_setting_names_its_environment_variable_after_itself():
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
+    assert TEMP_DIR.env_var == _TEMP_DIR_ENV
 
 
 def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
@@ -205,6 +217,43 @@ def test_a_count_rejects_a_bool():
     assert "'True'" in str(raised.value)
 
 
+def test_a_directory_reads_the_environment_tier_as_the_path_it_spells(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The shape with nothing to parse and nothing to match: the environment tier already arrives as what the knob holds."""
+    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/landing")
+
+    assert TEMP_DIR.resolve(None) == "/scratch/landing"
+    assert TEMP_DIR.resolve("/mnt/volume") == "/mnt/volume"
+
+
+def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
+
+    Reading that as unset would land the frame on the ephemeral disk the knob was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
+    """
+    monkeypatch.setenv(_TEMP_DIR_ENV, "   ")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        TEMP_DIR.resolve(None)
+    message = str(raised.value)
+
+    assert "temp_dir" in message
+    assert "filesystem paths" in message
+    assert _TEMP_DIR_ENV in message
+
+
+def test_a_directory_rejects_something_that_is_not_a_path():
+    """A `Path` is the plausible wrong value here, and it is wrong for the same reason a word is wrong in a count: every tier of this knob spells a path as a string, because the environment tier can spell it no other way."""
+    with pytest.raises(InvalidSettingError) as raised:
+        TEMP_DIR.resolve(_PATH_OBJECT)
+
+    assert "/scratch" in str(raised.value)
+    assert "argument" in str(raised.value)
+
+
 def test_a_value_outside_the_vocabulary_raises_from_the_argument_tier():
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
@@ -240,6 +289,11 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
         _BROKEN_FLAG.resolve(None)
 
     assert "package default" in str(raised.value)
+
+    with pytest.raises(InvalidSettingError) as raised:
+        _BROKEN_DIRECTORY.resolve(None)
+
+    assert "filesystem paths" in str(raised.value)
 
 
 def test_the_error_names_the_setting_the_value_and_the_tier_order():

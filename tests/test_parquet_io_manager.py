@@ -128,7 +128,7 @@ def test_a_downstream_query_pushes_down_into_the_scan(tmp_path: Path) -> None:
 
 
 def test_a_lazy_frame_output_is_collected_and_says_so(tmp_path: Path) -> None:
-    """`DataFrame` is the supported type, so a lazy output collects rather than sinking. Silently materializing a frame the user asked to keep lazy is the worse failure, so the warning is part of the contract (#27)."""
+    """`DataFrame` is the supported type, so a lazy output collects rather than sinking. Silently materializing a frame the user asked to keep lazy is the worse failure, so the warning is part of the contract (#27). It stayed part of it when #53 landed: a lazy return through `dataframely_asset` never reaches this path, because the state machine has already landed and read it back by the time the manager sees a frame."""
 
     @dg.asset(name="orders")
     def lazy_orders() -> pl.LazyFrame:

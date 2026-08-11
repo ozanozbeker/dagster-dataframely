@@ -1,9 +1,13 @@
-"""The state machine a schema-backed asset runs: gate, filter, then one of five outcomes.
+"""The state machine a schema-backed asset runs: gate, land, filter, then one of five outcomes.
 
 The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three outcomes into five: it is the consent to partial data, and its absence is the refusal.
+
+The middle stage is the only one a transform can skip, and its return type is what skips it: see `_landed_frame` for what a plan buys by landing. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
+import tempfile
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 import dagster as dg
 import dataframely as dy
@@ -21,6 +25,7 @@ from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
     STATISTICS,
+    TEMP_DIR,
     Granularity,
     MultiColumnRules,
 )
@@ -70,6 +75,34 @@ def gate_problems(
         for name, column in schema.columns().items()
         if name not in actual or not column.validate_dtype(actual[name])
     ]
+
+
+def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
+    """Streams a plan to a local parquet, reads it back whole, and removes the file.
+
+    What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so landing it would be pure cost.
+
+    The file is gone before this returns, so no exit of the state machine can leave one behind, including the two whose whole purpose is that nothing is written.
+
+    A configured directory is not created. The knob exists to move the landing off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
+
+    Args:
+        frame: The plan to land.
+        temp_dir: Where the landing goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every knob where the asset is *declared*, so an unset knob has to mean the temp directory of whichever process lands the frame.
+
+    Returns:
+        The frame the plan produced, read back whole.
+
+    Raises:
+        FileNotFoundError: `temp_dir` names a directory that does not exist.
+    """
+    with tempfile.TemporaryDirectory(
+        dir=temp_dir, prefix="dagster_dataframely_"
+    ) as landing:
+        path = Path(landing) / "landed.parquet"
+        # Named rather than left to `auto`, because the streaming engine is the whole reason to land: an engine that chose to collect would pay the write and keep the peak.
+        frame.sink_parquet(path, engine="streaming")
+        return pl.read_parquet(path)
 
 
 def _gate_failure(
@@ -181,10 +214,11 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
+    temp_dir: str | None = None,
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
-    Two stages and five exits. The gate runs first, so a wrong-shaped frame never pays to be filtered. Then `Schema.filter(frame, cast=False)` splits the rows: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Three stages and five exits. The gate runs first, so a wrong-shaped frame never pays to be landed or filtered. A lazy frame then lands to a local parquet and is read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
     Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, rejected rows land next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the good out is skipped rather than materialized empty.
 
@@ -199,6 +233,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
         statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
         row_sample: How many of the good output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
+        temp_dir: Where a lazy frame lands. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields:
         A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the good materialization where there is one, standalone where the good out is skipped.
@@ -206,6 +241,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     Raises:
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
         DagsterInvariantViolationError: The transform returned something that is not a polars frame.
+        FileNotFoundError: `temp_dir` names a directory that does not exist, on a run that had a plan to land.
         SchemaGateError: The frame's columns or dtypes do not match the schema.
         ValidationAbortError: Rows were rejected and no quarantine is declared.
         NothingSurvivedError: Rows were rejected and none survived.
@@ -216,6 +252,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
+    landing_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
     # --- Stage 1: the schema gate ---
     problems: list[dict[str, str]] = gate_problems(schema, frame)
@@ -224,13 +261,19 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         yield _gate_failure(problems, asset_key=good_key)
         raise SchemaGateError(schema.__name__, problems)
 
-    # --- Stage 2: the row filter ---
-    # Eager, not lazy: `filter` already collected, and `row_count` needs the length.
-    result, failure = schema.filter(frame, cast=False)
-    # Annotated because `filter` returns dataframely's phantom `dy.DataFrame[Schema]`, and the out is declared as a plain polars frame.
-    good: pl.DataFrame = (
-        result.collect() if isinstance(result, pl.LazyFrame) else result
+    # --- Stage 2: the temp landing ---
+    # A plan streams to a local parquet and comes back as the frame it produced. An eager frame passes straight through, because there is nothing left to stream.
+    materialized: pl.DataFrame = (
+        _landed_frame(frame, temp_dir=landing_dir)
+        if isinstance(frame, pl.LazyFrame)
+        else frame
     )
+
+    # --- Stage 3: the row filter ---
+    # Eager either way by now, which is what `filter` would have done anyway: it collects internally, and `row_count` needs the length.
+    result, failure = schema.filter(materialized, cast=False)
+    # Annotated because `filter` returns dataframely's phantom `dy.DataFrame[Schema]`, and the out is declared as a plain polars frame.
+    good: pl.DataFrame = result
     rejected: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
     aborting = bool(rejected) and (quarantine_out is None or not len(good))
