@@ -22,6 +22,12 @@ from dagster_dataframely.errors import (
 )
 from dagster_dataframely.metadata import _quarantine_metadata, schema_metadata
 from dagster_dataframely.runtime import AssetYield, process
+from dagster_dataframely.settings import (
+    CHECK_GRANULARITY,
+    MULTI_COLUMN_RULES,
+    Granularity,
+    MultiColumnRules,
+)
 
 TransformFn = Callable[..., pl.DataFrame | pl.LazyFrame]
 
@@ -130,6 +136,8 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     # --- door-owned ---
     schema: type[dy.Schema],
     quarantine: dg.AssetOut | None = None,
+    check_granularity: Granularity | None = None,
+    multi_column_rules: MultiColumnRules | None = None,
     key_prefix: str | Sequence[str] | None = None,
     # --- carried to the outs themselves, matching @dg.asset's vocabulary ---
     io_manager_key: str | None = None,
@@ -159,7 +167,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 ) -> Callable[[TransformFn], dg.AssetsDefinition]:
     """Turns a polars transform into an asset that validates its output against `schema`.
 
-    The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every dataframely rule becomes an asset check with its own pass/fail history, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
+    The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
     The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`. It takes no `context` parameter; the wrapper reaches the context itself.
 
@@ -179,6 +187,8 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     Args:
         schema: The dataframely schema the transform's output must satisfy.
         quarantine: Where rejected rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how rejected rows reach a separate storage and ownership domain. Its key defaults to a sibling of the good asset and its IO manager to the good asset's.
+        check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity: bucketed into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
         key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
         io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
         group_name: Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
@@ -204,10 +214,11 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         pool: Concurrency pool the underlying op runs in.
 
     Returns:
-        A decorator producing a `multi_asset` with one check per rule, and a second out when a quarantine is declared.
+        A decorator producing a `multi_asset` carrying the checks `check_granularity` asks for, and a second out when a quarantine is declared.
 
     Raises:
         CollectionNotSupportedError: `schema` is a `dy.Collection`.
+        InvalidSettingError: A setting resolved to a value outside its vocabulary, from any tier.
         QuarantineSettingError: The quarantine's `dg.AssetOut` sets something one step cannot hold two of.
 
     Example:
@@ -227,6 +238,10 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     # Deliberately narrow: anything else keeps failing however it already fails.
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
+
+    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared.
+    granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
+    multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -283,7 +298,12 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         @dg.multi_asset(
             name=asset_name,
             outs=outs,
-            check_specs=check_specs(schema, asset=key),
+            check_specs=check_specs(
+                schema,
+                asset=key,
+                check_granularity=granularity,
+                multi_column_rules=multi_column,
+            ),
             **forwarded,
         )
         @functools.wraps(fn)
@@ -295,6 +315,8 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
                 context=dg.AssetExecutionContext.get(),
                 good_out=asset_name,
                 quarantine_out=quarantine_name,
+                check_granularity=granularity,
+                multi_column_rules=multi_column,
             )
 
         return compute

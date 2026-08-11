@@ -12,6 +12,30 @@ class DagsterDataframelyError(Exception):
     """Base for every error this package raises."""
 
 
+class InvalidSettingError(DagsterDataframelyError):
+    """A setting resolved to a value outside its vocabulary.
+
+    Raised on resolve, from whichever tier supplied the value, so a typo is a failure at the place it was written rather than a silent misconfiguration everywhere downstream.
+    """
+
+    def __init__(
+        self, setting: str, value: str, allowed: Sequence[str], tier: str, env_var: str
+    ) -> None:
+        """Names the knob, what it got, where that came from, and every tier it could have come from.
+
+        Args:
+            setting: The setting's name, which is also the argument's.
+            value: The value that was rejected.
+            allowed: The setting's whole vocabulary, in the order the docs list it.
+            tier: Where this value came from, worded as a phrase.
+            env_var: The setting's environment variable.
+        """
+        vocabulary: str = ", ".join(f"'{option}'" for option in allowed)
+        super().__init__(
+            f"Setting `{setting}` got '{value}' from {tier}. Allowed values are {vocabulary}. It resolves in three tiers, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+        )
+
+
 class ReservedColumnError(DagsterDataframelyError):
     """A user column sits inside the reserved `dy_` namespace.
 

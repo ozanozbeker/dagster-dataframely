@@ -120,6 +120,26 @@ def test_length_bounds_are_declared_on_exactly_string_and_list():
     )
 
 
+def test_a_struct_emits_one_inner_rule_per_constrained_field():
+    """A `dy.Struct` still generates its fields' rules as `inner_<field>_<rule>`, under the struct column's own name."""
+    # #21 collapses a schema's checks by column, and a struct is where that matters most: every field's rules land on one column, so a ten-field struct is ten checks at `rule` granularity and one at `column`. The `<column>|inner_...` spelling is what puts them there, and a flatter naming upstream would scatter them across columns that do not exist.
+    address = dy.Struct(
+        {
+            "city": dy.String(nullable=False),
+            "postcode": dy.String(nullable=True),
+            "number": dy.Int32(nullable=False, min=1),
+        }
+    )
+
+    assert set(address.validation_rules(pl.col("address"))) == {
+        # The struct's own rule sits beside its fields', which is the whole reason one check per column can hold them all.
+        "nullability",
+        "inner_city_nullability",
+        "inner_number_nullability",
+        "inner_number_min",
+    }
+
+
 def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_allowed():
     """`allow_inf` and `allow_nan` still default to `False`, and still generate their rules only at that default."""
     # #20 draws the line for defaulted constraints here: an `inf` pill on every float column would state something no author asked for, and it could never state anything else, because allowing the value removes the rule instead of inverting it.

@@ -5,6 +5,7 @@ The seam is the `AssetsDefinition` the decorator returns. Everything a user sees
 
 import datetime as dt
 import inspect
+from typing import Any
 
 import dagster as dg
 import dataframely as dy
@@ -19,6 +20,7 @@ from dagster_dataframely import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
+    InvalidSettingError,
     QuarantineSettingError,
     ReservedColumnError,
     dataframely_asset,
@@ -298,6 +300,192 @@ def test_the_gate_check_names_the_schema():
     assert _specs_by_name(orders)["dy_schema__dtypes"].description == (
         "Columns and dtypes match Orders."
     )
+
+
+# --- check granularity ---
+_RULE_BEARING_COLUMNS = {rule.split("|")[0] for rule in _RULES if "|" in rule}
+
+# The rules no single column owns: both `@dy.rule()` bodies and the composite key.
+_MULTI_COLUMN_RULES = [rule for rule in _RULES if "|" not in rule]
+
+
+@dataframely_asset(schema=Orders, name="by_column", check_granularity="column")
+def by_column() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+@dataframely_asset(schema=Orders, name="by_schema", check_granularity="schema")
+def by_schema() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+def test_column_granularity_collapses_to_one_check_per_rule_bearing_column():
+    """A 40-column schema contributes around 120 checks at `rule` granularity, which is a check list nobody reads."""
+    assert set(_specs_by_name(by_column)) == {
+        "dy_schema__dtypes",
+        "dy_schema__rules",
+    } | {f"dy_col__{column}" for column in _RULE_BEARING_COLUMNS}
+
+
+def test_a_column_carrying_no_rule_carries_no_check():
+    """`fulfilled_in` and `payload` are nullable with no constraints, so a check for either would report on nothing."""
+    assert not {"dy_col__fulfilled_in", "dy_col__payload"} & set(
+        _specs_by_name(by_column)
+    )
+
+
+def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
+    """dataframely emits one `inner_<field>_nullability` rule per struct field, so a wide struct is where the check list gets unreadable fastest."""
+
+    class Addresses(dy.Schema):
+        address_id = dy.String(primary_key=True)
+        address = dy.Struct(
+            {f"field_{n}": dy.String(nullable=False) for n in range(10)}, nullable=True
+        )
+
+    @dataframely_asset(schema=Addresses, name="by_rule")
+    def by_rule() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    @dataframely_asset(schema=Addresses, name="collapsed", check_granularity="column")
+    def collapsed() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    struct_checks = [
+        name
+        for name in _specs_by_name(by_rule)
+        if name.startswith("dy_rule__address__")
+    ]
+
+    assert len(struct_checks) == 10
+    assert set(_specs_by_name(collapsed)) == {
+        "dy_schema__dtypes",
+        "dy_schema__rules",
+        "dy_col__address_id",
+        "dy_col__address",
+    }
+
+
+def test_multi_column_rules_bucket_into_the_schema_check_by_default():
+    """They belong to no column, so at column granularity they have no bucket of their own to land in."""
+    specs = _specs_by_name(by_column)
+
+    assert "dy_schema__rules" in specs
+    assert not {f"dy_rule__{rule}" for rule in _MULTI_COLUMN_RULES} & set(specs)
+
+
+def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
+    """The knob is for a schema whose cross-column rules are the ones worth their own history."""
+
+    @dataframely_asset(
+        schema=Orders,
+        name="per_rule",
+        check_granularity="column",
+        multi_column_rules="per_rule",
+    )
+    def per_rule() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    specs = _specs_by_name(per_rule)
+
+    assert {f"dy_rule__{rule}" for rule in _MULTI_COLUMN_RULES} <= set(specs)
+    assert "dy_schema__rules" not in specs
+
+
+def test_the_multi_column_bucket_cannot_be_collided_with_by_a_user_column():
+    """It is `dy_schema__rules` rather than `dy_col__schema` precisely because a column named `schema` is a column somebody has."""
+
+    class Tables(dy.Schema):
+        table_id = dy.String(primary_key=True)
+        schema = dy.String(nullable=False)
+
+    @dataframely_asset(schema=Tables, name="tables", check_granularity="column")
+    def tables() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    specs = _specs_by_name(tables)
+
+    assert "dy_col__schema" in specs
+    assert "dy_schema__rules" in specs
+    assert specs["dy_col__schema"] != specs["dy_schema__rules"]
+
+
+def test_schema_granularity_leaves_one_rules_check_beside_the_gate():
+    assert set(_specs_by_name(by_schema)) == {"dy_schema__dtypes", "dy_schema__rules"}
+
+
+@pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+def test_a_schema_with_no_rules_gets_the_gate_and_nothing_else(granularity: Any):
+    """The gate still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
+
+    class Blob(dy.Schema):
+        payload = dy.String(nullable=True)
+
+    @dataframely_asset(
+        schema=Blob, name=f"blob_{granularity}", check_granularity=granularity
+    )
+    def blob() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert set(_specs_by_name(blob)) == {"dy_schema__dtypes"}
+
+
+@pytest.mark.parametrize("asset", [orders, by_column, by_schema])
+def test_the_gate_is_present_and_blocking_at_every_granularity(
+    asset: dg.AssetsDefinition,
+):
+    """It is not a rule, so it never joins a bucket, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
+    specs = _specs_by_name(asset)
+
+    assert specs["dy_schema__dtypes"].blocking
+    assert not any(
+        spec.blocking for name, spec in specs.items() if name != "dy_schema__dtypes"
+    )
+
+
+def test_a_collapsed_check_names_the_rules_it_reports_for():
+    """The description is where the collapsed detail goes: the check name says `email`, and the constraints it stands for say the rest."""
+    specs = _specs_by_name(by_column)
+
+    assert specs["dy_col__email"].description == (
+        "Every rule on email: not null, lowercase, length <= 254 bytes."
+    )
+    assert specs["dy_schema__rules"].description == (
+        "Every rule of Orders that no single column owns: paid_orders_have_amount, "
+        "line_numbers_are_dense, primary_key."
+    )
+    assert _specs_by_name(by_schema)["dy_schema__rules"].description == (
+        "Every validation rule of Orders."
+    )
+
+
+def test_a_granularity_outside_the_vocabulary_raises_at_the_door():
+    """Definition time, so a misconfiguration never reaches a run.
+
+    The value arrives through an untyped name because the literal is already a static error, and the runtime guard is what a user without a type checker gets.
+    """
+    wrong: Any = "per_column"
+
+    with pytest.raises(InvalidSettingError) as raised:
+
+        @dataframely_asset(schema=Orders, name="misconfigured", check_granularity=wrong)
+        def _misconfigured() -> pl.DataFrame:
+            return pl.DataFrame()
+
+    assert "check_granularity" in str(raised.value)
+
+
+def test_the_environment_variable_sets_the_house_granularity(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """One export in a code location's environment, and every asset in it collapses."""
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "schema")
+
+    @dataframely_asset(schema=Orders, name="house_style")
+    def house_style() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert set(_specs_by_name(house_style)) == {"dy_schema__dtypes", "dy_schema__rules"}
 
 
 # --- definition metadata ---
@@ -806,11 +994,22 @@ _NOT_FORWARDED = {
     # outs, which is what leaves the quarantine free to claim a group of its own.
     "group_name",
 }
-_DOOR_OWNED = {"schema", "key_prefix", "quarantine"}
+_DOOR_OWNED = {
+    "schema",
+    "key_prefix",
+    "quarantine",
+    "check_granularity",
+    "multi_column_rules",
+}
 
 # The door-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
 # one of them: it is `dg.asset` vocabulary that the door happens to own the meaning of.
-_NO_DG_ASSET_COUNTERPART = {"schema", "quarantine"}
+_NO_DG_ASSET_COUNTERPART = {
+    "schema",
+    "quarantine",
+    "check_granularity",
+    "multi_column_rules",
+}
 
 # Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
 _ASSET_LEVEL = {
