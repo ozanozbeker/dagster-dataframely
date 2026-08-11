@@ -23,6 +23,8 @@ This package connects the two:
   Declare a second output and failing rows are routed there with per-rule attribution instead of failing the run.
 - **Storage in the box.**
   `DataframelyParquetIOManager` writes `.parquet` to a local directory or to `s3://`, `gs://` and `az://`, and it is the supported path.
+- **CSV without the losses.**
+  `DataframelyCSVIOManager` writes to the same places, and encodes the five dtypes a CSV cell cannot hold, so the frame you read back equals the frame you wrote.
 
 Dependencies are `dagster` and `dataframely` (plus `polars`) only.
 The IO manager imports `universal-pathlib` and `pydantic` directly, so both are declared too.

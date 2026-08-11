@@ -4,9 +4,12 @@ The asset body owns what the data is; the manager owns where and how it lands. S
 
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
+    - Both managers share one spine, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its two calls into polars.
 """
 
-from typing import TYPE_CHECKING, override
+from abc import abstractmethod
+from collections.abc import Mapping
+from typing import IO, TYPE_CHECKING, override
 
 import polars as pl
 from dagster import (
@@ -18,32 +21,67 @@ from dagster import (
 from pydantic import Field
 from upath import UPath
 
-from dagster_dataframely.errors import UnwritableDtypeError
+from dagster_dataframely import csv_codecs
+from dagster_dataframely.errors import SchemaGateError, UnwritableDtypeError
+from dagster_dataframely.metadata import carried_schema, schema_dtypes
+from dagster_dataframely.runtime import gate_problems
 
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
 
 _STORAGE_KIND_KEY = "dagster/storage_kind"
-_PARQUET_EXTENSION = ".parquet"
 
 # Parquet's only refusal. Polars cannot nest an `Object`, so scanning top-level dtypes is enough.
 _UNWRITABLE_DTYPES: tuple[pl.DataType | type[pl.DataType], ...] = (pl.Object,)
 
 
-class _ParquetIOManager(UPathIOManager):
-    """Writes polars frames to `.parquet`, built by the `DataframelyParquetIOManager` users bind."""
+class _FrameIOManager(UPathIOManager):
+    """What every format in this package does identically: refuse, write, and record three keys.
 
-    extension = _PARQUET_EXTENSION
+    Attributes:
+        storage_kind: The format this manager writes, in Dagster's own vocabulary. The base class's `extension` is derived from it, so a file's suffix, the badge in the event log and the format a refusal names are one string and cannot disagree.
+    """
+
+    storage_kind: str
 
     def __init__(self, base_dir: str) -> None:
         """Roots the manager at `base_dir`, a directory or cloud URI."""
+        self.extension = self._suffix
         super().__init__(base_path=UPath(base_dir))
+
+    @property
+    def _suffix(self) -> str:
+        """The extension, spelled once and narrowed.
+
+        `UPathIOManager` types its own `extension` as `str | None` for a subclass that sets none. Every subclass here sets one, and the two readers that need it as a `str` read it from here.
+        """
+        return f".{self.storage_kind}"
+
+    @abstractmethod
+    def _unwritable(
+        self, dtypes: Mapping[str, pl.DataType]
+    ) -> Mapping[str, pl.DataType]:
+        """Finds the columns this format cannot represent."""
+
+    @abstractmethod
+    def _write(
+        self, context: "OutputContext", frame: pl.DataFrame, file: IO[bytes]
+    ) -> None:
+        """Writes the frame to an open handle on the resolved path."""
+
+    def _check_declaration(
+        self, context: "OutputContext", frame: pl.DataFrame | pl.LazyFrame
+    ) -> None:
+        """Refuses a frame that disagrees with what its asset declares about it.
+
+        Nothing by default: a format whose read needs no declaration cannot be wrong about one.
+        """
 
     @override
     def handle_output(
         self, context: "OutputContext", obj: pl.DataFrame | pl.LazyFrame
     ) -> None:
-        """Rejects what parquet cannot represent, then hands the frame to the base manager.
+        """Rejects what the format cannot represent, then hands the frame to the base manager.
 
         Here rather than in `dump_to_path` so that a rejection writes nothing and creates no directory, and not at definition time because an asset cannot know which IO manager it will be bound to.
         """
@@ -51,14 +89,11 @@ class _ParquetIOManager(UPathIOManager):
             wrong_type = f"This manager writes polars frames, but the output is a {type(obj).__name__}. Annotate the asset `-> None` if it manages its own storage, so that Dagster skips the IO manager entirely."
             raise DagsterInvariantViolationError(wrong_type)
 
-        unwritable = {
-            name: dtype
-            for name, dtype in obj.collect_schema().items()
-            if dtype in _UNWRITABLE_DTYPES
-        }
+        unwritable = self._unwritable(obj.collect_schema())
         if unwritable:
-            raise UnwritableDtypeError(extension=_PARQUET_EXTENSION, columns=unwritable)
+            raise UnwritableDtypeError(extension=self._suffix, columns=unwritable)
 
+        self._check_declaration(context, obj)
         super().handle_output(context, obj)
 
     @override
@@ -74,16 +109,37 @@ class _ParquetIOManager(UPathIOManager):
                 "Collecting a LazyFrame before the write. This manager supports polars DataFrame; "
                 "sinking lazily is planned work, tracked in issue #27."
             )
-        frame = obj.collect() if isinstance(obj, pl.LazyFrame) else obj
+        frame: pl.DataFrame = obj.collect() if isinstance(obj, pl.LazyFrame) else obj
         with path.open("wb") as file:
-            frame.write_parquet(file)
+            self._write(context, frame, file)
 
         context.add_output_metadata(
             {
                 "bytes_written": MetadataValue.int(path.stat().st_size),
-                _STORAGE_KIND_KEY: MetadataValue.text("parquet"),
+                _STORAGE_KIND_KEY: MetadataValue.text(self.storage_kind),
             }
         )
+
+
+class _ParquetIOManager(_FrameIOManager):
+    """Writes polars frames to `.parquet`, built by the `DataframelyParquetIOManager` users bind."""
+
+    storage_kind = "parquet"
+
+    @override
+    def _unwritable(
+        self, dtypes: Mapping[str, pl.DataType]
+    ) -> Mapping[str, pl.DataType]:
+        return {
+            name: dtype for name, dtype in dtypes.items() if dtype in _UNWRITABLE_DTYPES
+        }
+
+    @override
+    def _write(
+        self, context: "OutputContext", frame: pl.DataFrame, file: IO[bytes]
+    ) -> None:
+        """`context` is unused: parquet holds every dtype this manager accepts, so nothing has to be declared."""
+        frame.write_parquet(file)
 
     @override
     def load_from_path(self, context: "InputContext", path: UPath) -> pl.DataFrame:
@@ -93,6 +149,92 @@ class _ParquetIOManager(UPathIOManager):
         """
         with path.open("rb") as file:
             return pl.read_parquet(file)
+
+
+class _CSVIOManager(_FrameIOManager):
+    """Writes polars frames to `.csv`, built by the `DataframelyCSVIOManager` users bind."""
+
+    storage_kind = "csv"
+
+    @override
+    def _unwritable(
+        self, dtypes: Mapping[str, pl.DataType]
+    ) -> Mapping[str, pl.DataType]:
+        return csv_codecs.unwritable(dtypes)
+
+    @override
+    def _check_declaration(
+        self, context: "OutputContext", frame: pl.DataFrame | pl.LazyFrame
+    ) -> None:
+        """Refuses a frame the asset's own schema does not describe.
+
+        The decode reads a column back into the dtype the schema declares, so a schema the frame disagrees with is not an inverse: a `Duration('ns')` written under a declared `Duration('us')` reads back a thousand times too long, with nothing in the file to catch it. That makes the declaration part of what gets written, and a false one a pipeline defect rather than a data one.
+
+        `dataframely_asset` gates the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `runtime.gate_problems`, which is what stops one gate from admitting what the other refuses.
+        """
+        schema = carried_schema(context.definition_metadata)
+        if schema is None:
+            return
+        problems = gate_problems(schema, frame)
+        if problems:
+            raise SchemaGateError(schema.__name__, problems)
+
+    @override
+    def _write(
+        self, context: "OutputContext", frame: pl.DataFrame, file: IO[bytes]
+    ) -> None:
+        """Encodes what a cell cannot hold, names those columns in the run log, then writes plain CSV.
+
+        The log is the only home the codec has. Materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager an asset will bind to, so neither can say that a column landed as base64.
+
+        An encoded column no schema declares is a warning rather than an info line. It is written correctly and any CSV reader can still read it, but this package will hand it back as text, and that is worth saying at the moment it happens rather than at the read that surprises someone.
+        """
+        encoded, columns = csv_codecs.encode(frame)
+        if columns:
+            schema = carried_schema(context.definition_metadata)
+            declared: Mapping[str, pl.DataType] = (
+                {} if schema is None else schema_dtypes(schema)
+            )
+            undeclared = {
+                name: phrase for name, phrase in columns.items() if name not in declared
+            }
+            # Formatted here rather than left to the logger's own deferral, so the event
+            # log a user reads holds the columns rather than a template.
+            named = f"Encoded {len(columns)} column(s) that CSV cannot hold: {csv_codecs.describe(columns)}."
+            if undeclared:
+                message = f"{named} No schema on this asset declares {csv_codecs.describe(undeclared)}, so a read has nothing to decode that with and it comes back as text."
+                context.log.warning(message)
+            else:
+                message = (
+                    f"{named} The schema on this asset decodes them on the way back."
+                )
+                context.log.info(message)
+        encoded.write_csv(file)
+
+    @override
+    def load_from_path(self, context: "InputContext", path: UPath) -> pl.DataFrame:
+        """Reads the file back against the schema the upstream asset declares.
+
+        CSV is the sole reason a read path needs the schema at all. It arrives from the carrier in the upstream asset's definition metadata, so it costs no round trip to storage and cannot drift from the data, because it never came from the data.
+
+        With no schema to read against, this is an ordinary inferred CSV read: every column arrives as whatever polars makes of the text.
+        """
+        upstream = context.upstream_output
+        schema = (
+            None if upstream is None else carried_schema(upstream.definition_metadata)
+        )
+        dtypes: Mapping[str, pl.DataType] = (
+            {} if schema is None else schema_dtypes(schema)
+        )
+
+        with path.open("rb") as file:
+            frame = pl.read_csv(file, schema_overrides=csv_codecs.read_schema(dtypes))
+
+        decoded, columns = csv_codecs.decode(frame, dtypes)
+        if columns:
+            named = f"Decoded {len(columns)} column(s) CSV cannot hold: {csv_codecs.describe(columns)}."
+            context.log.info(named)
+        return decoded
 
 
 class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager]):
@@ -135,3 +277,53 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
         `context` is unused: `base_dir` is the only source of the base path, so the `path` in the event log is always the one the user configured.
         """
         return _ParquetIOManager(base_dir=self.base_dir)
+
+
+class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
+    """Stores polars frames as `.csv` files under `base_dir`, locally or in cloud storage.
+
+    Everything `DataframelyParquetIOManager` does about storage, this does identically: the same universal-pathlib `base_dir`, the same three metadata keys, no column schema, and `UnwritableDtypeError` before the write for a dtype it cannot hold.
+
+    What differs is that a CSV cell holds text. `Duration`, `List`, `Array`, `Struct` and `Binary` are encoded on the way out and decoded on the way back, each by an encoding with a declared inverse, so the frame read back compares equal to the frame written. A run log line names the encoded columns on both paths, because that is the only surface that can carry it.
+
+    **The read needs the schema, so attach the asset's schema to reach it.** The decode reads the dtype off the carrier `dataframely_asset` puts in the asset's definition metadata, which `schema_metadata` also builds for a plain `@dg.asset`. Without one, the read is an ordinary inferred CSV read and an encoded column arrives as text. The schema never comes from a sidecar file and never from the data, so it costs no round trip and cannot drift.
+
+    Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would land a file that no longer round-trips.
+
+    Prefer parquet unless something downstream needs text. Parquet is self-describing, keeps every dtype natively, and needs no schema to read.
+
+    Attributes:
+        base_dir: Directory or cloud URI the manager writes CSV files under.
+
+    Example:
+        >>> import dagster as dg
+        >>> import dataframely as dy
+        >>> import polars as pl
+        >>> import dagster_dataframely as dd
+        >>> class Orders(dy.Schema):
+        ...     order_id = dy.String(primary_key=True)
+        ...     tags = dy.List(dy.String())
+        >>> @dd.dataframely_asset(schema=Orders)
+        ... def orders() -> pl.DataFrame:
+        ...     return pl.DataFrame({"order_id": ["a"], "tags": [["new"]]})
+        >>> defs = dg.Definitions(
+        ...     assets=[orders],
+        ...     resources={
+        ...         "io_manager": dd.DataframelyCSVIOManager(
+        ...             base_dir="s3://my-bucket/warehouse"
+        ...         )
+        ...     },
+        ... )
+    """
+
+    base_dir: str = Field(
+        description="Directory or cloud URI the manager writes CSV files under."
+    )
+
+    @override
+    def create_io_manager(self, context: "InitResourceContext") -> _CSVIOManager:
+        """Builds the manager that does the writing.
+
+        `context` is unused: `base_dir` is the only source of the base path, so the `path` in the event log is always the one the user configured.
+        """
+        return _CSVIOManager(base_dir=self.base_dir)

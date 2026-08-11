@@ -3,8 +3,11 @@
 The seam: the asset body owns what the data is, the IO manager owns where and how it landed. A schema is what the data is, so it lives here and the IO manager never emits it.
 """
 
+from collections.abc import Mapping
+
 import dagster as dg
 import dataframely as dy
+import polars as pl
 
 # `@public` upstream, but absent from `dagster` and with no `MetadataValue.object()` factory. Pinned by its own test (#16).
 from dagster._core.definitions.metadata.metadata_value import (
@@ -129,10 +132,52 @@ def schema_metadata(
     }
 
 
-def _quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
+def carried_schema(
+    definition_metadata: Mapping[str, object],
+) -> type[dy.Schema] | None:
+    """Recovers the live schema class the carrier took to the IO manager.
+
+    The other end of `schema_metadata`. It never re-imports and never reads the data, so what the manager holds is the class the definition declared and cannot drift from it.
+
+    Everything absent returns `None` rather than raising, and one of those cases is load-bearing: `ObjectMetadataValue` keeps the instance only inside the process that built it, so a manager reading across a process boundary gets the label and no object. A CSV then reads back as an ordinary inferred CSV, which is a smaller failure than a run that cannot read its own input.
+
+    Args:
+        definition_metadata: An `OutputContext`'s, or an upstream output's on the read path.
+
+    Returns:
+        The schema, or `None` when the asset declares none or the object did not survive the trip.
+    """
+    carrier = definition_metadata.get(SCHEMA_CARRIER_KEY)
+    if not isinstance(carrier, ObjectMetadataValue):
+        return None
+    schema = carrier.instance
+    if isinstance(schema, type) and issubclass(schema, dy.Schema):
+        return schema
+    return None
+
+
+def schema_dtypes(schema: type[dy.Schema]) -> dict[str, pl.DataType]:
+    """Reads a schema as the polars dtypes it declares, one per column.
+
+    What a reader that is not dataframely needs from a schema: the CSV manager decodes and reads against these, and nothing else on it.
+
+    Args:
+        schema: The schema to read.
+
+    Returns:
+        The declared dtypes, in the schema's own column order.
+    """
+    return {name: column.dtype for name, column in schema.columns().items()}
+
+
+def _quarantine_metadata(
+    schema: type[dy.Schema],
+) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
     """Builds the definition metadata the quarantine out declares.
 
-    The Columns tab only. No schema carrier: the quarantine frame is not schema-shaped, so handing the IO manager an `Orders` carrier for it would be a lie on the read path.
+    Its own Columns tab, because every constraint the good table states is one these rows are here for breaking. Then the same carrier the good out gets, because the two entries answer different questions and only the first of them is about conformance.
+
+    The carrier was withheld at first, on the reading that a table with an outcome column per rule is not schema-shaped. What reads it settles the question: the CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The outcome columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the good table, which is the parity a reader would expect and the earlier reading cost them.
 
     Args:
         schema: The schema whose rejected rows the out holds.
@@ -140,4 +185,7 @@ def _quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     Returns:
         A mapping to hand to `dg.AssetOut(metadata=...)`.
     """
-    return {_COLUMN_SCHEMA_KEY: quarantine_table_schema(schema)}
+    return {
+        _COLUMN_SCHEMA_KEY: quarantine_table_schema(schema),
+        SCHEMA_CARRIER_KEY: ObjectMetadataValue(schema.__name__, instance=schema),
+    }

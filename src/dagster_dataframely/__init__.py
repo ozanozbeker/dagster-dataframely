@@ -12,7 +12,10 @@ from dagster_dataframely.errors import (
     UnwritableDtypeError,
     ValidationAbortError,
 )
-from dagster_dataframely.io_managers import DataframelyParquetIOManager
+from dagster_dataframely.io_managers import (
+    DataframelyCSVIOManager,
+    DataframelyParquetIOManager,
+)
 from dagster_dataframely.metadata import (
     quarantine_table_schema,
     schema_metadata,
@@ -26,6 +29,7 @@ __all__ = [
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
+    "DataframelyCSVIOManager",
     "DataframelyParquetIOManager",
     "Granularity",
     "InvalidSettingError",

@@ -1,7 +1,7 @@
 """Tests for `DataframelyParquetIOManager`.
 
 The seam is `dg.materialize` in-process against `tmp_path`. What Dagster ends up holding is the whole external behaviour of an IO manager: the materialization metadata, and the bytes on disk.
-The manager is schema-agnostic, so every asset here is a plain `@dg.asset` returning a polars frame.
+The manager is schema-agnostic, so every asset here is a plain `@dg.asset` returning a polars frame. That is the difference `test_csv_io_manager.py` exists to cover: everything both managers share is exercised here, on the format that needs no schema.
 """
 
 import datetime as dt
