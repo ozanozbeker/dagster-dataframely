@@ -39,11 +39,11 @@ uv add dagster-dataframely
 
 Requires Python 3.12+.
 
-> [!WARNING]
-> **Pre-release.**
-> This README documents `main`.
-> The `0.0.1` on PyPI is an earlier snapshot and does not carry everything described here.
-> Follow [issue #1](https://github.com/ozanozbeker/dagster-dataframely/issues/1) for progress.
+> [!NOTE]
+> **Pre-1.0.**
+> The public surface is pinned by a test rather than held by convention, so it will not move quietly.
+> It can still move: a `0.x` minor release is where a breaking change lands.
+> Pin `dagster-dataframely>=0.1,<0.2` if that matters to you.
 
 `dagster`, `dataframely` and `polars` are the dependencies.
 The IO managers import `pydantic` and `universal-pathlib` directly, so both are declared too; both already arrive with `dagster`, so nothing new lands in your environment.
