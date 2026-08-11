@@ -29,6 +29,11 @@ from dagster_dataframely._runtime import gate_problems
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
 
+# Exported because nothing in this module's signatures says a read can return a dict: `load_from_path` is typed `-> pl.DataFrame` for the hook, while the `load_input` above it calls that hook once per partition key and assembles the results. A fan-in over every partition therefore lands on the obvious annotation, `pl.DataFrame`, which fails Dagster's type check after every partition has already been read.
+# A plain assignment rather than a `type` statement, because Dagster resolves the annotation at runtime and rejects the `TypeAliasType` a PEP 695 alias produces. `tests/test_upstream_pins.py` pins that refusal.
+# The name is `dagster-polars`', so a user arriving from there writes what they already know, and the lazy half of its pair keeps that name available for whatever #27 decides. Only the half a read can currently return is exported.
+DataFramePartitions = dict[str, pl.DataFrame]
+
 _STORAGE_KIND_KEY = "dagster/storage_kind"
 
 # Parquet's only refusal. Polars cannot nest an `Object`, so scanning top-level dtypes is enough.
