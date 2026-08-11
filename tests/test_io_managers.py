@@ -39,16 +39,35 @@ def _orders() -> pl.DataFrame:
     return _ORDERS
 
 
+_DAYS = dg.StaticPartitionsDefinition(["2026-01-01", "2026-01-02"])
+
+
+def _stamped(day: str) -> pl.DataFrame:
+    """`_ORDERS` carrying the partition key it belongs to, so a file holding the wrong partition's rows is visible."""
+    return _ORDERS.with_columns(pl.lit(day).alias("day"))
+
+
+@dg.asset(name="orders_by_day", partitions_def=_DAYS)
+def _orders_by_day() -> pl.DataFrame:
+    return _stamped(dg.AssetExecutionContext.get().partition_key)
+
+
 def _materialize(
     tmp_path: Path,
     *assets: dg.AssetsDefinition,
     instance: dg.DagsterInstance | None = None,
+    partition_key: str | None = None,
+    selection: str | None = None,
+    raise_on_error: bool = True,
 ) -> dg.ExecuteInProcessResult:
     """Runs `assets` with the manager rooted at `tmp_path`."""
     return dg.materialize(
         list(assets),
         resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
         instance=instance,
+        partition_key=partition_key,
+        selection=selection,
+        raise_on_error=raise_on_error,
     )
 
 
@@ -92,6 +111,57 @@ def test_a_lazy_frame_output_is_collected_and_says_so(tmp_path: Path) -> None:
     assert result.success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), _ORDERS)
     assert any("Collecting a LazyFrame" in message for message in warnings)
+
+
+def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
+    """`UPathIOManager.handle_output` resolves the partition path before it calls `dump_to_path`, so this manager's hooks are partition-blind by design and the layout falls out of the base class. Nothing here is the manager's own code, which is exactly why it is pinned: it works by inheritance and would otherwise break silently (#25)."""
+    read_back: dict[str, pl.DataFrame] = {}
+
+    @dg.asset(name="orders_copy", partitions_def=_DAYS)
+    def orders_copy(orders_by_day: pl.DataFrame) -> None:
+        read_back[dg.AssetExecutionContext.get().partition_key] = orders_by_day
+
+    for day in _DAYS.get_partition_keys():
+        assert _materialize(
+            tmp_path, _orders_by_day, orders_copy, partition_key=day
+        ).success
+
+    assert sorted(path.name for path in (tmp_path / "orders_by_day").iterdir()) == [
+        "2026-01-01.parquet",
+        "2026-01-02.parquet",
+    ]
+    assert read_back["2026-01-01"].equals(_stamped("2026-01-01"))
+    assert read_back["2026-01-02"].equals(_stamped("2026-01-02"))
+
+
+def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
+    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed `-> pl.DataFrame` for the hook, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime."""
+    read_back: dict[str, object] = {}
+
+    @dg.asset(name="rollup")
+    def rollup(orders_by_day: dict[str, pl.DataFrame]) -> None:
+        read_back.update(orders_by_day)
+
+    for day in _DAYS.get_partition_keys():
+        _materialize(tmp_path, _orders_by_day, partition_key=day)
+
+    assert _materialize(tmp_path, _orders_by_day, rollup, selection="rollup").success
+    assert set(read_back) == set(_DAYS.get_partition_keys())
+    assert all(isinstance(frame, pl.DataFrame) for frame in read_back.values())
+
+
+def test_the_natural_fan_in_annotation_is_rejected(tmp_path: Path) -> None:
+    """The trap that makes the annotation above worth pinning: `pl.DataFrame` is the obvious spelling and it fails the Dagster type check, after the frames have already been read."""
+
+    @dg.asset(name="rollup")
+    def rollup(orders_by_day: pl.DataFrame) -> None:
+        pass
+
+    for day in _DAYS.get_partition_keys():
+        _materialize(tmp_path, _orders_by_day, partition_key=day)
+
+    with pytest.raises(dg.DagsterTypeCheckDidNotPass, match="DataFrame"):
+        _materialize(tmp_path, _orders_by_day, rollup, selection="rollup")
 
 
 def test_the_manager_emits_path_bytes_written_and_storage_kind(
