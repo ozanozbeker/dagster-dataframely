@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 import dagster as dg
 import dataframely as dy
+import polars as pl
 from dataframely._rule import Rule
 
 from dagster_dataframely.naming import (
@@ -21,8 +22,10 @@ from dagster_dataframely.naming import (
     validation_rules,
 )
 from dagster_dataframely.rendering import check_description, column_rule_summary
+from dagster_dataframely.samples import Row, sample_metadata, sample_rows
 from dagster_dataframely.settings import (
     CHECK_GRANULARITY,
+    MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
     Granularity,
     MultiColumnRules,
@@ -163,28 +166,71 @@ def check_specs(
     ]
 
 
-def _rule_metadata(rule_name: str, rule: Rule, failed: int) -> dict[str, str | int]:
+#: What `FailureInfo.details()` calls a row a rule rejected.
+_INVALID = "invalid"
+
+
+def _rejected_rows(
+    schema: type[dy.Schema],
+    failure: dy.FailureInfo,
+    counts: dict[str, int],
+    limit: int,
+) -> dict[str, list[Row]]:
+    """Samples the rows each rule rejected, bounded per rule.
+
+    Per rule rather than per check, because a check can stand for a hundred of them: a bound shared across a bucket would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
+
+    Args:
+        schema: The schema the rules belong to.
+        failure: What `Schema.filter` reported.
+        counts: Failure count per rule, which the caller already asked for. Taken rather than read off `failure` again, because `counts()` is an aggregate over the rejected rows rather than a lookup.
+        limit: How many rows to keep per rule. Zero samples nothing and never touches the frame.
+
+    Returns:
+        Up to `limit` rows per rule that rejected anything, keyed by the rule's own name. Rules that rejected nothing are absent, so a caller iterates what failed rather than what exists.
+    """
+    if not limit or not counts:
+        return {}
+    # Bound once: `details()` rebuilds the frame on every call.
+    details: pl.DataFrame = failure.details()
+    # Dropped from every sample: the outcome columns are the quarantine's shape, and the check already says which rule this is.
+    outcomes: list[str] = [
+        rule for rule in validation_rules(schema) if rule in details.collect_schema()
+    ]
+    return {
+        rule: sample_rows(
+            details.filter(pl.col(rule) == _INVALID).drop(outcomes), limit
+        )
+        for rule in counts
+    }
+
+
+def _rule_metadata(
+    rule_name: str, rule: Rule, failed: int, sampled: list[Row]
+) -> dict[str, str | int | dg.TableMetadataValue]:
     """Builds the metadata of a check that reports for one rule."""
-    metadata: dict[str, str | int] = {
+    metadata: dict[str, str | int | dg.TableMetadataValue] = {
         "dy_rule": rule_name,
         # The expression, not the bound: tightening `min` must not rename the check and orphan its history.
         "dy_rule__expr": str(rule.expr),
     }
     if failed:
         metadata["dy_failed_count"] = failed
-    return metadata
+    return metadata | sample_metadata("dy_failed_sample", sampled)
 
 
 def _collapsed_metadata(
-    rules: dict[str, Rule], failed: dict[str, int]
+    rules: dict[str, Rule], failed: dict[str, int], sampled: dict[str, list[Row]]
 ) -> dict[str, dg.TableMetadataValue]:
     """Builds the metadata of a check that reports for several rules.
 
     One row per member rule, which is what collapsing would otherwise cost: the check says whether anything failed, and this says which rules and by how much.
 
     A single total is deliberately absent. Failure counts are per rule and one row can break several, so summing them would state a row count that is not one.
+
+    The sample carries `dy_rule` for the same reason the counts do: a bucket stands for several rules, so a rejected row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
     """
-    return {
+    metadata: dict[str, dg.TableMetadataValue] = {
         "dy_rules": dg.MetadataValue.table(
             [
                 dg.TableRecord(
@@ -198,45 +244,60 @@ def _collapsed_metadata(
             ]
         )
     }
+    attributed: list[Row] = [
+        {"dy_rule": rule_name, **row}
+        for rule_name in failed
+        for row in sampled.get(rule_name, [])
+    ]
+    return metadata | sample_metadata("dy_failed_sample", attributed)
 
 
 def _rule_results(  # noqa: PLR0913 - every knob the specs were derived with has to reach the results, or the two disagree
     schema: type[dy.Schema],
-    counts: dict[str, int],
+    failure: dy.FailureInfo,
     *,
     asset_key: dg.AssetKey,
     severity: dg.AssetCheckSeverity,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
+    max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
-    """Builds one result per check from `FailureInfo.counts()`.
+    """Builds one result per check out of what the filter rejected.
 
     Severity is the run's outcome rather than the rule's: when nothing lands, no failure is a warning.
 
+    The whole `FailureInfo` rather than its counts, because a check reports two things about a rule and they have to come from the same object: how many rows it rejected, and which rows those were.
+
     Args:
         schema: The schema the results report against.
-        counts: Failure count per rule; rules that rejected nothing are absent.
+        failure: What `Schema.filter` reported.
         asset_key: The asset the results hang off. Stated explicitly because the abort path yields results on their own, with no materialization to infer it from.
         severity: Severity for every failing result in this run.
         check_granularity: How far the rules collapse. Pass what the specs were derived with; the door does, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity.
+        max_failure_samples: How many rejected rows each rule shows. Unset resolves through the settings chain.
     """
+    counts: dict[str, int] = failure.counts()
     rules: dict[str, Rule] = validation_rules(schema)
+    sampled: dict[str, list[Row]] = _rejected_rows(
+        schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+    )
     results: list[dg.AssetCheckResult] = []
     for bucket in _buckets(schema, check_granularity, multi_column_rules):
         failed: dict[str, int] = {
             rule_name: counts.get(rule_name, 0) for rule_name in bucket.rules
         }
+        first: str = bucket.rules[0]
         results.append(
             dg.AssetCheckResult(
                 check_name=bucket.name,
                 asset_key=asset_key,
                 passed=not any(failed.values()),
                 severity=severity,
-                metadata=_collapsed_metadata(rules, failed)
+                metadata=_collapsed_metadata(rules, failed, sampled)
                 if bucket.collapsed
                 else _rule_metadata(
-                    bucket.rules[0], rules[bucket.rules[0]], failed[bucket.rules[0]]
+                    first, rules[first], failed[first], sampled.get(first, [])
                 ),
             )
         )

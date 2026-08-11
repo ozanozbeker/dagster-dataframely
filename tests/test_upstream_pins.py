@@ -160,6 +160,7 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
     """`FailureInfo.details()` still returns the invalid rows plus one outcome column per rule."""
     # #19 builds the quarantine frame straight off `details()`: original columns untouched, outcome columns renamed into the reserved namespace.
+    # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows each rule rejected.
     # Guide-documented and upstream-tested, but absent from dataframely's API reference.
     _, failure = Orders.filter(_MIXED_ORDERS)
     details = failure.details()
@@ -175,6 +176,18 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
     assert (
         details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item() == "invalid"
     )
+
+
+def test_the_failure_example_limit_does_not_truncate_the_filter_path():
+    """`dy.Config`'s `max_failure_examples` still governs only the message `validate` builds, and nothing `filter` returns."""
+    # #24 bounds the sample of failing rows in check metadata with the package's own setting. That is only a bound worth having if dataframely is not already applying one, and only package-owned if a project that tightened this one still gets the sample it asked this package for.
+    # Documented as "examples to include in failure messages", which says where it applies but not where it does not.
+    with dy.Config(max_failure_examples=1):
+        _, failure = Orders.filter(_MIXED_ORDERS)
+
+    assert len(failure) == 3
+    assert failure.details().height == 3
+    assert failure.counts()["primary_key"] == 2
 
 
 def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
