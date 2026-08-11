@@ -4,6 +4,7 @@ from dagster_dataframely.errors import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
+    InvalidSettingError,
     NothingSurvivedError,
     QuarantineSettingError,
     ReservedColumnError,
@@ -19,12 +20,16 @@ from dagster_dataframely.metadata import (
 )
 from dagster_dataframely.naming import check_name
 from dagster_dataframely.runtime import process, quarantine_frame
+from dagster_dataframely.settings import Granularity, MultiColumnRules
 
 __all__ = [
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
     "DataframelyParquetIOManager",
+    "Granularity",
+    "InvalidSettingError",
+    "MultiColumnRules",
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",

@@ -513,3 +513,100 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     assert (
         dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value == 2
     )
+
+
+# --- collapsed checks ---
+@dataframely_asset(
+    schema=Orders, name="orders", quarantine=dg.AssetOut(), check_granularity="column"
+)
+def _by_column() -> pl.DataFrame:
+    return mixed_orders()
+
+
+@dataframely_asset(
+    schema=Orders, name="orders", quarantine=dg.AssetOut(), check_granularity="schema"
+)
+def _by_schema() -> pl.DataFrame:
+    return mixed_orders()
+
+
+def _members(evaluation: dg.AssetCheckEvaluation) -> dict[object, object]:
+    """The failure count each member rule of a collapsed check reported."""
+    table = dict(evaluation.metadata)["dy_rules"]
+    assert isinstance(table, dg.TableMetadataValue)
+    return {record.data["rule"]: record.data["failed"] for record in table.records}
+
+
+def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: Path):
+    """Collapsing changes how many checks there are, not what a run found."""
+    evaluations = _evaluations(_materialize(tmp_path, _by_column))
+    failed = {name for name, e in evaluations.items() if not e.passed}
+
+    assert failed == {"dy_col__amount", "dy_col__email", "dy_schema__rules"}
+    assert all(
+        e.severity == dg.AssetCheckSeverity.WARN
+        for name, e in evaluations.items()
+        if name != "dy_schema__dtypes"
+    )
+
+
+def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
+    tmp_path: Path,
+):
+    """The count is what collapsing would otherwise cost, so a bucket carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
+    evaluations = _evaluations(_materialize(tmp_path, _by_column))
+
+    assert _members(evaluations["dy_col__email"]) == {
+        "email|nullability": 0,
+        "email|check__lowercase": 1,
+        "email|max_length": 0,
+    }
+    assert _members(evaluations["dy_col__amount"]) == {
+        "amount|nullability": 0,
+        "amount|min": 1,
+    }
+
+
+def test_a_collapsed_check_carries_the_live_expression_of_every_member(tmp_path: Path):
+    """The same property a rule check has, kept per member: a tightened bound shows up in the timeline rather than orphaning it."""
+    evaluation = _evaluations(_materialize(tmp_path, _by_column))["dy_col__amount"]
+    table = dict(evaluation.metadata)["dy_rules"]
+
+    assert isinstance(table, dg.TableMetadataValue)
+    assert all(record.data["expr"] for record in table.records)
+    assert any('col("amount")' in str(record.data["expr"]) for record in table.records)
+
+
+def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path):
+    evaluations = _evaluations(_materialize(tmp_path, _by_schema))
+    members = _members(evaluations["dy_schema__rules"])
+
+    assert set(evaluations) == {"dy_schema__dtypes", "dy_schema__rules"}
+    assert len(members) == len(Orders._validation_rules(with_cast=False))
+    assert {rule: count for rule, count in members.items() if count} == {
+        "amount|min": 1,
+        "email|check__lowercase": 1,
+        "paid_orders_have_amount": 1,
+    }
+
+
+def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
+    """A bucket reports 0 per member rather than going quiet, so a clean run is a row in its history."""
+
+    @dataframely_asset(schema=Orders, name="orders", check_granularity="column")
+    def spotless() -> pl.DataFrame:
+        return clean_orders()
+
+    evaluations = _evaluations(_materialize(tmp_path, spotless))
+
+    assert all(e.passed for e in evaluations.values())
+    assert set(_members(evaluations["dy_col__email"]).values()) == {0}
+
+
+def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
+    """Per-row attribution stays per rule at every granularity: the check list is a display decision, and the quarantine is the data."""
+    _materialize(tmp_path, _by_column)
+    quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+
+    assert "dy_rule__amount__min" in quarantine.columns
+    assert not [name for name in quarantine.columns if name.startswith("dy_col__")]

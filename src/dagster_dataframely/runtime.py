@@ -16,6 +16,7 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from dagster_dataframely.naming import GATE_CHECK, check_name, validation_rules
+from dagster_dataframely.settings import Granularity, MultiColumnRules
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
@@ -74,22 +75,31 @@ def _gate_failure(
     )
 
 
-def _check_results(
+def _check_results(  # noqa: PLR0913 - every knob the specs were derived with has to reach the results, or the two disagree
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,
     asset_key: dg.AssetKey,
     aborting: bool,
+    check_granularity: Granularity | None,
+    multi_column_rules: MultiColumnRules | None,
 ) -> list[dg.AssetCheckResult]:
     """Builds every check result for a run that made it past the gate.
 
     Severity is derived here, once, from whether the good table landed. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A rejected row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
+
+    The gate is not a rule, so it reports on its own at every granularity and never joins a bucket.
     """
     severity = dg.AssetCheckSeverity.ERROR if aborting else dg.AssetCheckSeverity.WARN
     return [
         dg.AssetCheckResult(check_name=GATE_CHECK, asset_key=asset_key, passed=True),
         *_rule_results(
-            schema, failure.counts(), asset_key=asset_key, severity=severity
+            schema,
+            failure.counts(),
+            asset_key=asset_key,
+            severity=severity,
+            check_granularity=check_granularity,
+            multi_column_rules=multi_column_rules,
         ),
     ]
 
@@ -143,13 +153,15 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     )
 
 
-def process(
+def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door decides has to be passable by hand
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     context: dg.AssetExecutionContext,
     good_out: str,
     quarantine_out: str | None = None,
+    check_granularity: Granularity | None = None,
+    multi_column_rules: MultiColumnRules | None = None,
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
@@ -163,11 +175,14 @@ def process(
         context: The executing asset's context, for resolving each out to its key.
         good_out: The output name the validated frame materializes under.
         quarantine_out: The output name the rejected rows materialize under, or `None` when the asset declares no quarantine.
+        check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the door resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
 
     Yields:
         A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the good materialization where there is one, standalone where the good out is skipped.
 
     Raises:
+        InvalidSettingError: A setting resolved to a value outside its vocabulary.
         DagsterInvariantViolationError: The transform returned something that is not a polars frame.
         SchemaGateError: The frame's columns or dtypes do not match the schema.
         ValidationAbortError: Rows were rejected and no quarantine is declared.
@@ -193,7 +208,14 @@ def process(
     rejected: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
     aborting = bool(rejected) and (quarantine_out is None or not len(good))
-    checks = _check_results(schema, failure, asset_key=good_key, aborting=aborting)
+    checks = _check_results(
+        schema,
+        failure,
+        asset_key=good_key,
+        aborting=aborting,
+        check_granularity=check_granularity,
+        multi_column_rules=multi_column_rules,
+    )
 
     good_result = dg.MaterializeResult(
         asset_key=good_key,

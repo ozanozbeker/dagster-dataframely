@@ -7,6 +7,7 @@ A schema's constraints reach a data consumer at three fidelities:
 | constraint pill | rendered constraint → the rule's own name. Docstring excluded. |
 | check name | always `dy_rule__<rule>`. Identity, never prose. |
 | check description | docstring → `<column> <rendered>` → rule name. |
+| collapsed check description | one column's members: every rendered constraint → that member's own kind. Docstring excluded, for the same reason a pill excludes it. The members no column owns are listed by name instead: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside a comma-separated list. |
 
 The register rule is what keeps the docstring out of a pill: two sibling rules must not read in different voices merely because one author wrote a docstring and the other did not, which from the UI is a change of register with no visible cause. So the rule name is the constant on the constraint surfaces, and the docstring reaches only the description.
 
@@ -15,11 +16,16 @@ Values are rendered but never named: a bound is a parameter, so it belongs in a 
 One rendering is deliberately unhelpful. A `check=` given a bare lambda has no name to recover, so it reads `custom check` wherever it appears: name your checks, `check={"lowercase": ...}`, and the key is what a data consumer sees.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 import dataframely as dy
 
-from dagster_dataframely.naming import rule_description, validation_rules
+from dagster_dataframely.naming import (
+    rule_description,
+    split_rule,
+    validation_rules,
+)
 
 #: What an unnamed `check=` renders as. There is nothing else to recover from a lambda.
 _ANONYMOUS_CHECK = "custom check"
@@ -50,21 +56,6 @@ _FIRST_CLASS = frozenset({"nullability", "unique"})
 _DEFAULTED = frozenset({"inf", "nan"})
 
 _NO_PILL = _FIRST_CLASS | _DEFAULTED
-
-
-def _column_rule(rule_name: str) -> tuple[str, str] | None:
-    """Splits a column rule into the column it belongs to and its own kind.
-
-    The one place this module knows dataframely's delimiter. A schema-level rule has no column half and returns `None`: the delimiter is a character a Python identifier cannot contain, so its presence is the whole test.
-
-    Args:
-        rule_name: The rule name dataframely reports.
-
-    Returns:
-        The column name and the rule's own kind, or `None` for a schema-level rule.
-    """
-    column_name, delimiter, kind = rule_name.partition("|")
-    return (column_name, kind) if delimiter else None
 
 
 def _value(column: dy.Column, kind: str) -> Any:  # noqa: ANN401 - the values are of every constraint's own type
@@ -163,7 +154,7 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
         # A schema with no key columns has no such rule, so the name belongs to a `@dy.rule()` and there is no key to state.
         keys: list[str] = schema.primary_key()
         return f"PK: {', '.join(keys)}" if keys else None
-    parts: tuple[str, str] | None = _column_rule(rule_name)
+    parts: tuple[str, str] | None = split_rule(rule_name)
     if parts is None:
         return None
     column_name, kind = parts
@@ -183,7 +174,7 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
     """
     pills: dict[str, list[str]] = {name: [] for name in schema.columns()}
     for rule_name in validation_rules(schema):
-        parts: tuple[str, str] | None = _column_rule(rule_name)
+        parts: tuple[str, str] | None = split_rule(rule_name)
         if parts is None:
             continue
         column_name, kind = parts
@@ -208,7 +199,7 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
     return [
         rule_text(schema, rule_name) or rule_name
         for rule_name in validation_rules(schema)
-        if _column_rule(rule_name) is None
+        if split_rule(rule_name) is None
     ]
 
 
@@ -230,8 +221,39 @@ def check_description(schema: type[dy.Schema], rule_name: str) -> str:
     rendered: str | None = rule_text(schema, rule_name)
     if rendered is None:
         return rule_name
-    parts: tuple[str, str] | None = _column_rule(rule_name)
+    parts: tuple[str, str] | None = split_rule(rule_name)
     if parts is None:
         return rendered
     column_name, _ = parts
     return f"{column_name} {rendered}"
+
+
+def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> str:
+    """Renders every constraint one column's rules state, for the check that reports them as one.
+
+    A collapsed check's description is the only place its members are visible before a run, so this renders all of them, including the two a pill skips. `not null` has to be said here: there is no column row beside this check saying it instead.
+
+    The column is named once by the check, so it is not repeated per constraint, and a rule with nothing structured to render falls back to its own half of its name.
+
+    Args:
+        schema: The schema the rules belong to.
+        rule_names: One column's rules, in the schema's own order.
+
+    Returns:
+        The constraints, comma-separated.
+
+    Example:
+        >>> import dataframely as dy
+        >>> from dagster_dataframely.rendering import column_rule_summary
+        >>> class Orders(dy.Schema):
+        ...     amount = dy.Float64(nullable=False, min=0.0)
+        >>> column_rule_summary(Orders, ["amount|nullability", "amount|min"])
+        'not null, >= 0.0'
+    """
+    rendered: list[str] = []
+    for rule_name in rule_names:
+        parts: tuple[str, str] | None = split_rule(rule_name)
+        rendered.append(
+            rule_text(schema, rule_name) or (parts[1] if parts else rule_name)
+        )
+    return ", ".join(rendered)

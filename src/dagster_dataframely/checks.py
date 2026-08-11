@@ -1,18 +1,125 @@
 """Asset-check specs derived from a schema, and the results a run reports against them.
 
 Specs come off the schema, never off a run's `FailureInfo`. A rule that rejected nothing still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
+
+How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One bucketing answers that question for both surfaces: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
 """
+
+from dataclasses import dataclass, field
 
 import dagster as dg
 import dataframely as dy
+from dataframely._rule import Rule
 
 from dagster_dataframely.naming import (
     GATE_CHECK,
+    SCHEMA_RULES_CHECK,
     check_name,
+    column_check_name,
+    split_rule,
     validate_namespace,
     validation_rules,
 )
-from dagster_dataframely.rendering import check_description
+from dagster_dataframely.rendering import check_description, column_rule_summary
+from dagster_dataframely.settings import (
+    CHECK_GRANULARITY,
+    MULTI_COLUMN_RULES,
+    Granularity,
+    MultiColumnRules,
+)
+
+
+@dataclass(frozen=True)
+class _Bucket:
+    """The rules one check reports for, and how that check introduces itself.
+
+    Attributes:
+        name: The asset-check name.
+        description: What the check says it covers.
+        rules: The rules it reports for, in the schema's own order.
+        collapsed: Whether the check stands for a set of rules rather than for one rule of its own. It is what the result's metadata shape follows, so a bucket holding a single rule still reports as a set when its siblings do.
+    """
+
+    name: str
+    description: str
+    rules: list[str]
+    collapsed: bool = field(default=False, kw_only=True)
+
+
+def _rule_bucket(schema: type[dy.Schema], rule_name: str) -> _Bucket:
+    """Builds the bucket for a check that is one rule's own, at any granularity."""
+    return _Bucket(
+        check_name(rule_name), check_description(schema, rule_name), [rule_name]
+    )
+
+
+def _buckets(
+    schema: type[dy.Schema],
+    check_granularity: Granularity | None,
+    multi_column_rules: MultiColumnRules | None,
+) -> list[_Bucket]:
+    """Groups a schema's rules under the checks that report for them.
+
+    The one place the settings are read, so the specs and the results cannot resolve them differently.
+
+    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one bucket.
+
+    Args:
+        schema: The schema to read rules from.
+        check_granularity: How far the rules collapse, or `None` to resolve it through the settings chain.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity, or `None` to resolve it through the settings chain. Read nowhere else: the other two granularities have no second place to put them.
+
+    Returns:
+        One bucket per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no buckets at any granularity, because a check reporting for nothing would pass forever.
+    """
+    granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
+    multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
+    rules: dict[str, Rule] = validation_rules(schema)
+    if not rules:
+        return []
+    if granularity == "rule":
+        return [_rule_bucket(schema, rule_name) for rule_name in rules]
+    if granularity == "schema":
+        return [
+            _Bucket(
+                SCHEMA_RULES_CHECK,
+                f"Every validation rule of {schema.__name__}.",
+                list(rules),
+                collapsed=True,
+            )
+        ]
+
+    columns: dict[str, list[str]] = {}
+    unowned: list[str] = []
+    alone: list[str] = []
+    for rule_name in rules:
+        parts: tuple[str, str] | None = split_rule(rule_name)
+        if parts is None:
+            (alone if multi_column == "per_rule" else unowned).append(rule_name)
+        else:
+            columns.setdefault(parts[0], []).append(rule_name)
+
+    buckets: list[_Bucket] = [
+        _Bucket(
+            column_check_name(column),
+            f"Every rule on {column}: {column_rule_summary(schema, members)}.",
+            members,
+            collapsed=True,
+        )
+        for column, members in columns.items()
+    ]
+    if unowned:
+        buckets.append(
+            _Bucket(
+                SCHEMA_RULES_CHECK,
+                # By name, not rendered: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside this comma-separated list.
+                f"Every rule of {schema.__name__} that no single column owns: {', '.join(unowned)}.",
+                unowned,
+                collapsed=True,
+            )
+        )
+    buckets.extend(_rule_bucket(schema, rule_name) for rule_name in alone)
+    return buckets
 
 
 def check_specs(
@@ -20,21 +127,27 @@ def check_specs(
     *,
     # Not `dg.CoercibleToAssetKey`: typing-only, so absent at runtime.
     asset: str | dg.AssetKey,
+    check_granularity: Granularity | None = None,
+    multi_column_rules: MultiColumnRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
-    """Builds one check spec per validation rule, plus the schema gate.
+    """Builds the schema's check specs, plus the schema gate.
 
     Args:
         schema: The schema the checks are derived from.
         asset: The asset key the checks hang off. Build it once and pass the same key to the asset's out, so the two cannot drift.
+        check_granularity: How far the rules collapse: one check per rule, per rule-bearing column, or one for the whole schema. Changing it on an asset that has already run orphans check history, because the old names stop being reported and the new ones start empty. Unset resolves through the settings chain.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity. Unset resolves through the settings chain.
 
     Returns:
-        The gate spec first, then one spec per rule in the schema's own order.
+        The gate spec first, then one spec per bucket.
 
     Raises:
+        InvalidSettingError: A setting resolved to a value outside its vocabulary.
         ReservedColumnError: A user column sits inside the reserved namespace.
         CheckNameCollisionError: Two rules rewrite to the same check name.
     """
     validate_namespace(schema)
+    buckets: list[_Bucket] = _buckets(schema, check_granularity, multi_column_rules)
     gate = dg.AssetCheckSpec(
         GATE_CHECK,
         asset=asset,
@@ -44,24 +157,59 @@ def check_specs(
     return [
         gate,
         *(
-            dg.AssetCheckSpec(
-                check_name(rule),
-                asset=asset,
-                description=check_description(schema, rule),
-            )
-            for rule in validation_rules(schema)
+            dg.AssetCheckSpec(bucket.name, asset=asset, description=bucket.description)
+            for bucket in buckets
         ),
     ]
 
 
-def _rule_results(
+def _rule_metadata(rule_name: str, rule: Rule, failed: int) -> dict[str, str | int]:
+    """Builds the metadata of a check that reports for one rule."""
+    metadata: dict[str, str | int] = {
+        "dy_rule": rule_name,
+        # The expression, not the bound: tightening `min` must not rename the check and orphan its history.
+        "dy_rule__expr": str(rule.expr),
+    }
+    if failed:
+        metadata["dy_failed_count"] = failed
+    return metadata
+
+
+def _collapsed_metadata(
+    rules: dict[str, Rule], failed: dict[str, int]
+) -> dict[str, dg.TableMetadataValue]:
+    """Builds the metadata of a check that reports for several rules.
+
+    One row per member rule, which is what collapsing would otherwise cost: the check says whether anything failed, and this says which rules and by how much.
+
+    A single total is deliberately absent. Failure counts are per rule and one row can break several, so summing them would state a row count that is not one.
+    """
+    return {
+        "dy_rules": dg.MetadataValue.table(
+            [
+                dg.TableRecord(
+                    {
+                        "rule": rule_name,
+                        "failed": count,
+                        "expr": str(rules[rule_name].expr),
+                    }
+                )
+                for rule_name, count in failed.items()
+            ]
+        )
+    }
+
+
+def _rule_results(  # noqa: PLR0913 - every knob the specs were derived with has to reach the results, or the two disagree
     schema: type[dy.Schema],
     counts: dict[str, int],
     *,
     asset_key: dg.AssetKey,
     severity: dg.AssetCheckSeverity,
+    check_granularity: Granularity | None = None,
+    multi_column_rules: MultiColumnRules | None = None,
 ) -> list[dg.AssetCheckResult]:
-    """Builds one result per rule from `FailureInfo.counts()`.
+    """Builds one result per check from `FailureInfo.counts()`.
 
     Severity is the run's outcome rather than the rule's: when nothing lands, no failure is a warning.
 
@@ -70,24 +218,26 @@ def _rule_results(
         counts: Failure count per rule; rules that rejected nothing are absent.
         asset_key: The asset the results hang off. Stated explicitly because the abort path yields results on their own, with no materialization to infer it from.
         severity: Severity for every failing result in this run.
+        check_granularity: How far the rules collapse. Pass what the specs were derived with; the door does, so a run cannot report against a check list it did not declare.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity.
     """
+    rules: dict[str, Rule] = validation_rules(schema)
     results: list[dg.AssetCheckResult] = []
-    for rule, definition in validation_rules(schema).items():
-        failed: int = counts.get(rule, 0)
-        metadata: dict[str, str | int] = {
-            "dy_rule": rule,
-            # The expression, not the bound: tightening `min` must not rename the check and orphan its history.
-            "dy_rule__expr": str(definition.expr),
+    for bucket in _buckets(schema, check_granularity, multi_column_rules):
+        failed: dict[str, int] = {
+            rule_name: counts.get(rule_name, 0) for rule_name in bucket.rules
         }
-        if failed:
-            metadata["dy_failed_count"] = failed
         results.append(
             dg.AssetCheckResult(
-                check_name=check_name(rule),
+                check_name=bucket.name,
                 asset_key=asset_key,
-                passed=not failed,
+                passed=not any(failed.values()),
                 severity=severity,
-                metadata=metadata,
+                metadata=_collapsed_metadata(rules, failed)
+                if bucket.collapsed
+                else _rule_metadata(
+                    bucket.rules[0], rules[bucket.rules[0]], failed[bucket.rules[0]]
+                ),
             )
         )
     return results

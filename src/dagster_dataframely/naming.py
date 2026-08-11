@@ -18,6 +18,10 @@ RESERVED_PREFIX = "dy_"
 #: The gate check. Present at every granularity, always blocking.
 GATE_CHECK = "dy_schema__dtypes"
 
+#: The check the rules no single column owns report through when they are collapsed.
+#: Deliberately not `dy_col__schema`, which a user column named `schema` would collide with, and `schema` is a column somebody has.
+SCHEMA_RULES_CHECK = "dy_schema__rules"
+
 
 def check_name(rule_name: str) -> str:
     """Rewrites a dataframely rule name into an asset-check name.
@@ -39,6 +43,43 @@ def check_name(rule_name: str) -> str:
         'dy_rule__paid_orders_have_amount'
     """
     return f"dy_rule__{rule_name.replace('|', '__')}"
+
+
+def column_check_name(column: str) -> str:
+    """Names the check that reports every rule on one column.
+
+    Args:
+        column: The column the rules belong to.
+
+    Returns:
+        The asset-check name, inside the reserved namespace.
+
+    Example:
+        >>> column_check_name("amount")
+        'dy_col__amount'
+    """
+    return f"dy_col__{column}"
+
+
+def split_rule(rule_name: str) -> tuple[str, str] | None:
+    """Splits a column rule into the column it belongs to and its own kind.
+
+    The one place the package reads dataframely's delimiter rather than rewriting it. A rule that belongs to no single column has no delimiter and returns `None`: `|` is a character a Python identifier cannot contain, so its presence is the whole test.
+
+    Args:
+        rule_name: The rule name dataframely reports.
+
+    Returns:
+        The column name and the rule's own kind, or `None` for a rule no column owns.
+
+    Example:
+        >>> split_rule("amount|min")
+        ('amount', 'min')
+        >>> split_rule("primary_key") is None
+        True
+    """
+    column_name, delimiter, kind = rule_name.partition("|")
+    return (column_name, kind) if delimiter else None
 
 
 def validation_rules(schema: type[dy.Schema]) -> dict[str, Rule]:
