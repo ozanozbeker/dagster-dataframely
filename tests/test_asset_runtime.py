@@ -447,6 +447,37 @@ def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
     ]
 
 
+def test_the_cooccurrence_table_leads_with_the_set_that_broke_the_most_rows(
+    tmp_path: Path,
+):
+    """`cooccurrence_counts()` groups without `maintain_order`, so what it hands over is in no order at all: the same frame twice emits these rows differently, and two runs of the same data then diff as though something changed.
+
+    Sorted here rather than upstream, on the two keys the table is read by: how many rows a set broke, then the names, which is the sort already applied inside each set.
+    """
+    duplicate_break = (
+        mixed_orders()
+        .filter(pl.col("order_id") == "ORD-4")  # amount|min alone
+        .with_columns(
+            pl.lit("ORD-7").alias("order_id"),
+            pl.lit("TRK-ORD-7-1").alias("tracking_id"),
+        )
+    )
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def repeated() -> pl.DataFrame:
+        return pl.concat([mixed_orders(), duplicate_break])
+
+    metadata = _materialized(_materialize(tmp_path, repeated))
+    cooccurrence = metadata[_QUARANTINE_KEY]["cooccurrence"]
+
+    assert isinstance(cooccurrence, dg.TableMetadataValue)
+    assert [dict(record.data) for record in cooccurrence.records] == [
+        {"rules": "dy_rule__amount__min", "count": 2},
+        {"rules": "dy_rule__email__check__lowercase", "count": 1},
+        {"rules": "dy_rule__paid_orders_have_amount", "count": 1},
+    ]
+
+
 def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
     """An empty quarantine partition then means something."""
 
@@ -552,27 +583,15 @@ def _both_ways(
     return eager, lazy
 
 
-def _comparable(name: str, value: dg.MetadataValue[Any]) -> object:
-    """One metadata value, with the single entry whose row order is not stable made stable.
-
-    `cooccurrence` comes from `FailureInfo.cooccurrence_counts()`, whose grouping is unordered: the same eager run twice already emits those rows in a different order, so the order is not a property the landing could preserve or break. What the table says is which rule combinations occurred and how often, and that is what gets compared.
-    """
-    if name == "cooccurrence" and isinstance(value, dg.TableMetadataValue):
-        return sorted(str(record.data) for record in value.records)
-    return value
-
-
 def _reported(result: dg.ExecuteInProcessResult) -> object:
     """Everything the package itself told Dagster, in one comparable value.
 
-    `path` is dropped because it names the directory a run wrote to, and each of the two runs gets its own. `bytes_written` stays in: the same rows through the same writer are the same file, so it is worth asserting rather than excusing.
+    `path` is dropped because it names the directory a run wrote to, and each of the two runs gets its own. Nothing else is normalised, `cooccurrence` included: every table this package emits is ordered by construction, so two runs of the same rows are equal value for value.
     """
     return (
         {
             key.to_user_string(): {
-                name: _comparable(name, value)
-                for name, value in metadata.items()
-                if name != "path"
+                name: value for name, value in metadata.items() if name != "path"
             }
             for key, metadata in _materialized(result).items()
         },

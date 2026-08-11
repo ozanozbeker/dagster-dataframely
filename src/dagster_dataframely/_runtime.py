@@ -186,19 +186,21 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
 
     Rules are named as their asset checks, not as dataframely names them. Both places this table sends a reader spell them that way: the check list, and the quarantine's own columns. The original name lives on `dy_rule` in each check's metadata.
 
+    **The rows are sorted, and they have to be.** `cooccurrence_counts()` builds its mapping out of a `group_by` with no `maintain_order`, so the order it hands over is arbitrary: the same frame twice already emits these rows differently, which makes two runs of the same data diff as though something changed. Biggest group first is also the reading order the table exists for, since the question it answers is which broken upstream field trips the most rows at once. Ties break on the names, which is the same sort this function already applies inside each set.
+
     Args:
         counts: How many rows broke each set of rules together. The key is a `frozenset` and therefore unordered, so it is sorted before rendering.
 
     Returns:
-        One record per co-occurring set, ready for the quarantine's materialization metadata.
+        One record per co-occurring set, most rows first, ready for the quarantine's materialization metadata.
     """
+    # The count is negated so that a plain tuple sort puts the biggest group first and falls back to the names for a tie, in one pass and with no key function.
+    ordered: list[tuple[int, str]] = sorted(
+        (-n, ", ".join(sorted(check_name(rule) for rule in rules)))
+        for rules, n in counts.items()
+    )
     return dg.MetadataValue.table(
-        [
-            dg.TableRecord(
-                {"rules": ", ".join(sorted(check_name(r) for r in rules)), "count": n}
-            )
-            for rules, n in counts.items()
-        ]
+        [dg.TableRecord({"rules": rules, "count": -n}) for n, rules in ordered]
     )
 
 
