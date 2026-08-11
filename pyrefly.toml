@@ -2,10 +2,4 @@
 # See: https://pyrefly.org/en/docs/configuration/
 
 preset = "strict"
-
-project-excludes = ["archive", "docs/probes/ui-surfaces"]
-
-# A search path is an import root, not a recursive sweep, so each root is listed.
-# "." is the repo root, where `tests.scenario` resolves from.
-# Probe scripts import their siblings as top-level modules (`import _core`).
-search-path = [".", "docs/probes/front-door"]
+search-path = ["."]
