@@ -39,6 +39,7 @@ _RULES = [
     "line_no|min",
     "email|nullability",
     "email|check__lowercase",
+    "email|max_length",
     "amount|nullability",
     "amount|min",
     "tracking_id|unique",
@@ -46,6 +47,7 @@ _RULES = [
     "quantity|min",
     "status|nullability",
     "ordered_at|nullability",
+    "tags|max_length",
     "tags|inner_nullability",
     "note|check",
 ]
@@ -233,7 +235,10 @@ def test_user_metadata_cannot_displace_the_packages_own():
 
 # --- checks ---
 def test_there_is_one_check_per_rule_plus_the_gate():
-    """Specs come off the schema, so a clean run still reports on every rule."""
+    """Specs come off the schema, so a clean run still reports on every rule.
+
+    Also the whole of "no rule value appears in any check name": a name is the rule's own name rewritten and nothing else, so tightening `min` leaves the check where it was rather than orphaning its history.
+    """
     expected = {"dy_schema__dtypes"} | {
         f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES
     }
@@ -259,14 +264,34 @@ def test_a_rules_docstring_becomes_its_check_description():
     )
 
 
-def test_a_rule_without_a_docstring_falls_back_to_its_name():
-    """The rendered-constraint rung of the ladder arrives with the renderer (#20)."""
+def test_a_check_without_a_docstring_describes_the_constraint_itself():
+    """The middle rung. A check list reads flat, so the column is named: a bare `>= 0.00` says nothing about which column it bounds."""
     specs = _specs_by_name(orders)
 
-    assert specs["dy_rule__line_numbers_are_dense"].description == (
+    assert specs["dy_rule__amount__min"].description == "amount >= 0.00"
+    assert specs["dy_rule__email__max_length"].description == (
+        "email length <= 254 bytes"
+    )
+    assert specs["dy_rule__order_id__nullability"].description == "order_id not null"
+
+
+def test_the_primary_key_check_describes_the_whole_key():
+    """It is one rule over a struct of every key column, so its description says so rather than naming one of them."""
+    assert _specs_by_name(orders)["dy_rule__primary_key"].description == (
+        "PK: order_id, line_no"
+    )
+
+
+def test_a_rule_with_neither_a_docstring_nor_a_constraint_falls_back_to_its_name():
+    """A `@dy.rule()` body is an arbitrary expression, so there is nothing structured to render and the name is all that is left."""
+    assert _specs_by_name(orders)["dy_rule__line_numbers_are_dense"].description == (
         "line_numbers_are_dense"
     )
-    assert specs["dy_rule__amount__min"].description == "amount|min"
+
+
+def test_no_check_description_is_blank():
+    """The ladder's whole point: every rung is reachable and the last one always holds."""
+    assert all(spec.description for spec in orders.check_specs)
 
 
 def test_the_gate_check_names_the_schema():
@@ -276,9 +301,19 @@ def test_the_gate_check_names_the_schema():
 
 
 # --- definition metadata ---
+def _catalog(asset: dg.AssetsDefinition, key: dg.AssetKey) -> dg.TableSchema:
+    """The Columns tab a data consumer opens."""
+    return asset.metadata_by_key[key][_COLUMN_SCHEMA_KEY]
+
+
+def _columns_of(
+    asset: dg.AssetsDefinition, key: dg.AssetKey
+) -> dict[str, dg.TableColumn]:
+    return {column.name: column for column in _catalog(asset, key).columns}
+
+
 def _columns() -> dict[str, dg.TableColumn]:
-    table_schema = orders.metadata_by_key[dg.AssetKey(["orders"])][_COLUMN_SCHEMA_KEY]
-    return {column.name: column for column in table_schema.columns}
+    return _columns_of(orders, dg.AssetKey(["orders"]))
 
 
 def test_the_columns_tab_is_populated_before_first_materialization():
@@ -307,14 +342,6 @@ def test_every_schema_column_reaches_the_catalog_in_order():
     assert list(_columns()) == list(Orders.columns())
 
 
-def test_no_pill_or_table_constraint_is_emitted_yet():
-    """Pills and the table-level primary key arrive with the renderer (#20)."""
-    table_schema = orders.metadata_by_key[dg.AssetKey(["orders"])][_COLUMN_SCHEMA_KEY]
-
-    assert table_schema.constraints == dg.TableConstraints(other=[])
-    assert all(column.constraints.other == [] for column in table_schema.columns)
-
-
 def test_a_unique_column_says_so():
     """`tracking_id` declares `unique=True`, which dataframely enforces with its own rule and therefore its own check. The catalog has to agree with the check."""
     assert _columns()["tracking_id"].constraints.unique
@@ -325,6 +352,145 @@ def test_a_primary_key_column_never_claims_to_be_unique():
     """dataframely keeps the two flags independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`. Deriving `unique` from `primary_key` would assert a per-column uniqueness that nothing enforces."""
     assert not _columns()["order_id"].constraints.unique
     assert not _columns()["line_no"].constraints.unique
+
+
+# --- constraint pills ---
+class Measurements(dy.Schema):
+    """The constraint shapes `Orders` has no natural column for.
+
+    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to pin one arm of the pill renderer.
+    """
+
+    reading_at = dy.Datetime(resolution="1h")
+    grade = dy.Int32(is_in=[1, 2, 3])
+    depth = dy.Int32(min=0, max=100)
+    ratio = dy.Float64(min_exclusive=0.0, max_exclusive=1.0)
+    corners = dy.Array(dy.Int32(min=0), 2)
+    label = dy.String(
+        min_length=2,
+        # Two lambdas, so dataframely disambiguates them with a counter rather than a name.
+        check=[lambda expr: expr != "", lambda expr: expr == expr.str.strip_chars()],
+    )
+
+
+@dataframely_asset(schema=Measurements)
+def measurements() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+def _measured() -> dict[str, dg.TableColumn]:
+    return _columns_of(measurements, dg.AssetKey(["measurements"]))
+
+
+def test_a_bound_reads_as_an_operator_rather_than_as_a_check_name():
+    """A consumer should see what the bound is, not merely that one exists."""
+    assert _columns()["line_no"].constraints.other == [">= 1"]
+    assert _measured()["depth"].constraints.other == [">= 0", "<= 100"]
+    assert _measured()["ratio"].constraints.other[:2] == ["> 0.0", "< 1.0"]
+
+
+def test_a_length_bound_states_the_unit_it_counts():
+    """`min_length` and `max_length` are spelled the same on both column families and mean different things, so the renderer dispatches on the column type. A bare `length <= 254` would be wrong for any multibyte text."""
+    assert _columns()["email"].constraints.other == [
+        "lowercase",
+        "length <= 254 bytes",
+    ]
+    assert _columns()["tags"].constraints.other == [
+        "length <= 5 elements",
+        "elements not null",
+    ]
+    assert _measured()["label"].constraints.other[-1] == "length >= 2 bytes"
+
+
+def test_the_remaining_constraint_shapes_render_their_value():
+    assert _columns()["order_id"].constraints.other == [r"matches ^ORD-\d+$"]
+    assert _measured()["reading_at"].constraints.other == ["aligned to 1h"]
+    assert _measured()["grade"].constraints.other == ["in (1, 2, 3)"]
+
+
+def test_a_named_check_renders_its_key_and_an_anonymous_one_says_it_is_one():
+    """The nudge to name a check: `custom check` is all an unnamed lambda leaves to render, and dataframely's counter suffix is not a name anybody wrote."""
+    assert "lowercase" in _columns()["email"].constraints.other
+    assert _columns()["note"].constraints.other == ["custom check"]
+    assert _measured()["label"].constraints.other[:2] == [
+        "custom check",
+        "custom check",
+    ]
+
+
+def test_a_nested_columns_rules_render_as_constraints_on_its_elements():
+    """A `List` or an `Array` runs its inner column's rules over the elements, so the renderer recurses into it rather than falling back to `inner_min` on a surface that is supposed to read as operators."""
+    assert _measured()["corners"].constraints.other == [
+        "elements not null",
+        "elements >= 0",
+    ]
+
+
+def test_a_constraint_dagster_models_first_class_is_not_repeated_as_a_pill():
+    """`nullable` and `unique` have their own fields on `TableColumnConstraints`, so a pill saying the same thing would double every column's constraint list."""
+    assert _columns()["quantity"].constraints.other == [">= 1"]
+    assert _columns()["tracking_id"].constraints.other == []
+
+
+def test_a_constraint_left_at_its_dataframely_default_renders_no_pill():
+    """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the pill could never say anything but the default and says nothing at all. The checks still exist and still report."""
+    assert _measured()["ratio"].constraints.other == ["> 0.0", "< 1.0"]
+    assert {"dy_rule__ratio__inf", "dy_rule__ratio__nan"} <= set(
+        _specs_by_name(measurements)
+    )
+
+
+def test_sibling_rules_render_in_one_voice_on_the_constraint_surface():
+    """`paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not. A docstring reaching this surface would put two sibling rules in different registers for a reason invisible from the UI, so the name is the constant here and the docstring reaches only the check description."""
+    assert _catalog(orders, dg.AssetKey(["orders"])).constraints.other == [
+        "paid_orders_have_amount",
+        "line_numbers_are_dense",
+        "PK: order_id, line_no",
+    ]
+
+
+def test_the_primary_key_is_stated_once_at_table_level():
+    """dataframely models it as one rule over a struct of every key column, and stating it once is what distinguishes a composite key from two independent single-column ones."""
+    table_schema = _catalog(orders, dg.AssetKey(["orders"]))
+
+    assert "PK: order_id, line_no" in table_schema.constraints.other
+    assert not any(
+        "PK" in pill
+        for column in table_schema.columns
+        for pill in column.constraints.other
+    )
+
+
+class Ledger(dy.Schema):
+    """A key member that also declares `unique=True`, which `Orders` has nowhere to put.
+
+    dataframely keeps the two flags independent, so `entry_id` carries both rules: the composite `primary_key` over the pair, and its own `entry_id|unique` over itself.
+    """
+
+    entry_id = dy.String(primary_key=True, unique=True)
+    posted_at = dy.Datetime(primary_key=True)
+
+
+@dataframely_asset(schema=Ledger)
+def ledger() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+def test_a_key_member_reads_not_null_and_claims_uniqueness_only_where_it_declared_it():
+    """dataframely forbids a nullable key column, so `not null` is free. `unique` is not: on a composite key only the tuple is unique, and `{"a": ["x", "x"], "b": [1, 2]}` passes."""
+    columns = _columns_of(ledger, dg.AssetKey(["ledger"]))
+
+    assert not columns["entry_id"].constraints.nullable
+    assert not columns["posted_at"].constraints.nullable
+    assert columns["entry_id"].constraints.unique
+    assert not columns["posted_at"].constraints.unique
+    assert "dy_rule__entry_id__unique" in _specs_by_name(ledger)
+
+
+def test_a_schema_with_no_primary_key_states_no_table_constraint():
+    assert _catalog(measurements, dg.AssetKey(["measurements"])).constraints == (
+        dg.TableConstraints(other=[])
+    )
 
 
 def test_the_schema_carrier_holds_the_live_class_under_an_explicit_label():
@@ -500,8 +666,7 @@ def test_the_quarantine_setting_error_names_the_setting_and_the_door():
 
 
 def _quarantine_columns() -> dict[str, dg.TableColumn]:
-    table_schema = quarantined.metadata_by_key[_QUARANTINE_KEY][_COLUMN_SCHEMA_KEY]
-    return {column.name: column for column in table_schema.columns}
+    return _columns_of(quarantined, _QUARANTINE_KEY)
 
 
 def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
@@ -515,10 +680,13 @@ def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
 
 
 def test_the_quarantine_mirror_carries_no_constraint():
-    """These rows are here precisely because they violate them."""
+    """These rows are here precisely because they violate them. The primary key above all: the rejected rows are exactly where a duplicate key ends up."""
     assert all(
         column.constraints == dg.TableColumnConstraints()
         for column in _quarantine_columns().values()
+    )
+    assert _catalog(quarantined, _QUARANTINE_KEY).constraints == dg.TableConstraints(
+        other=[]
     )
 
 

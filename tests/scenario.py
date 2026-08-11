@@ -25,6 +25,7 @@ class Orders(dy.Schema):
     - The composite primary key is the case where a per-column `unique` constraint would be false, and `tracking_id` is the case where it is true. dataframely keeps `primary_key` and `unique` independent, so both have to be exercised.
     - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, which is the description ladder's fork (#17).
     - `email` names its check and `note` leaves it anonymous, which is the check-name renderer's fork (#20).
+    - `email` and `tags` spell `max_length` identically and mean different things by it, bytes against elements, which is the pill renderer's unit fork (#20).
     - `amount` carries free-form `metadata=` with a non-string value, which is the only dataframely attribute that reaches Dagster's column tags.
     """
 
@@ -36,6 +37,7 @@ class Orders(dy.Schema):
     line_no = dy.Int32(primary_key=True, min=1)
     email = dy.String(
         nullable=False,
+        max_length=254,
         check={"lowercase": lambda expr: expr.str.to_lowercase() == expr},
         description="Customer contact address.",
     )
@@ -58,7 +60,7 @@ class Orders(dy.Schema):
     ordered_at = dy.Datetime(nullable=False)
     fulfilled_in = dy.Duration(nullable=True)
     payload = dy.Binary(nullable=True)
-    tags = dy.List(dy.String(), nullable=True)
+    tags = dy.List(dy.String(), nullable=True, max_length=5)
     note = dy.String(nullable=True, check=lambda expr: expr.str.len_chars() < 100)
 
     @dy.rule()

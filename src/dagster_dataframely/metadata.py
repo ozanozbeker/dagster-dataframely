@@ -12,6 +12,7 @@ from dagster._core.definitions.metadata.metadata_value import (
 )
 
 from dagster_dataframely.naming import check_name, validation_rules
+from dagster_dataframely.rendering import column_constraints, table_constraints
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"
@@ -30,7 +31,7 @@ def _tags(column: dy.Column) -> dict[str, str] | None:
 def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects a schema onto Dagster's Columns tab.
 
-    Dtype, description, nullability, uniqueness and tags. Constraint pills and the table-level primary key arrive with the renderer (#20).
+    Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as pills, and the primary key once at table level.
 
     `unique` is read from the column's own flag and never derived from `primary_key`. dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
 
@@ -42,6 +43,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     Returns:
         A table schema whose columns are in the schema's own order.
     """
+    pills: dict[str, list[str]] = column_constraints(schema)
     return dg.TableSchema(
         columns=[
             dg.TableColumn(
@@ -49,21 +51,24 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                 type=str(column.dtype),
                 description=column.description,
                 constraints=dg.TableColumnConstraints(
-                    nullable=column.nullable, unique=column.unique
+                    nullable=column.nullable,
+                    unique=column.unique,
+                    other=pills[name],
                 ),
                 tags=_tags(column),
             )
             for name, column in schema.columns().items()
-        ]
+        ],
+        constraints=dg.TableConstraints(other=table_constraints(schema)),
     )
 
 
 def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects the quarantine's shape onto its own Columns tab.
 
-    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` pill on a column full of nulls would state something false about every row in the table.
+    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` pill on a column full of nulls would state something false about every row in the table. The primary key above all, which is why it is stated table-level on the good table and nowhere here: the rejected rows are exactly where a duplicate key ends up.
 
-    Its own function rather than a flag on `table_schema`, even though the two comprehensions read alike today. They are about to diverge: `table_schema` gains constraint pills and a table-level primary key with the renderer (#20), and every one of those is a claim this table cannot make.
+    Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 
     Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` dataframely produces, because the cast happens before the write.
 

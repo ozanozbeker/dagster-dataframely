@@ -9,10 +9,10 @@ import dataframely as dy
 from dagster_dataframely.naming import (
     GATE_CHECK,
     check_name,
-    rule_description,
     validate_namespace,
     validation_rules,
 )
+from dagster_dataframely.rendering import check_description
 
 
 def check_specs(
@@ -47,8 +47,7 @@ def check_specs(
             dg.AssetCheckSpec(
                 check_name(rule),
                 asset=asset,
-                # The rendered-constraint rung of the ladder arrives with #20.
-                description=rule_description(schema, rule) or rule,
+                description=check_description(schema, rule),
             )
             for rule in validation_rules(schema)
         ),
