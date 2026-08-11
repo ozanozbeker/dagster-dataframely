@@ -132,14 +132,31 @@ class _Flag(_Knob[bool]):
         """
         parsed: bool | None = _FLAG_WORDS.get(value.lower())
         if parsed is None:
-            raise InvalidSettingError(
-                self.name,
-                value,
-                tuple(_FLAG_WORDS),
-                tier=self._environment_tier,
-                env_var=self.env_var,
-            )
+            raise self._rejected(value, self._environment_tier)
         return parsed
+
+    @override
+    def _checked(self, value: bool, tier: str) -> bool:
+        """Rejects everything a `bool` annotation does not.
+
+        The annotation alone is not enough, and this is the shape where trusting it fails silently rather than loudly. `statistics="false"` is a non-empty string, so an unchecked argument tier resolves to the word and turns the pass *on*, which is the opposite of what was written. The environment tier spells the same instruction exactly that way, which is what makes the mistake reachable rather than hypothetical.
+
+        Raises:
+            InvalidSettingError: The value is not a `bool`.
+        """
+        if type(value) is not bool:
+            raise self._rejected(value, tier)
+        return value
+
+    def _rejected(self, value: object, tier: str) -> InvalidSettingError:
+        """Builds the error every tier raises, so no two of them can word the same rejection differently."""
+        return InvalidSettingError(
+            self.name,
+            str(value),
+            tuple(_FLAG_WORDS),
+            tier=tier,
+            env_var=self.env_var,
+        )
 
 
 #: What a count accepts, worded rather than listed: the vocabulary is a range, so there is nothing to enumerate.

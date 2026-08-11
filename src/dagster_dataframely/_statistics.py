@@ -62,6 +62,9 @@ def _record(column: str, stats: Mapping[str, object]) -> dg.TableRecord:
     Args:
         column: The column the row is about, which is the table's first cell.
         stats: The aggregates, keyed by statistic name, in the order the table shows them.
+
+    Returns:
+        One record: the column's name, then its statistics in the order they were computed, each already rendered as a cell a table accepts.
     """
     return dg.TableRecord(
         {"column": column}
@@ -188,6 +191,9 @@ def _family_table(
         frame: The frame that materialized.
         columns: The family's columns and their dtypes, in the frame's own order.
         aggregate: The family's aggregate, applied to each of them.
+
+    Returns:
+        The family's table, one row per column in the frame's own order.
     """
     # One row of structs, one struct per column: `Any` is what a row of anything comes back as.
     stats: dict[str, Any] = frame.select(

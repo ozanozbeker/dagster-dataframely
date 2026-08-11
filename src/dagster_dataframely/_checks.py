@@ -276,6 +276,9 @@ def _rule_results(  # noqa: PLR0913 - every knob the specs were derived with has
         check_granularity: How far the rules collapse. Pass what the specs were derived with; the door does, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity.
         max_failure_samples: How many rejected rows each rule shows. Unset resolves through the settings chain.
+
+    Returns:
+        One result per bucket, in the same order and under the same names `check_specs` claimed, because both read the buckets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
     """
     counts: dict[str, int] = failure.counts()
     rules: dict[str, Rule] = validation_rules(schema)

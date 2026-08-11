@@ -20,6 +20,7 @@ from dagster_dataframely._settings import (
     ROW_SAMPLE,
     STATISTICS,
     _Count,
+    _Flag,
     _Setting,
 )
 
@@ -34,11 +35,17 @@ _WRONG: Any = "per_column"
 _FRACTION: Any = 2.5
 _YES: Any = True
 
+# The same, for the two-valued shape. It is the environment tier's own spelling, which is what makes it the word somebody writes into the argument by mistake.
+_WORD: Any = "false"
+
 # A setting whose package default is already outside its own vocabulary. The shipped knobs cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
 _BROKEN = _Setting[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
 
 # The same, one shape along: a count whose default is a number it does not accept.
 _BROKEN_COUNT = _Count(name="fake_count", default=-1)
+
+# And one along again: a flag whose default is the word for a value rather than the value.
+_BROKEN_FLAG = _Flag(name="fake_flag", default=_WORD)
 
 
 def test_a_knob_nobody_touched_is_the_package_default():
@@ -107,6 +114,20 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     assert "statistics" in message
     assert "'true', 'false'" in message
     assert _STATISTICS_ENV in message
+
+
+def test_a_flag_rejects_a_word_from_the_argument_tier():
+    """The one shape where an unvalidated argument is silently the *opposite* of what was written.
+
+    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment tier spells the same instruction exactly that way, which is what makes the mistake reachable rather than hypothetical.
+    """
+    with pytest.raises(InvalidSettingError) as raised:
+        STATISTICS.resolve(_WORD)
+    message = str(raised.value)
+
+    assert "statistics" in message
+    assert "'false'" in message
+    assert "argument" in message
 
 
 def test_a_count_reads_the_environment_tier_as_a_number(
@@ -214,6 +235,11 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
         _BROKEN_COUNT.resolve(None)
 
     assert "'-1'" in str(raised.value)
+
+    with pytest.raises(InvalidSettingError) as raised:
+        _BROKEN_FLAG.resolve(None)
+
+    assert "package default" in str(raised.value)
 
 
 def test_the_error_names_the_setting_the_value_and_the_tier_order():
