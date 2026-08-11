@@ -3,10 +3,6 @@
 
 target-version = "py312"
 
-# Keep direct `ruff` runs aligned with prek (global `exclude = "archive/"`) and
-# pyrefly (`project-excludes`): the archive is reference-only and stays unlinted.
-extend-exclude = ["archive"]
-
 [lint]
 select = ["ALL"]
 ignore = [
@@ -41,21 +37,7 @@ classmethod-decorators = ["dataframely.rule"]
   "D104",  # pydocstyle > undocumented-public-package
   "F401",  # Pyflakes > unused-import
 ]
-# Marimo notebook related ignores
-"**/notebooks/**" = [
-  "ANN",  # flake8-annotations > ALL
-  "B018",  # flake8-bugbear > useless-expression
-  "D",  # pydocstyle > ALL
-  "ERA001",  # eradicate > commented-out-code
-  "INP001",  # flake8-implicit-namespace-package > implicit-namespace-package
-  "N802",  # pep8-naming > invalid-function-name
-  "N806",  # pep8-naming > non-lowercase-variable-in-function (marimo cell vars)
-  "PLC0415",  # Pylint Convention > import-outside-top-level (marimo cell imports)
-  "PLR1711",  # Pylint Refactor > useless-return (marimo cell return)
-  "PLR2004",  # Pylint Refactor > magic-value-comparison
-  "S608",  # flake8-bandit > hardcoded-sql-expression (local DuckDB f-string SQL)
-  "T20",  # flake8-print > ALL
-]
+
 # Pytest related ignores
 "**/tests/**/*.py" = [
   "ANN",  # flake8-annotations > ALL
@@ -68,47 +50,9 @@ classmethod-decorators = ["dataframely.rule"]
   "S101",  # flake8-bandit > assert
   "SLF001",  # flake8-self > private-member-access
 ]
-# Script related ignores (any scripts/ directory, at any depth)
-"**/scripts/**/*.py" = [
-  "D",  # pydocstyle > ALL
-  "INP001",  # flake8-no-pep420 > implicit-namespace-package
-  "T20",  # flake8-print > ALL
-]
-# The kept UI probe: its specimens are frozen evidence, so they are linted but
-# not reshaped. Annotations on specimen asset fns are load-bearing in Dagster
-# (they feed the output-type surface the probe measures), `self` on @dy.rule
-# bodies is the #10 workaround, and renderer complexity belongs to the specimen.
-"docs/probes/ui-surfaces/probe.py" = [
-  "ANN",  # flake8-annotations > ALL
-  "C901",  # mccabe > complex-structure
-  "N804",  # pep8-naming > invalid-first-argument-name-for-class-method
-  "PLR0911",  # Pylint Refactor > too-many-return-statements
-  "PLR0912",  # Pylint Refactor > too-many-branches
-]
-# Probe related ignores: executable demo scripts under docs/probes/, linted for
-# quality but exempt from rules that fight what a probe is for
-"docs/probes/**/*.py" = [
-  "ANN401",  # flake8-annotations > any-type (passthrough **kwargs mirror Dagster's dynamic surface)
-  "D",  # pydocstyle > ALL (module docstrings carry the context; demo fns stay bare)
-  "DTZ001",  # flake8-datetimez > call-datetime-without-tzinfo (sample stamps are naive by schema design)
-  "INP001",  # flake8-no-pep420 > implicit-namespace-package
-  "PLR0913",  # Pylint Refactor > too-many-arguments (the door signature under test)
-  "PLR2004",  # Pylint Refactor > magic-value-comparison (demo data)
-  "SLF001",  # flake8-self > private-member-access (Schema._validation_rules: banked pin-and-assert, #8)
-  "T20",  # flake8-print > ALL (demos print their state)
-]
-# Typer related ignores
-"**/cli/**" = [
-  "ARG001",  # flake8-unused-arguments > unused-function-argument
-  "FBT001",  # flake8-boolean-trap > boolean-type-hint-positional-argument
-  "FBT002",  # flake8-boolean-trap > boolean-default-value-positional-argument
-  "PLR0913",  # Pylint Refactor > too-many-arguments
-  "T20",  # flake8-print > ALL
-  "TRY301",  # tryceratops > raise-within-try
-]
+
 # Dagster related ignores
-# A definitions.py holds the code location entry point and nothing else, so both
-# the module and its `defs()` would be documenting the same one fact.
+# A definitions.py holds the code location entry point and nothing else, so both the module and its `defs()` would be documenting the same one fact.
 "**/definitions.py" = [
   "D100",
   "D103",
