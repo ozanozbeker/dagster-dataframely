@@ -2,7 +2,7 @@
 
 `resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The knobs the package ships are exercised through it, and a fake setting covers the one tier a shipped knob cannot reach: its own default is valid by construction.
 
-A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it.
+A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed.
 """
 
 import importlib
@@ -15,25 +15,38 @@ import dagster_dataframely
 from dagster_dataframely import InvalidSettingError
 from dagster_dataframely.settings import (
     CHECK_GRANULARITY,
+    MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
+    ROW_SAMPLE,
     STATISTICS,
+    _Count,
     _Setting,
 )
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
+_ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow: it is what a user without one gets.
 _WRONG: Any = "per_column"
 
+# The same, for the shape whose vocabulary a type checker narrows to `int`.
+_FRACTION: Any = 2.5
+_YES: Any = True
+
 # A setting whose package default is already outside its own vocabulary. The shipped knobs cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
 _BROKEN = _Setting[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
+
+# The same, one shape along: a count whose default is a number it does not accept.
+_BROKEN_COUNT = _Count(name="fake_count", default=-1)
 
 
 def test_a_knob_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
     assert MULTI_COLUMN_RULES.resolve(None) == "schema"
     assert STATISTICS.resolve(None) is True
+    assert MAX_FAILURE_SAMPLES.resolve(None) == 5
+    assert ROW_SAMPLE.resolve(None) == 5
 
 
 def test_the_environment_variable_beats_the_package_default(
@@ -57,6 +70,8 @@ def test_every_setting_names_its_environment_variable_after_itself():
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert MULTI_COLUMN_RULES.env_var == "DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES"
     assert STATISTICS.env_var == _STATISTICS_ENV
+    assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
+    assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
 
 
 def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
@@ -94,6 +109,81 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     assert _STATISTICS_ENV in message
 
 
+def test_a_count_reads_the_environment_tier_as_a_number(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The other shape that has to parse rather than match, and the one where a wrong reading would be silent: `'0'` is a string every truthiness test calls true."""
+    monkeypatch.setenv(_ROW_SAMPLE_ENV, "3")
+    assert ROW_SAMPLE.resolve(None) == 3
+
+    monkeypatch.setenv(_ROW_SAMPLE_ENV, "0")
+    assert ROW_SAMPLE.resolve(None) == 0
+
+
+def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Zero is what turns a sample off, so the tier test cannot be truthiness: with the tier below saying 5, the knob would be impossible to turn off."""
+    monkeypatch.setenv(_ROW_SAMPLE_ENV, "5")
+
+    assert ROW_SAMPLE.resolve(0) == 0
+
+
+def test_a_count_rejects_a_negative_from_the_argument_tier():
+    with pytest.raises(InvalidSettingError) as raised:
+        MAX_FAILURE_SAMPLES.resolve(-1)
+    message = str(raised.value)
+
+    assert "max_failure_samples" in message
+    assert "'-1'" in message
+    assert "non-negative integers" in message
+    assert "package default" in message
+    assert "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES" in message
+    assert "argument" in message
+
+
+def test_a_count_rejects_a_negative_from_the_environment_tier(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv(_ROW_SAMPLE_ENV, "-1")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        ROW_SAMPLE.resolve(None)
+
+    assert _ROW_SAMPLE_ENV in str(raised.value)
+
+
+def test_a_count_rejects_a_word_the_environment_tier_cannot_read_as_a_number(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The same error a negative gets, so a deployment never has to tell two failures apart."""
+    monkeypatch.setenv(_ROW_SAMPLE_ENV, "five")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        ROW_SAMPLE.resolve(None)
+    message = str(raised.value)
+
+    assert "row_sample" in message
+    assert "'five'" in message
+    assert "non-negative integers" in message
+
+
+def test_a_count_rejects_a_fraction():
+    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, exactly like a value outside a vocabulary."""
+    with pytest.raises(InvalidSettingError) as raised:
+        ROW_SAMPLE.resolve(_FRACTION)
+
+    assert "'2.5'" in str(raised.value)
+
+
+def test_a_count_rejects_a_bool():
+    """`True` is an `int` in Python, so a knob confused with `statistics` would otherwise resolve to one row and say nothing."""
+    with pytest.raises(InvalidSettingError) as raised:
+        ROW_SAMPLE.resolve(_YES)
+
+    assert "'True'" in str(raised.value)
+
+
 def test_a_value_outside_the_vocabulary_raises_from_the_argument_tier():
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
@@ -119,6 +209,11 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
         _BROKEN.resolve(None)
 
     assert "nonsense" in str(raised.value)
+
+    with pytest.raises(InvalidSettingError) as raised:
+        _BROKEN_COUNT.resolve(None)
+
+    assert "'-1'" in str(raised.value)
 
 
 def test_the_error_names_the_setting_the_value_and_the_tier_order():

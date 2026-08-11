@@ -24,7 +24,9 @@ from dagster_dataframely.metadata import _quarantine_metadata, schema_metadata
 from dagster_dataframely.runtime import AssetYield, process
 from dagster_dataframely.settings import (
     CHECK_GRANULARITY,
+    MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
+    ROW_SAMPLE,
     STATISTICS,
     Granularity,
     MultiColumnRules,
@@ -139,7 +141,9 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     quarantine: dg.AssetOut | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
+    max_failure_samples: int | None = None,
     statistics: bool | None = None,
+    row_sample: int | None = None,
     key_prefix: str | Sequence[str] | None = None,
     # --- carried to the outs themselves, matching @dg.asset's vocabulary ---
     io_manager_key: str | None = None,
@@ -191,7 +195,9 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         quarantine: Where rejected rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how rejected rows reach a separate storage and ownership domain. Its key defaults to a sibling of the good asset and its IO manager to the good asset's.
         check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
         multi_column_rules: Where the rules no single column owns land at `column` granularity: bucketed into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
-        statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the good out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either setting, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
+        max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
+        statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the good out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either setting, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample knobs are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
+        row_sample: How many of the good output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
         key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
         io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
         group_name: Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
@@ -242,10 +248,12 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
 
-    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. `statistics` reaches no definition-time surface, but it resolves here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run happens to reach it first.
+    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three reach no definition-time surface, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run happens to reach it first.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
+    failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
+    sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -321,7 +329,9 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
                 quarantine_out=quarantine_name,
                 check_granularity=granularity,
                 multi_column_rules=multi_column,
+                max_failure_samples=failure_samples,
                 statistics=emit_statistics,
+                row_sample=sampled_rows,
             )
 
         return compute

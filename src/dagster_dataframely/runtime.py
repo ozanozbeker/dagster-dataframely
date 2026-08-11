@@ -16,7 +16,14 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from dagster_dataframely.naming import GATE_CHECK, check_name, validation_rules
-from dagster_dataframely.settings import STATISTICS, Granularity, MultiColumnRules
+from dagster_dataframely.samples import SAMPLE_KEY, sample_metadata, sample_rows
+from dagster_dataframely.settings import (
+    MAX_FAILURE_SAMPLES,
+    ROW_SAMPLE,
+    STATISTICS,
+    Granularity,
+    MultiColumnRules,
+)
 from dagster_dataframely.statistics import statistics_metadata
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
@@ -90,6 +97,7 @@ def _check_results(  # noqa: PLR0913 - every knob the specs were derived with ha
     aborting: bool,
     check_granularity: Granularity | None,
     multi_column_rules: MultiColumnRules | None,
+    max_failure_samples: int | None,
 ) -> list[dg.AssetCheckResult]:
     """Builds every check result for a run that made it past the gate.
 
@@ -102,11 +110,12 @@ def _check_results(  # noqa: PLR0913 - every knob the specs were derived with ha
         dg.AssetCheckResult(check_name=GATE_CHECK, asset_key=asset_key, passed=True),
         *_rule_results(
             schema,
-            failure.counts(),
+            failure,
             asset_key=asset_key,
             severity=severity,
             check_granularity=check_granularity,
             multi_column_rules=multi_column_rules,
+            max_failure_samples=max_failure_samples,
         ),
     ]
 
@@ -169,7 +178,9 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     quarantine_out: str | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
+    max_failure_samples: int | None = None,
     statistics: bool | None = None,
+    row_sample: int | None = None,
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
@@ -185,7 +196,9 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         quarantine_out: The output name the rejected rows materialize under, or `None` when the asset declares no quarantine.
         check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the door resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
+        max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
         statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
+        row_sample: How many of the good output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
 
     Yields:
         A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the good materialization where there is one, standalone where the good out is skipped.
@@ -199,8 +212,10 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     """
     _require_frame(frame, good_out)
     good_key = context.asset_key_for_output(good_out)
-    # Resolved before the gate so a mistyped environment variable fails the same way at either out, rather than only on the runs that reach the second one.
+    # Resolved before the gate so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
     emit_statistics: bool = STATISTICS.resolve(statistics)
+    failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+    sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
     # --- Stage 1: the schema gate ---
     problems: list[dict[str, str]] = gate_problems(schema, frame)
@@ -226,6 +241,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         aborting=aborting,
         check_granularity=check_granularity,
         multi_column_rules=multi_column_rules,
+        max_failure_samples=failure_samples,
     )
 
     def good_result() -> dg.MaterializeResult[pl.DataFrame]:
@@ -239,6 +255,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
             metadata={
                 "dagster/row_count": len(good),
                 **statistics_metadata(good, enabled=emit_statistics),
+                **sample_metadata(SAMPLE_KEY, sample_rows(good, sampled_rows)),
             },
             check_results=checks,
         )
@@ -263,8 +280,9 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         metadata={
             "dagster/row_count": rejected,
             "cooccurrence": _cooccurrence(failure.cooccurrence_counts()),
-            # Profiled like any other table, because it is one somebody reads. What the rejected values look like is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
+            # Profiled like any other table, because it is one somebody reads. What the rejected values look like in aggregate is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
             **statistics_metadata(rejects, enabled=emit_statistics),
+            # No row sample, deliberately. These rows already reach the event log once, through the check that rejected each of them and with the rule attached. A second copy here would carry less and cost the same.
         },
     )
 
