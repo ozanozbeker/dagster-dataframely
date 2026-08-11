@@ -1003,6 +1003,7 @@ _DOOR_OWNED = {
     "quarantine",
     "check_granularity",
     "multi_column_rules",
+    "statistics",
 }
 
 # The door-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
@@ -1012,6 +1013,7 @@ _NO_DG_ASSET_COUNTERPART = {
     "quarantine",
     "check_granularity",
     "multi_column_rules",
+    "statistics",
 }
 
 # Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.

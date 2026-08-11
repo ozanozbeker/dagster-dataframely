@@ -3,6 +3,7 @@
 These test upstream, not this package. Each one pins a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "dataframely changed" rather than "something broke".
 """
 
+import datetime as dt
 import inspect
 from pathlib import Path
 from typing import override
@@ -10,6 +11,7 @@ from typing import override
 import dagster as dg
 import dataframely as dy
 import polars as pl
+import pytest
 from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
 from dagster._serdes import deserialize_value, serialize_value
 from dataframely._rule import Rule, RuleFactory
@@ -185,6 +187,38 @@ def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
     assert all(isinstance(rules, frozenset) for rules in cooccurrence)
     assert sum(cooccurrence.values()) == len(failure)
     assert cooccurrence[frozenset({"amount|min"})] == 1
+
+
+def test_polars_renders_a_duration_in_its_own_friendly_style():
+    """`dt.to_string("polars")` still renders a duration the way a polars frame repr does: `8d`, `1m 30s`, `2h 5m`, a sign on every part of a negative one, and a null left null."""
+    # #23 renders every duration cell of the temporal statistics table through it. The ticket specifies polars' own style and calls it unreachable, which was true before polars 1.14 added `format="polars"`; the package's floor is well past that, so the rendering is upstream's rather than fifteen lines of this package's.
+    # Documented as "the same form seen in the frame repr", which is a repr and therefore restyleable without anybody upstream calling it a break. That is what makes it worth pinning: the four decisions below are the ones the tables state.
+    spans = pl.Series(
+        "spans",
+        [
+            dt.timedelta(days=8),
+            dt.timedelta(minutes=1, seconds=30),
+            dt.timedelta(hours=2, minutes=5),
+            dt.timedelta(seconds=-90),
+            dt.timedelta(0),
+            None,
+        ],
+        dtype=pl.Duration("us"),
+    )
+
+    assert spans.dt.to_string("polars").to_list() == [
+        "8d",
+        "1m 30s",
+        "2h 5m",
+        "-1m -30s",
+        "0µs",
+        None,
+    ]
+
+    # The two routes the ticket ruled out, pinned so a change to either is visible: the default is ISO-8601, and the obvious cast raises rather than falling back to one.
+    assert spans.dt.to_string().to_list()[0] == "P8D"
+    with pytest.raises(pl.exceptions.InvalidOperationError):
+        spans.cast(pl.String)
 
 
 def test_every_asset_out_parameter_has_a_readable_attribute_of_the_same_name():
