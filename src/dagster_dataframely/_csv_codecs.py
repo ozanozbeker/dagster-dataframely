@@ -197,20 +197,22 @@ def read_schema(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
 
 
 def decode(
-    frame: pl.DataFrame, dtypes: Mapping[str, pl.DataType]
-) -> tuple[pl.DataFrame, dict[str, str]]:
+    frame: pl.DataFrame | pl.LazyFrame, dtypes: Mapping[str, pl.DataType]
+) -> tuple[pl.DataFrame | pl.LazyFrame, dict[str, str]]:
     """Restores every encoded column to the dtype the schema declares.
 
+    Takes a scan as readily as a frame, and hands back whichever it was given. Every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data. The column names come off `collect_schema` rather than `columns`, which asks a `LazyFrame` the same question without the performance warning polars attaches to the shorter spelling.
+
     Args:
-        frame: The frame as `read_csv` returned it, with the encoded columns as text.
+        frame: The frame or scan `read_csv` and `scan_csv` return, with the encoded columns as text.
         dtypes: The columns the schema declares, and their dtypes. Empty when the asset carries no schema, which leaves the frame as it was read.
 
     Returns:
-        The decoded frame, and the decoded columns mapped to what their cells held.
+        The decoded frame, of the type it arrived as, and the decoded columns mapped to what their cells held.
     """
     expressions: list[pl.Expr] = []
     decoded: dict[str, str] = {}
-    for name in frame.columns:
+    for name in frame.collect_schema().names():
         dtype = dtypes.get(name)
         if dtype is None:
             continue

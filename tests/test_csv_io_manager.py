@@ -7,6 +7,7 @@ Most assets carry `schema_metadata` on a plain `@dg.asset`. The manager reads th
 
 import datetime as dt
 import logging
+import warnings
 from decimal import Decimal
 from pathlib import Path
 
@@ -145,6 +146,43 @@ def test_a_written_frame_reads_back_equal(round_tripped: pl.DataFrame) -> None:
     assert_frame_equal(round_tripped, _SHAPES)
 
 
+def test_a_lazy_annotation_reads_back_a_scan_that_decodes_on_collect(
+    tmp_path: Path,
+) -> None:
+    """Going lazy changes nothing about where CSV's read gets its dtypes: `scan_csv` takes the same `schema_overrides`, and every codec is a pure expression builder over `with_columns`, which behaves identically on both frame types (#52)."""
+    read_back: list[object] = []
+
+    @dg.asset(name="shapes_copy")
+    def copy(shapes: pl.LazyFrame) -> None:
+        read_back.append(shapes)
+
+    assert _materialize(tmp_path, _shapes, copy).success
+    (scan,) = read_back
+    assert isinstance(scan, pl.LazyFrame)
+    # The decode sits on top of a scan node rather than on a frame already read.
+    assert "Csv SCAN" in scan.explain()
+    assert_frame_equal(scan.collect(), _SHAPES)
+
+
+def test_the_lazy_decode_resolves_no_schema_of_its_own(tmp_path: Path) -> None:
+    """`LazyFrame.columns` would answer which columns to decode by resolving the plan's schema, and polars warns about it once per read. The decode asks `collect_schema()` instead, which is the same question without the warning."""
+    read_back: list[object] = []
+
+    @dg.asset(name="shapes_copy")
+    def copy(shapes: pl.LazyFrame) -> None:
+        read_back.append(shapes)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert _materialize(tmp_path, _shapes, copy).success
+
+    assert not [
+        warning
+        for warning in caught
+        if issubclass(warning.category, pl.exceptions.PerformanceWarning)
+    ]
+
+
 @pytest.mark.parametrize("column", _CODEC_COLUMNS)
 def test_each_codec_round_trips_through_commas_quotes_and_nulls(
     round_tripped: pl.DataFrame, column: str
@@ -180,9 +218,9 @@ def test_the_encoded_columns_are_named_at_encode_time(run_log: list[str]) -> Non
     assert "List(String) as JSON" in encoded
 
 
-def test_the_decoded_columns_are_named_at_decode_time(run_log: list[str]) -> None:
-    """The read is where a user finds out the text they saw on disk was an encoding."""
-    (decoded,) = [message for message in run_log if message.startswith("Decoded")]
+def test_the_decoded_columns_are_named_at_read_time(run_log: list[str]) -> None:
+    """The read is where a user finds out the text they saw on disk was an encoding. Present tense, because a lazy read has queued the decode rather than run it and the line is the same one."""
+    (decoded,) = [message for message in run_log if message.startswith("Decoding")]
 
     assert "5 column(s)" in decoded
     assert all(f"'{column}'" in decoded for column in _CODEC_COLUMNS)

@@ -17,6 +17,7 @@ from polars.testing import assert_frame_equal
 from dagster_dataframely import (
     DataframelyParquetIOManager,
     DataFramePartitions,
+    LazyFramePartitions,
     UnwritableDtypeError,
 )
 
@@ -95,6 +96,37 @@ def test_a_written_frame_reads_back_equal(tmp_path: Path) -> None:
     assert_frame_equal(read_back[0], _ORDERS)
 
 
+def test_a_lazy_annotation_reads_back_an_unexecuted_scan(tmp_path: Path) -> None:
+    """A read has no object to dispatch on, so the input annotation is the only signal for what to build. `pl.LazyFrame` gets a scan; the frame it collects to is the one a `pl.DataFrame` annotation would have handed over whole (#52)."""
+    read_back: list[object] = []
+
+    @dg.asset(name="orders_copy")
+    def orders_copy(orders: pl.LazyFrame) -> None:
+        read_back.append(orders)
+
+    assert _materialize(tmp_path, _orders, orders_copy).success
+    (scan,) = read_back
+    assert isinstance(scan, pl.LazyFrame)
+    assert_frame_equal(scan.collect(), _ORDERS)
+
+
+def test_a_downstream_query_pushes_down_into_the_scan(tmp_path: Path) -> None:
+    """What the annotation is for, and the assertion that separates a scan from a frame someone called `.lazy()` on: the projection and the predicate land on the scan node itself, so the columns and rows the query drops are never decoded."""
+    plans: list[str] = []
+
+    @dg.asset(name="orders_copy")
+    def orders_copy(orders: pl.LazyFrame) -> None:
+        plans.append(
+            orders.select("order_id").filter(pl.col("order_id") == "a").explain()
+        )
+
+    assert _materialize(tmp_path, _orders, orders_copy).success
+    (plan,) = plans
+    assert "Parquet SCAN" in plan
+    assert f"PROJECT 1/{_ORDERS.width} COLUMNS" in plan
+    assert "SELECTION" in plan
+
+
 def test_a_lazy_frame_output_is_collected_and_says_so(tmp_path: Path) -> None:
     """`DataFrame` is the supported type, so a lazy output collects rather than sinking. Silently materializing a frame the user asked to keep lazy is the worse failure, so the warning is part of the contract (#27)."""
 
@@ -139,7 +171,7 @@ def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
 
 
 def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
-    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed `-> pl.DataFrame` for the hook, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime.
+    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed for a single file, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime.
 
     Annotated with the exported alias rather than the literal shape, because the alias is what the README tells a user to write. That makes this the alias's behavioural pin as well: Dagster type-checks the input against it, as the test below shows, so an alias that drifted from what the manager assembles fails here rather than in someone's project (#35).
     """
@@ -155,6 +187,42 @@ def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
     assert _materialize(tmp_path, _orders_by_day, rollup, selection="rollup").success
     assert set(read_back) == set(_DAYS.get_partition_keys())
     assert all(isinstance(frame, pl.DataFrame) for frame in read_back.values())
+
+
+def test_a_lazy_fan_in_arrives_as_a_dict_of_scans(tmp_path: Path) -> None:
+    """The fan-in shape has to be unwrapped to find the element type, because `dict[str, pl.LazyFrame]` is what a user annotates and `pl.LazyFrame` is what decides the read. `LazyFramePartitions` is the exported spelling, so this is its behavioural pin as well (#52)."""
+    read_back: dict[str, object] = {}
+
+    @dg.asset(name="rollup")
+    def rollup(orders_by_day: LazyFramePartitions) -> None:
+        read_back.update(orders_by_day)
+
+    for day in _DAYS.get_partition_keys():
+        _materialize(tmp_path, _orders_by_day, partition_key=day)
+
+    assert _materialize(tmp_path, _orders_by_day, rollup, selection="rollup").success
+    assert set(read_back) == set(_DAYS.get_partition_keys())
+    assert all(isinstance(scan, pl.LazyFrame) for scan in read_back.values())
+
+
+def test_a_missing_partition_is_still_skipped_on_the_lazy_path(tmp_path: Path) -> None:
+    """`allow_missing_partitions` is implemented by catching `FileNotFoundError` out of `load_from_path`, and a scan raises none: it returns a plan, and the miss surfaces at the caller's `collect()` long after the manager could have handled it.
+
+    What keeps the miss inside the manager is that the scan is built on the handle the manager opens, so the open is what raises, on the lazy path and the eager one alike (#52).
+    """
+    read_back: dict[str, object] = {}
+
+    @dg.asset(
+        name="rollup",
+        ins={"orders_by_day": dg.AssetIn(metadata={"allow_missing_partitions": True})},
+    )
+    def rollup(orders_by_day: LazyFramePartitions) -> None:
+        read_back.update(orders_by_day)
+
+    _materialize(tmp_path, _orders_by_day, partition_key="2026-01-01")
+
+    assert _materialize(tmp_path, _orders_by_day, rollup, selection="rollup").success
+    assert set(read_back) == {"2026-01-01"}
 
 
 def test_the_natural_fan_in_annotation_is_rejected(tmp_path: Path) -> None:
