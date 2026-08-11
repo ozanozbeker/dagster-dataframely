@@ -95,7 +95,7 @@ def _quarantine_out(
     `dg.AssetOut` is already the typed container for everything quarantine-specific, so the door takes one rather than growing a second two-valued container that could disagree with it. What it costs is a rule per setting that also exists on the door:
 
     - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: rejected rows to a different key and ownership domain.
-    - `metadata` is free too, but `dagster/column_schema` is applied over it, exactly as on the good out: the Columns tab is what the decorator is for, so a colliding user key loses.
+    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the good out: the Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
     - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the rejected rows elsewhere stays a one-word change.
     - The three in `_CONTESTED_SETTINGS` raise.
 

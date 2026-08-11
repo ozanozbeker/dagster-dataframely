@@ -895,9 +895,12 @@ def test_each_outcome_column_is_described_as_the_outcome_of_its_rule():
     )
 
 
-def test_the_quarantine_carries_no_schema_carrier():
-    """The quarantine frame is not schema-shaped: it has an outcome column per rule. Handing the IO manager an `Orders` carrier for it would be a lie on the read path."""
-    assert _SCHEMA_CARRIER_KEY not in quarantined.metadata_by_key[_QUARANTINE_KEY]
+def test_the_quarantine_carries_the_schema_carrier_too():
+    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the good one."""
+    assert (
+        quarantined.metadata_by_key[_QUARANTINE_KEY][_SCHEMA_CARRIER_KEY].instance
+        is Orders
+    )
 
 
 def test_no_quarantine_means_one_out():

@@ -34,14 +34,20 @@ def _require_frame(frame: object, out_name: str) -> None:
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
-def _gate_problems(
+def gate_problems(
     schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
 ) -> list[dict[str, str]]:
     """Compares the frame's shape against the schema, naming every mismatch.
 
     An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The door promises either return type works, so the gate cannot be built on a difference between them.
 
+    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without a door. Sharing the comparison is what stops two gates from drawing the line differently.
+
     Only public API, and none of it executes: `collect_schema()` resolves a `LazyFrame`'s shape without running it.
+
+    Args:
+        schema: The schema the frame claims to match.
+        frame: The frame to compare, eager or lazy.
 
     Returns:
         One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `SchemaGateError`, so the two cannot disagree.
@@ -192,7 +198,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     good_key = context.asset_key_for_output(good_out)
 
     # --- Stage 1: the schema gate ---
-    problems: list[dict[str, str]] = _gate_problems(schema, frame)
+    problems: list[dict[str, str]] = gate_problems(schema, frame)
     if problems:
         # Exit: pipeline defect. Nothing is filtered and neither out is written, so a wrong-shaped frame cannot corrupt either table.
         yield _gate_failure(problems, asset_key=good_key)
