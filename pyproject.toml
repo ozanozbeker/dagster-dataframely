@@ -42,13 +42,14 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ozanozbeker/dagster-dataframely"
-Repository = "https://github.com/ozanozbeker/dagster-dataframely"
-Issues = "https://github.com/ozanozbeker/dagster-dataframely/issues"
 Changelog = "https://github.com/ozanozbeker/dagster-dataframely/releases"
+Homepage = "https://github.com/ozanozbeker/dagster-dataframely"
+Issues = "https://github.com/ozanozbeker/dagster-dataframely/issues"
+Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 
 [dependency-groups]
 dev = [
+  "dagster>=1.13.16",
   "dagster-graphql>=1.13.16",
   "dagster-webserver>=1.13.16",
   "prek>=0.4.12",
@@ -62,14 +63,15 @@ dev = [
 requires = ["uv_build>=0.12.00,<0.13.0"]
 build-backend = "uv_build"
 
-[tool.uv]
-# uv is the one tool that cannot come from `uv.lock`, because it is what reads the lock.
-# `astral-sh/setup-uv` parses this key, so CI installs a matching uv instead of taking a
-# version pinned separately in the workflow, and locally uv enforces it by refusing to
-# run. The upper bound guards against a future lockfile format bump, not a past one:
-# uv 0.11.30 still reads today's `revision = 3`.
-required-version = ">=0.12,<0.13"
-
 [tool.pytest.ini_options]
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+addopts = [
+  "-ra",
+  "--strict-config",
+  "--strict-markers",
+  "--import-mode=importlib"
+]
+pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.uv]
+required-version = ">=0.12,<0.13"

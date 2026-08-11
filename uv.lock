@@ -216,6 +216,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "dagster" },
     { name = "dagster-graphql" },
     { name = "dagster-webserver" },
     { name = "prek" },
@@ -236,6 +237,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "dagster", specifier = ">=1.13.16" },
     { name = "dagster-graphql", specifier = ">=1.13.16" },
     { name = "dagster-webserver", specifier = ">=1.13.16" },
     { name = "prek", specifier = ">=0.4.12" },
