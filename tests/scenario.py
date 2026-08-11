@@ -1,6 +1,6 @@
 """The one `Orders` schema and the frames the whole effort runs against.
 
-Lifted from `docs/probes/front-door/_scenario.py` and widened to the cases the rest of the effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description ladders have to distinguish.
+Widened from the front-door probe's original scenario to the cases the rest of the effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description ladders have to distinguish.
 
 Nothing here is a fixture. A schema is a class and a frame is a value, so both are cheaper to read as module constants than as fixture indirection, and `Orders` has to be importable at class-definition time to decorate an asset.
 
