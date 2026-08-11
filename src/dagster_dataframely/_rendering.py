@@ -66,6 +66,9 @@ def _value(column: dy.Column, kind: str) -> Any:  # noqa: ANN401 - the values ar
     Args:
         column: The column that declared the constraint.
         kind: The rule's own half of its name, which is also the parameter's.
+
+    Returns:
+        Whatever the author passed that parameter, at whatever type they passed it: a number for a bound, a string for a regex, a sequence for `is_in`. Every caller renders it rather than reasoning about it, which is what lets one accessor serve all of them.
     """
     return getattr(column, kind)
 
@@ -96,6 +99,9 @@ def _column_constraint(column: dy.Column, kind: str) -> str | None:  # noqa: PLR
     Args:
         column: The column the rule belongs to.
         kind: The rule's own half of its name, so `min` for `amount|min`.
+
+    Returns:
+        The constraint as a phrase, or `None` for a rule shape this package has not met. `None` is a fallback instruction rather than an error: the surfaces fall back to the rule's own name, which always exists.
     """
     if kind in _PHRASES:
         return _PHRASES[kind]
