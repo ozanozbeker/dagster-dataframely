@@ -14,7 +14,11 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import DataframelyParquetIOManager, UnwritableDtypeError
+from dagster_dataframely import (
+    DataframelyParquetIOManager,
+    DataFramePartitions,
+    UnwritableDtypeError,
+)
 
 # The dtypes a round trip could plausibly get wrong: Decimal, Duration, Binary and a nested List. Nulls ride along in every column that admits them.
 _ORDERS = pl.DataFrame(
@@ -135,11 +139,14 @@ def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
 
 
 def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
-    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed `-> pl.DataFrame` for the hook, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime."""
+    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed `-> pl.DataFrame` for the hook, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime.
+
+    Annotated with the exported alias rather than the literal shape, because the alias is what the README tells a user to write. That makes this the alias's behavioural pin as well: Dagster type-checks the input against it, as the test below shows, so an alias that drifted from what the manager assembles fails here rather than in someone's project (#35).
+    """
     read_back: dict[str, object] = {}
 
     @dg.asset(name="rollup")
-    def rollup(orders_by_day: dict[str, pl.DataFrame]) -> None:
+    def rollup(orders_by_day: DataFramePartitions) -> None:
         read_back.update(orders_by_day)
 
     for day in _DAYS.get_partition_keys():

@@ -213,7 +213,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         description: Asset description. Defaults to the function's docstring.
         config_schema: Run configuration schema for the underlying op.
         required_resource_keys: Resources the transform reaches through the context.
-        partitions_def: Partitioning for the asset. The state machine then runs per partition, on that partition's frame.
+        partitions_def: Partitioning for the asset. The state machine then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning. The transform takes no `context` parameter, so a partitioned one reaches its own key with `dg.AssetExecutionContext.get().partition_key`.
         hooks: Hooks to attach to the underlying op.
         backfill_policy: How Dagster backfills this asset's partitions.
         op_tags: Tags on the underlying op, for run launcher and executor routing.

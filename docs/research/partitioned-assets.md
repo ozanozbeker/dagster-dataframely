@@ -44,7 +44,7 @@ orders_quarantine/mixed.parquet
 
 None of that is this package's code.
 `UPathIOManager.handle_output` resolves the partition path before it calls `dump_to_path`, so the manager's hooks are partition-blind by design.
-It works by inheritance, which is why `tests/test_io_managers.py` now pins it.
+It works by inheritance, which is why `tests/test_parquet_io_manager.py` now pins it.
 
 **`dagster/row_count` is the partition's count.** **[RAN]** The `mixed` partition holds six rows, three of which survive.
 Its materialization reports `3`, and the quarantine's reports `3`.
@@ -191,7 +191,15 @@ The obvious annotation, `orders: pl.DataFrame`, fails Dagster's type check after
 Ecosystem prior art exports `DataFramePartitions` for this, and this package does not, for now.
 The alias would be public surface, and its lazy twin (`dict[str, pl.LazyFrame]`) depends on [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27), which is unresolved: naming one before the other is decided fixes half a pair.
 [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26) owns the public surface and the README, and should carry the annotation as documentation there.
-Both shapes are pinned in `tests/test_io_managers.py`, so the decision can be revisited against evidence rather than memory.
+Both shapes are pinned in `tests/test_parquet_io_manager.py`, so the decision can be revisited against evidence rather than memory.
+
+> **Reversed by [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).**
+> The alias ships as `dd.DataFramePartitions`, under the prior art's name.
+> What was deferred was the *pair*, and taking the prior art's pair is what decides it without waiting: `LazyFramePartitions` is then the only name the lazy half could take, so [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27) inherits a naming decision rather than making one.
+> Only the half a read can currently return is exported.
+> Nothing upstream reserves the other.
+> It is a plain assignment and not a `type` statement, because Dagster resolves annotations at runtime and rejects the `TypeAliasType` a PEP 695 alias produces.
+> That refusal is pinned in `tests/test_upstream_pins.py`, so the modern spelling becomes available the moment upstream unwraps it.
 
 **The IO manager carries a partitioned round-trip test.** `load_from_path` and `dump_to_path` mention no partitions and need to mention none, so the layout is inherited rather than written.
 That is exactly what makes it worth a test: nothing in this repo would notice if the base class stopped resolving the partition path.
@@ -205,11 +213,17 @@ Recorded, not fixed here.
 1. **Partition-scoped check history, once `AssetCheckSpec(partitions_def=)` leaves preview.**
    Findings 2 and 3 both close.
    The blocker is the preview warning, not the mechanics, so the trigger is an upstream release note rather than more research.
+   *Tracked as [#31](https://github.com/ozanozbeker/dagster-dataframely/issues/31).*
 2. **Decide whether the orphaned planned row is worth an upstream issue.**
    It is Dagster's, it reproduces on a stock `@dg.asset` carrying one check spec, and its effect is a per-partition check view that reads never-executed on an asset whose checks all ran.
+   *Tracked as [#32](https://github.com/ozanozbeker/dagster-dataframely/issues/32).*
 3. **Document the single-run backfill refusal in the README.**
    Belongs to [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26), beside the sentence about the IO managers being the supported path.
+   *Tracked as [#33](https://github.com/ozanozbeker/dagster-dataframely/issues/33), which outlived #26; the README's Partitioning section is now its home.*
 4. **Document how a partitioned transform reaches its partition key.** `dg.AssetExecutionContext.get()` is the answer, the door's docstring does not say so, and it is the first thing a partitioned user needs.
    Also [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26).
+   *Done in [#34](https://github.com/ozanozbeker/dagster-dataframely/issues/34): the README's Partitioning section and the door's `partitions_def` docstring.*
 5. **Export a partitions type alias for the fan-in shape.**
    Deliberately deferred above; revisit with [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27) so the eager and lazy names are decided together.
+   *Done in [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35): both names decided, the eager one exported.*
+   *See the note in §6.*

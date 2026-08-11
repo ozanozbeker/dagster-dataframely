@@ -148,6 +148,40 @@ The carrier holds the live class rather than a copy of it, and a live object doe
 Prefer parquet unless something downstream needs text.
 Parquet is self-describing, keeps every dtype natively, and needs no schema to read.
 
+## Partitioning
+
+`partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no knob here.
+Both outs carry it, which is what makes the quarantine unable to escape its asset's partitioning.
+The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's good count, and a partition whose frame drifts aborts at the gate without touching any other partition's file.
+
+**The transform reaches its own partition key through the context.**
+The transform takes no `context` parameter, so a partitioned one fetches the context the same way the wrapper does:
+
+```python
+daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
+
+
+@dd.dataframely_asset(schema=Orders, partitions_def=daily)
+def orders() -> pl.DataFrame:
+    day = dg.AssetExecutionContext.get().partition_key
+    landed = pl.read_parquet(f"landing/orders/{day}.parquet")
+    return landed.select("order_id", "amount")
+```
+
+`dg.AssetExecutionContext.get()` is the door's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two traps below, where Dagster rejects an annotated one under postponed annotations.
+
+**A fan-in over every partition arrives as one frame per partition.**
+An unpartitioned asset depending on the whole of a partitioned one gets a dict keyed by partition key, because the IO manager reads each key and assembles the results:
+
+```python
+@dg.asset
+def rollup(orders: dd.DataFramePartitions) -> None: ...
+```
+
+`dd.DataFramePartitions` is `dict[str, pl.DataFrame]`, exported so the shape a fan-in has to annotate has a name.
+The obvious annotation, `pl.DataFrame`, fails Dagster's type check after every partition has already been read.
+There is no lazy twin, because every read returns a `DataFrame`.
+
 ## Validation materializes
 
 `Schema.filter` collects, so a validated frame is a frame in memory.

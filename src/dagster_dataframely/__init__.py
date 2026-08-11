@@ -15,6 +15,7 @@ from dagster_dataframely._errors import (
 from dagster_dataframely._io_managers import (
     DataframelyCSVIOManager,
     DataframelyParquetIOManager,
+    DataFramePartitions,
 )
 from dagster_dataframely._metadata import (
     quarantine_table_schema,
@@ -29,6 +30,7 @@ __all__ = [
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
+    "DataFramePartitions",
     "DataframelyCSVIOManager",
     "DataframelyParquetIOManager",
     "Granularity",

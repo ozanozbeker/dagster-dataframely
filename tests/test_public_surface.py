@@ -43,7 +43,8 @@ _PUBLIC = {
     "SchemaGateError",
     "UnwritableDtypeError",
     "ValidationAbortError",
-    # The types, so a caller can annotate what it passes the door.
+    # The types, so a caller can annotate what it passes the door and what a fan-in hands back.
+    "DataFramePartitions",
     "Granularity",
     "MultiColumnRules",
 }

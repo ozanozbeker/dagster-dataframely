@@ -234,6 +234,29 @@ def test_polars_renders_a_duration_in_its_own_friendly_style():
         spans.cast(pl.String)
 
 
+# One shape, spelled the two ways 3.12 allows. Module level rather than inside the test, so each is declared where a package would declare it.
+type _TypeStatement = dict[str, pl.DataFrame]
+_PlainAssignment = dict[str, pl.DataFrame]
+
+
+def test_dagster_rejects_a_pep_695_type_alias_in_an_annotation():
+    """A `type X = ...` statement is still unresolvable as a Dagster annotation, while the plain assignment of the same shape still resolves."""
+    # #35 exports `DataFramePartitions` as a plain assignment for this reason and no other. The alias exists to be written into an annotation, and at a 3.12 floor the `type` statement is the form a reader would expect, so what rules it out is pinned rather than left to a comment.
+    # Dagster resolves the annotation at runtime and has no unwrapping for the `TypeAliasType` the statement produces. If it grows one, this fails and the alias can be restated in the modern form.
+    with pytest.raises(dg.DagsterInvalidDefinitionError, match="from type annotation"):
+
+        @dg.asset(name="rejected")
+        def rejected(upstream: _TypeStatement) -> None: ...
+
+    @dg.asset(name="accepted")
+    def accepted(upstream: _PlainAssignment) -> None: ...
+
+    resolved = accepted.op.ins["upstream"].dagster_type
+
+    assert isinstance(resolved, dg.DagsterType)
+    assert resolved.display_name == "Dict[String,DataFrame]"
+
+
 def test_every_asset_out_parameter_has_a_readable_attribute_of_the_same_name():
     """`dg.AssetOut` is still readable back out of every one of its constructor parameters."""
     # #19 rebuilds the quarantine's `AssetOut` from its attributes, because it is immutable and has no `_replace`. A parameter Dagster adds whose attribute is named differently would be dropped silently, taking the user's value with it, so the property the rebuild rests on is asserted rather than assumed.
