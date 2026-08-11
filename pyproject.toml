@@ -1,6 +1,6 @@
 [project]
 name = "dagster-dataframely"
-version = "0.0.1"
+version = "0.1.0"
 description = "A Dataframely plugin for Dagster."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -17,7 +17,7 @@ keywords = [
   "validation",
 ]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Operating System :: OS Independent",
