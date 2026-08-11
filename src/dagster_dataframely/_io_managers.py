@@ -124,8 +124,10 @@ class _FrameIOManager(UPathIOManager):
         """
         if isinstance(obj, pl.LazyFrame):
             context.log.warning(
-                "Collecting a LazyFrame before the write. This manager supports polars DataFrame; "
-                "sinking lazily is planned work, tracked in issue #27."
+                "Collecting a LazyFrame before the write. This manager writes polars DataFrame. "
+                "A lazy sink to the final path is ruled out rather than pending, because every "
+                "write here reports on what it wrote; `dataframely_asset` streams a lazy return "
+                "through a local parquet before validating it instead."
             )
         frame: pl.DataFrame = obj.collect() if isinstance(obj, pl.LazyFrame) else obj
         with path.open("wb") as file:
@@ -278,7 +280,7 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
 
     **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
 
-    A write dispatches on the runtime type instead, because a write already holds the object: a `LazyFrame` output is collected before the write, with a warning in the run log. Sinking lazily is planned work, tracked in issue #27.
+    A write dispatches on the runtime type instead, because a write already holds the object: a `LazyFrame` output is collected before the write, with a warning in the run log. A lazy sink to the final path is ruled out rather than pending, because every write here reports on what it wrote. `dataframely_asset` streams a lazy return through a local parquet before validating it, which is where the peak is actually saved.
 
     Attributes:
         base_dir: Directory or cloud URI the manager writes parquet files under.

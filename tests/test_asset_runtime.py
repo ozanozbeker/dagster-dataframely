@@ -3,7 +3,7 @@
 The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine outcomes are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, override
 
@@ -104,8 +104,8 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
     assert 'col("amount")' in str(metadata["dy_rule__expr"].value)
 
 
-def test_a_lazy_transform_is_collected_before_the_write(tmp_path: Path):
-    """`filter` collects internally and `dagster/row_count` needs the length regardless, so the good half reaches the IO manager eager."""
+def test_a_lazy_transform_lands_and_is_read_back_whole(tmp_path: Path):
+    """The round trip through the landed parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the gate has already run by the time the landing happens, so a changed dtype would surface as a filter failure rather than as a gate one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
@@ -513,6 +513,185 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     assert (
         dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value == 2
     )
+
+
+# --- the temp landing ---
+# One entry per exit of the state machine, each as the frame that reaches it and the quarantine that decides it.
+_EXITS = [
+    pytest.param(clean_orders, None, id="everything survived"),
+    pytest.param(mixed_orders, None, id="no quarantine"),
+    pytest.param(mixed_orders, dg.AssetOut(), id="some survived"),
+    pytest.param(hopeless_orders, dg.AssetOut(), id="nothing survived"),
+    pytest.param(wrong_dtype_orders, None, id="gate"),
+]
+
+
+def _both_ways(
+    frame: Callable[[], pl.DataFrame],
+    quarantine: dg.AssetOut | None,
+    *,
+    temp_dir: str | None = None,
+) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
+    """The same transform declared twice, handing back the same frame eagerly and lazily.
+
+    Same name, same schema, same rows: the two runs differ in the return type and in nothing else, which is what makes their events comparable.
+    """
+
+    @dataframely_asset(
+        schema=Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir
+    )
+    def eager() -> pl.DataFrame:
+        return frame()
+
+    @dataframely_asset(
+        schema=Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir
+    )
+    def lazy() -> pl.LazyFrame:
+        return frame().lazy()
+
+    return eager, lazy
+
+
+def _comparable(name: str, value: dg.MetadataValue[Any]) -> object:
+    """One metadata value, with the single entry whose row order is not stable made stable.
+
+    `cooccurrence` comes from `FailureInfo.cooccurrence_counts()`, whose grouping is unordered: the same eager run twice already emits those rows in a different order, so the order is not a property the landing could preserve or break. What the table says is which rule combinations occurred and how often, and that is what gets compared.
+    """
+    if name == "cooccurrence" and isinstance(value, dg.TableMetadataValue):
+        return sorted(str(record.data) for record in value.records)
+    return value
+
+
+def _reported(result: dg.ExecuteInProcessResult) -> object:
+    """Everything the package itself told Dagster, in one comparable value.
+
+    `path` is dropped because it names the directory a run wrote to, and each of the two runs gets its own. `bytes_written` stays in: the same rows through the same writer are the same file, so it is worth asserting rather than excusing.
+    """
+    return (
+        {
+            key.to_user_string(): {
+                name: _comparable(name, value)
+                for name, value in metadata.items()
+                if name != "path"
+            }
+            for key, metadata in _materialized(result).items()
+        },
+        {
+            name: (evaluation.passed, evaluation.severity, dict(evaluation.metadata))
+            for name, evaluation in _evaluations(result).items()
+        },
+    )
+
+
+def _written(root: Path) -> dict[str, pl.DataFrame]:
+    """Every table a run left on disk, keyed by file name."""
+    return {path.name: pl.read_parquet(path) for path in root.rglob("*.parquet")}
+
+
+@pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
+def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
+    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+):
+    """The landing moves where the data is materialized, not what happens to it afterwards.
+
+    Asserted at every exit and over everything the package emits: the outs that materialized, the row counts, the statistics, the samples, the co-occurrence table, every check with its severity and metadata, and the bytes on disk.
+    """
+    eager, lazy = _both_ways(frame, quarantine)
+
+    from_eager = _materialize(tmp_path / "eager", eager, raise_on_error=False)
+    from_lazy = _materialize(tmp_path / "lazy", lazy, raise_on_error=False)
+
+    assert from_lazy.success == from_eager.success
+    assert _reported(from_lazy) == _reported(from_eager)
+    assert set(_written(tmp_path / "lazy")) == set(_written(tmp_path / "eager"))
+    for name, table in _written(tmp_path / "lazy").items():
+        assert_frame_equal(table, _written(tmp_path / "eager")[name])
+
+
+@pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
+def test_the_landing_is_removed_whichever_exit_the_run_takes(
+    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+):
+    """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
+    landing = tmp_path / "landing"
+    landing.mkdir()
+    _, lazy = _both_ways(frame, quarantine, temp_dir=str(landing))
+
+    _materialize(tmp_path / "store", lazy, raise_on_error=False)
+
+    assert list(landing.iterdir()) == []
+
+
+def test_the_landing_sinks_with_the_streaming_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The one clause of this design with no observable consequence, and the one the whole argument rests on.
+
+    A landing that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the landing exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
+
+    Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
+    """
+    engines: list[object] = []
+    sink = pl.LazyFrame.sink_parquet
+
+    def spy(frame: pl.LazyFrame, path: Path, **kwargs: Any) -> Any:
+        engines.append(kwargs.get("engine"))
+        return sink(frame, path, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", spy)
+    _, lazy = _both_ways(clean_orders, None)
+
+    assert _materialize(tmp_path, lazy).success
+    assert set(engines) == {"streaming"}
+
+
+def test_an_eager_return_never_lands(tmp_path: Path):
+    """A frame the user already materialized has nothing left to stream, so landing it would be pure cost.
+
+    Asserted by pointing the landing at a directory that does not exist: a run that would land there cannot succeed, and this one does.
+    """
+    eager, _ = _both_ways(clean_orders, None, temp_dir=str(tmp_path / "absent"))
+
+    assert _materialize(tmp_path / "store", eager).success
+
+
+def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
+    """The other half of the same assertion, and the reason the knob exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
+
+    A missing directory raises rather than being created, deliberately. The knob is set to move the landing off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    """
+    absent = tmp_path / "absent"
+    _, lazy = _both_ways(clean_orders, None, temp_dir=str(absent))
+
+    with pytest.raises(FileNotFoundError) as raised:
+        _materialize(tmp_path / "store", lazy)
+
+    assert str(absent) in str(raised.value)
+
+
+def test_the_temp_dir_environment_variable_reaches_the_landing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The house-style tier, asserted through a materialization rather than through `resolve`: the door reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the landing."""
+    absent = tmp_path / "absent"
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
+    _, lazy = _both_ways(clean_orders, None)
+
+    with pytest.raises(FileNotFoundError) as raised:
+        _materialize(tmp_path / "store", lazy)
+
+    assert str(absent) in str(raised.value)
+
+
+def test_the_gate_runs_before_the_landing(tmp_path: Path):
+    """Resolving a plan's columns and dtypes costs nothing, so a wrong-shaped frame is refused before a single row is streamed.
+
+    Asserted through a landing that cannot work: the gate error is what arrives, so nothing ever tried to write there.
+    """
+    _, lazy = _both_ways(wrong_dtype_orders, None, temp_dir=str(tmp_path / "absent"))
+
+    with pytest.raises(SchemaGateError):
+        _materialize(tmp_path / "store", lazy)
 
 
 # --- collapsed checks ---

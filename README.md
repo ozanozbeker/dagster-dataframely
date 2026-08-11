@@ -201,8 +201,20 @@ What a scan saves is therefore decoding and materialization, not transfer.
 ## Validation materializes
 
 `Schema.filter` collects, so a validated frame is a frame in memory.
-A `LazyFrame` return is accepted and collected, and the IO managers collect before the write with a warning in the run log.
-Sinking lazily is not on the supported path; it is tracked in [issue #27](https://github.com/ozanozbeker/dagster-dataframely/issues/27).
+
+**A `LazyFrame` return streams to a local parquet first, then is read back whole and validated exactly as a `DataFrame` return is.**
+Peak memory is then the size of the frame the plan produced rather than the plan's own high-water mark, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
+A `DataFrame` return skips the landing, because a frame you already materialized has nothing left to stream and landing it would be pure cost.
+The gate runs before the landing, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the landed file is removed before the run picks an outcome.
+
+> [!IMPORTANT]
+> The landing goes to the system temp directory, which in a container is its **ephemeral disk**.
+> A landed frame bigger than what the pod has spare fills it.
+> `temp_dir` points it at a mounted volume instead.
+
+Storage stays eager past that point, deliberately.
+This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and the state machine cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
 The habitat is post-landing transformation: bronze to silver to gold, where the data is already on your side and the question is whether it is fit to publish.
 Ingestion-scale and larger-than-memory work belongs to other tools.
@@ -220,6 +232,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `statistics` | whether each materialization carries a profile of what it wrote | `true` |
 | `max_failure_samples` | how many of the rows a rule rejected reach that rule's check | `5` |
 | `row_sample` | how many of the good table's rows reach its materialization | `5` |
+| `temp_dir` | where a `LazyFrame` return lands before it is validated | the system temp directory |
 
 The chain validates on resolve, at every tier including the package's own, so a typo raises `InvalidSettingError` naming the value and the tier that supplied it rather than quietly becoming something else three modules later.
 
@@ -272,6 +285,29 @@ DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 
 Turning the samples off leaves `statistics` on.
 The string family deliberately carries no value-bearing statistic at any setting, only lengths and cardinality: consenting to summary statistics is not consenting to raw values.
+
+### `temp_dir` decides which disk a lazy transform lands on
+
+Read on the lazy path only, so an asset that returns a `DataFrame` is unaffected by whatever it holds.
+
+Unset, the landing goes wherever `tempfile` puts things, which in a container is the ephemeral disk its `/tmp` sits on.
+That disk is usually small, it is shared with everything else in the pod, and filling it takes the pod down rather than failing the asset.
+Point it at a volume for the whole code location:
+
+```bash
+DAGSTER_DATAFRAMELY_TEMP_DIR=/mnt/scratch
+```
+
+Or per asset, where one transform is the one with the large intermediate:
+
+```python
+@dd.dataframely_asset(schema=Orders, temp_dir="/mnt/scratch")
+def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
+    return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
+```
+
+A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
+Both are the same decision: this knob is set to move the landing off the ephemeral disk, so a typo that quietly lands there anyway is the failure it exists to prevent.
 
 ## The kit
 

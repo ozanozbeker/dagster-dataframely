@@ -4,7 +4,7 @@ A platform engineer sets a house style once for a whole code location, and an as
 
 The chain validates on resolve, at every tier including the package's own. Nothing here trusts a value because of where it came from, so a typo raises at the tier that wrote it instead of quietly becoming something else three modules later.
 
-A knob is one of three shapes. A `_Setting` holds a closed vocabulary of strings, so resolving is validating and nothing parses. A `_Flag` holds a `bool`, and it is the first shape that has to parse: the environment tier arrives as a string whatever the setting holds, and only a flag's other two tiers hold something that is not one. A `_Count` holds a non-negative `int` and parses for the same reason, but its vocabulary is a range rather than a list, so it is the one shape with something left to reject after a type checker has narrowed a tier.
+A knob is one of four shapes. A `_Setting` holds a closed vocabulary of strings, so resolving is validating and nothing parses. A `_Flag` holds a `bool`, and it is the first shape that has to parse: the environment tier arrives as a string whatever the setting holds, and only a flag's other two tiers hold something that is not one. A `_Count` holds a non-negative `int` and parses for the same reason, but its vocabulary is a range rather than a list, so it is the one shape with something left to reject after a type checker has narrowed a tier. A `_Directory` holds a filesystem path, which is the shape with no vocabulary at all: every string names a legal directory, so all that is left to check is that one was written.
 
 There is deliberately no fourth tier and no `set_default_*()` function. Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control, and the same asset would derive different checks depending on which module happened to be imported first.
 """
@@ -202,6 +202,46 @@ class _Count(_Knob[int]):
         )
 
 
+#: What a directory accepts, worded rather than listed, like a count's: every string names a legal directory, so there is nothing to enumerate.
+_DIRECTORY_VOCABULARY = "filesystem paths"
+
+
+@dataclass(frozen=True)
+class _Directory(_Knob[str | None]):
+    """One knob over the filesystem paths, and over the absence of one.
+
+    Its own shape rather than a `_Setting`, because a path has no vocabulary: the whole point is that nothing here knows which directories a deployment has. It is also the shape with the least to do, since the environment tier already arrives as what the knob holds.
+
+    It is the one knob whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate: the door resolves every knob where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames land on a worker.
+    """
+
+    @override
+    def _environment(self, value: str) -> str | None:
+        # Nothing parses: a path is a string at every tier, because the environment tier can spell it no other way.
+        return self._checked(value, self._environment_tier)
+
+    @override
+    def _checked(self, value: str | None, tier: str) -> str | None:
+        """Rejects everything that is not a written path.
+
+        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would land the frame on the ephemeral disk the knob was set to move it off. That failure is silent, and the disk it fills is the one the pod dies on.
+
+        Raises:
+            InvalidSettingError: The value is not a string, or holds nothing but whitespace.
+        """
+        if value is None:
+            return None
+        if type(value) is not str or not value.strip():
+            raise InvalidSettingError(
+                self.name,
+                value,
+                _DIRECTORY_VOCABULARY,
+                tier=tier,
+                env_var=self.env_var,
+            )
+        return value
+
+
 #: How many checks a schema's rules become. Definition-time: see `dataframely_asset` for what changing it costs a check's history.
 CHECK_GRANULARITY = _Setting[Granularity](
     name="check_granularity", default="rule", allowed=("rule", "column", "schema")
@@ -220,3 +260,6 @@ MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 
 #: How many of the good output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
+
+#: Where a lazy transform's plan lands before it is validated. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the knob exists: a landed frame bigger than what the pod has spare fills it.
+TEMP_DIR = _Directory(name="temp_dir", default=None)
