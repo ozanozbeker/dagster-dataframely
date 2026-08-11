@@ -196,8 +196,8 @@ Both shapes are pinned in `tests/test_parquet_io_manager.py`, so the decision ca
 > **Reversed by [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).**
 > The alias ships as `dd.DataFramePartitions`, under the prior art's name.
 > What was deferred was the *pair*, and taking the prior art's pair is what decides it without waiting: `LazyFramePartitions` is then the only name the lazy half could take, so [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27) inherits a naming decision rather than making one.
-> Only the half a read can currently return is exported.
-> Nothing upstream reserves the other.
+> Only the half a read could then return was exported; [#52](https://github.com/ozanozbeker/dagster-dataframely/issues/52) shipped the other, once a read learned to dispatch on the annotation.
+> Nothing upstream reserves either name.
 > It is a plain assignment and not a `type` statement, because Dagster resolves annotations at runtime and rejects the `TypeAliasType` a PEP 695 alias produces.
 > That refusal is pinned in `tests/test_upstream_pins.py`, so the modern spelling becomes available the moment upstream unwraps it.
 

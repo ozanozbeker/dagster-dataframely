@@ -4,12 +4,13 @@ The asset body owns what the data is; the manager owns where and how it lands. S
 
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
-    - Both managers share one spine, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its two calls into polars.
+    - Both managers share one spine, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into polars.
+    - **A scan is built on the open handle, not on the path.** Handed a file object, polars reads its bytes there and then, which is why the plan still collects after the handle closes. That gives up the transfer a scan of an `s3://` path would have pruned with range requests, and it buys two things worth more here: credentials stay one mechanism, fsspec's, rather than the second one polars' own object-store would need, and a missing file raises `FileNotFoundError` from the open, where `UPathIOManager` can still catch it and honour `allow_missing_partitions`. A scan of a path raises nothing until the caller collects, long after the manager has returned. So laziness buys decoding and materialization here, not transfer: the same bytes an eager read moves, and only the rows and columns a query keeps.
 """
 
 from abc import abstractmethod
 from collections.abc import Mapping
-from typing import IO, TYPE_CHECKING, override
+from typing import IO, TYPE_CHECKING, get_args, override
 
 import polars as pl
 from dagster import (
@@ -29,15 +30,27 @@ from dagster_dataframely._runtime import gate_problems
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
 
-# Exported because nothing in this module's signatures says a read can return a dict: `load_from_path` is typed `-> pl.DataFrame` for the hook, while the `load_input` above it calls that hook once per partition key and assembles the results. A fan-in over every partition therefore lands on the obvious annotation, `pl.DataFrame`, which fails Dagster's type check after every partition has already been read.
+# Exported because nothing in this module's signatures says a read can return a dict: `load_from_path` is typed for a single file, while the `load_input` above it calls that hook once per partition key and assembles the results. A fan-in over every partition therefore lands on the obvious annotation, `pl.DataFrame`, which fails Dagster's type check after every partition has already been read.
 # A plain assignment rather than a `type` statement, because Dagster resolves the annotation at runtime and rejects the `TypeAliasType` a PEP 695 alias produces. `tests/test_upstream_pins.py` pins that refusal.
-# The name is `dagster-polars`', so a user arriving from there writes what they already know, and the lazy half of its pair keeps that name available for whatever #27 decides. Only the half a read can currently return is exported.
+# The names are `dagster-polars`', so a user arriving from there writes what they already know. Which of the two to write is decided the same way a single-partition read is: by the frame the annotation asks for.
 DataFramePartitions = dict[str, pl.DataFrame]
+LazyFramePartitions = dict[str, pl.LazyFrame]
 
 _STORAGE_KIND_KEY = "dagster/storage_kind"
 
 # Parquet's only refusal. Polars cannot nest an `Object`, so scanning top-level dtypes is enough.
 _UNWRITABLE_DTYPES: tuple[pl.DataType | type[pl.DataType], ...] = (pl.Object,)
+
+
+def _wants_lazy(context: "InputContext") -> bool:
+    """Reports whether an input asks for a scan rather than a frame.
+
+    Reads dispatch on the annotation, writes on the runtime type. The asymmetry is deliberate rather than an oversight: a write already holds the object, so `isinstance` is the honest test, while a read has no object yet and the annotation is the only signal for what to build.
+
+    A fan-in annotates the shape rather than the element, so the wrapper comes off first. That is the same unwrapping `LazyFramePartitions` exists to spare a user.
+    """
+    annotation = context.dagster_type.typing_type
+    return pl.LazyFrame in (annotation, *get_args(annotation))
 
 
 class _FrameIOManager(UPathIOManager):
@@ -147,12 +160,16 @@ class _ParquetIOManager(_FrameIOManager):
         frame.write_parquet(file)
 
     @override
-    def load_from_path(self, context: "InputContext", path: UPath) -> pl.DataFrame:
-        """Reads the file back eagerly, through the same filesystem the write went out on.
+    def load_from_path(
+        self, context: "InputContext", path: UPath
+    ) -> pl.DataFrame | pl.LazyFrame:
+        """Reads the file back through the same filesystem the write went out on, as a frame or as a scan.
 
-        `context` is unused: parquet is self-describing, so reading a file needs nothing from the asset definition.
+        `context` is read for the annotation and nothing else: parquet is self-describing, so what to build is the only question the asset definition answers here.
         """
         with path.open("rb") as file:
+            if _wants_lazy(context):
+                return pl.scan_parquet(file)
             return pl.read_parquet(file)
 
 
@@ -217,12 +234,16 @@ class _CSVIOManager(_FrameIOManager):
         encoded.write_csv(file)
 
     @override
-    def load_from_path(self, context: "InputContext", path: UPath) -> pl.DataFrame:
-        """Reads the file back against the schema the upstream asset declares.
+    def load_from_path(
+        self, context: "InputContext", path: UPath
+    ) -> pl.DataFrame | pl.LazyFrame:
+        """Reads the file back against the schema the upstream asset declares, as a frame or as a scan.
 
         CSV is the sole reason a read path needs the schema at all. It arrives from the carrier in the upstream asset's definition metadata, so it costs no round trip to storage and cannot drift from the data, because it never came from the data.
 
         With no schema to read against, this is an ordinary inferred CSV read: every column arrives as whatever polars makes of the text.
+
+        Going lazy costs the schema nothing. `scan_csv` takes the same `schema_overrides`, and every codec is an expression over `with_columns`, which behaves the same on both frame types, so the decode is the one written for the eager read.
         """
         upstream = context.upstream_output
         schema = (
@@ -231,13 +252,19 @@ class _CSVIOManager(_FrameIOManager):
         dtypes: Mapping[str, pl.DataType] = (
             {} if schema is None else schema_dtypes(schema)
         )
+        overrides = _csv_codecs.read_schema(dtypes)
 
         with path.open("rb") as file:
-            frame = pl.read_csv(file, schema_overrides=_csv_codecs.read_schema(dtypes))
+            frame: pl.DataFrame | pl.LazyFrame = (
+                pl.scan_csv(file, schema_overrides=overrides)
+                if _wants_lazy(context)
+                else pl.read_csv(file, schema_overrides=overrides)
+            )
 
         decoded, columns = _csv_codecs.decode(frame, dtypes)
         if columns:
-            named = f"Decoded {len(columns)} column(s) CSV cannot hold: {_csv_codecs.describe(columns)}."
+            # Present tense on both paths rather than past tense on one: a scan has queued the decode rather than run it, and the line is about which columns it covers either way.
+            named = f"Decoding {len(columns)} column(s) CSV cannot hold: {_csv_codecs.describe(columns)}."
             context.log.info(named)
         return decoded
 
@@ -249,7 +276,9 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
 
     Every materialization carries `path`, `bytes_written` and `dagster/storage_kind`, and nothing else: no column schema, no data sample, no statistics pass. A dtype that parquet cannot represent raises `UnwritableDtypeError` before the write.
 
-    Polars `DataFrame` is the supported type. A `LazyFrame` output is collected before the write, with a warning in the run log, and a read always returns a `DataFrame`. Sinking and scanning lazily is planned work, tracked in issue #27.
+    **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
+
+    A write dispatches on the runtime type instead, because a write already holds the object: a `LazyFrame` output is collected before the write, with a warning in the run log. Sinking lazily is planned work, tracked in issue #27.
 
     Attributes:
         base_dir: Directory or cloud URI the manager writes parquet files under.
@@ -294,6 +323,8 @@ class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
     **The read needs the schema, so attach the asset's schema to reach it.** The decode reads the dtype off the carrier `dataframely_asset` puts in the asset's definition metadata, which `schema_metadata` also builds for a plain `@dg.asset`. Without one, the read is an ordinary inferred CSV read and an encoded column arrives as text. The schema never comes from a sidecar file and never from the data, so it costs no round trip and cannot drift.
 
     Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would land a file that no longer round-trips.
+
+    A `pl.LazyFrame` input annotation reads back a scan here too, and it keeps everything above: `scan_csv` takes the same schema-driven dtypes, and the decode is the same expression over `with_columns`, run when the caller collects.
 
     Prefer parquet unless something downstream needs text. Parquet is self-describing, keeps every dtype natively, and needs no schema to read.
 

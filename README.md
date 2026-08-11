@@ -180,7 +180,23 @@ def rollup(orders: dd.DataFramePartitions) -> None: ...
 
 `dd.DataFramePartitions` is `dict[str, pl.DataFrame]`, exported so the shape a fan-in has to annotate has a name.
 The obvious annotation, `pl.DataFrame`, fails Dagster's type check after every partition has already been read.
-There is no lazy twin, because every read returns a `DataFrame`.
+`dd.LazyFramePartitions` is its lazy twin, `dict[str, pl.LazyFrame]`, and reads each partition the way the section below reads a single one.
+
+## Reads dispatch on the annotation
+
+Annotate an input `pl.LazyFrame` and the IO manager hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded:
+
+```python
+@dg.asset
+def recent(orders: pl.LazyFrame) -> pl.DataFrame:
+    return orders.filter(pl.col("amount") > 100).select("order_id").collect()
+```
+
+Annotate `pl.DataFrame` and the file is read whole, as before.
+Writes dispatch on the runtime type instead, and the asymmetry is deliberate: a write already holds the object, so `isinstance` is the honest test, while a read has no object yet and the annotation is the only signal for what to build.
+
+The scan is built on the same fsspec handle the eager read uses, so a cloud scheme needs no second set of credentials, and polars reads the file's bytes when the scan is built.
+What a scan saves is therefore decoding and materialization, not transfer.
 
 ## Validation materializes
 

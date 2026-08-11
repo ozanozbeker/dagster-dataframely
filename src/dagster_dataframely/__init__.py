@@ -16,6 +16,7 @@ from dagster_dataframely._io_managers import (
     DataframelyCSVIOManager,
     DataframelyParquetIOManager,
     DataFramePartitions,
+    LazyFramePartitions,
 )
 from dagster_dataframely._metadata import (
     quarantine_table_schema,
@@ -35,6 +36,7 @@ __all__ = [
     "DataframelyParquetIOManager",
     "Granularity",
     "InvalidSettingError",
+    "LazyFramePartitions",
     "MultiColumnRules",
     "NothingSurvivedError",
     "QuarantineSettingError",

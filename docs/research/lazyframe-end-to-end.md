@@ -146,6 +146,13 @@ This is the cheapest genuine win in the ticket and it should not wait on the res
 
 `_io_managers.py:35` already reserves the `LazyFramePartitions` name for the fan-in shape, decided alongside the eager name in [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).
 
+**The open question above, answered while shipping [#52](https://github.com/ozanozbeker/dagster-dataframely/issues/52): a scan rides the fsspec handle.** **[RAN]** Measured against a local handle and an fsspec one (`memory://`), for `scan_parquet` and `scan_csv` alike: both accept the object `UPath.open("rb")` returns, and the plan still collects after that handle is closed.
+It survives because polars reads the file's bytes when it is handed a file object rather than a path: a counting wrapper saw one read of the whole file at `scan_parquet` time, before `collect`.
+So the route costs the transfer that a scan of a `s3://` path would have pruned with range requests, and it buys the two things that decide it.
+Credentials stay one mechanism, fsspec's, rather than the second one polars' object-store would need.
+And the miss in §6 fixes itself: the open raises `FileNotFoundError` where `UPathIOManager` can still catch it, so no `exists()` check and no extra stat call.
+What laziness buys on this route is decoding and materialization, not I/O: the same bytes today's eager read already fetches, and only the rows and columns a query keeps.
+
 ---
 
 ## 6. The missing-file wart, reproduced and worked around
@@ -160,6 +167,8 @@ The `FileNotFoundError` does arrive, at the user's `collect()`, long after the m
 The workaround is one line and it is confirmed: guard `load_from_path` with an `exists()` check that raises where the manager can still catch it. **[RAN]**
 
 The cost is one stat call per partition, which is the same call `UPathIOManager` already makes to build the path.
+
+**Superseded by the §5 finding.** [#52](https://github.com/ozanozbeker/dagster-dataframely/issues/52) shipped without the guard, because a scan built on the open handle never reaches the case: the open is what raises, on the lazy path and the eager one alike.
 
 ---
 
@@ -198,7 +207,7 @@ If this is ever revisited, the last two bullets are the design.
 Two changes, independent, in this order.
 
 **A.
-Lazy reads.** `load_from_path` returns `pl.scan_parquet` when the input annotation is `pl.LazyFrame`, guarded by the `exists()` check from §6.
+Lazy reads.** `load_from_path` returns `pl.scan_parquet` when the input annotation is `pl.LazyFrame`, built on the handle it already opens, which is what makes the §6 guard unnecessary.
 Export `LazyFramePartitions` alongside `DataFramePartitions`.
 No validation implications, no interaction with anything below.
 
