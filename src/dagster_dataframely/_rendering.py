@@ -21,7 +21,7 @@ from typing import Any
 
 import dataframely as dy
 
-from dagster_dataframely.naming import (
+from dagster_dataframely._naming import (
     rule_description,
     split_rule,
     validation_rules,
@@ -141,7 +141,7 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
 
     Example:
         >>> import dataframely as dy
-        >>> from dagster_dataframely.rendering import rule_text
+        >>> from dagster_dataframely._rendering import rule_text
         >>> class Orders(dy.Schema):
         ...     order_id = dy.String(primary_key=True)
         ...     amount = dy.Float64(nullable=False, min=0.0)
@@ -244,7 +244,7 @@ def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> s
 
     Example:
         >>> import dataframely as dy
-        >>> from dagster_dataframely.rendering import column_rule_summary
+        >>> from dagster_dataframely._rendering import column_rule_summary
         >>> class Orders(dy.Schema):
         ...     amount = dy.Float64(nullable=False, min=0.0)
         >>> column_rule_summary(Orders, ["amount|nullability", "amount|min"])

@@ -14,8 +14,8 @@ from dagster._core.definitions.metadata.metadata_value import (
     ObjectMetadataValue,
 )
 
-from dagster_dataframely.naming import check_name, validation_rules
-from dagster_dataframely.rendering import column_constraints, table_constraints
+from dagster_dataframely._naming import check_name, validation_rules
+from dagster_dataframely._rendering import column_constraints, table_constraints
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"

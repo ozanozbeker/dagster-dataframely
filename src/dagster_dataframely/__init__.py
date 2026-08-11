@@ -1,6 +1,6 @@
-from dagster_dataframely.asset import dataframely_asset
-from dagster_dataframely.checks import check_specs
-from dagster_dataframely.errors import (
+from dagster_dataframely._asset import dataframely_asset
+from dagster_dataframely._checks import check_specs
+from dagster_dataframely._errors import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
@@ -12,18 +12,18 @@ from dagster_dataframely.errors import (
     UnwritableDtypeError,
     ValidationAbortError,
 )
-from dagster_dataframely.io_managers import (
+from dagster_dataframely._io_managers import (
     DataframelyCSVIOManager,
     DataframelyParquetIOManager,
 )
-from dagster_dataframely.metadata import (
+from dagster_dataframely._metadata import (
     quarantine_table_schema,
     schema_metadata,
     table_schema,
 )
-from dagster_dataframely.naming import check_name
-from dagster_dataframely.runtime import process, quarantine_frame
-from dagster_dataframely.settings import Granularity, MultiColumnRules
+from dagster_dataframely._naming import check_name
+from dagster_dataframely._runtime import process, quarantine_frame
+from dagster_dataframely._settings import Granularity, MultiColumnRules
 
 __all__ = [
     "CheckNameCollisionError",

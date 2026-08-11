@@ -6,7 +6,7 @@ Two surfaces want the same thing and want it for the same reason. A red check sa
 
 **No sample is absent, never empty.** Zero rows is not a small answer to "what does a row look like", it is no answer, and an empty table in the UI would read as one. Dagster enforces the same judgement from the other side: a table value with no records and no schema is an error, so an empty one would take a run down rather than show a reader nothing.
 
-Its own module rather than `metadata`'s or `statistics`', for the reason `statistics` gives and one more. That one holds what an asset declares before it has run; this holds what a run actually held. And unlike a statistic, a cell here is a value out of the data, which is what decides the one rendering rule below.
+Its own module rather than `_metadata`'s or `_statistics`', for the reason `_statistics` gives and one more. That one holds what an asset declares before it has run; this holds what a run actually held. And unlike a statistic, a cell here is a value out of the data, which is what decides the one rendering rule below.
 """
 
 import dagster as dg

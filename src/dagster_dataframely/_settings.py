@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal, override
 
-from dagster_dataframely.errors import InvalidSettingError
+from dagster_dataframely._errors import InvalidSettingError
 
 #: How many asset checks a schema's rules collapse into.
 Granularity = Literal["rule", "column", "schema"]

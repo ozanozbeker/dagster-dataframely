@@ -15,14 +15,14 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely.checks import check_specs
-from dagster_dataframely.errors import (
+from dagster_dataframely._checks import check_specs
+from dagster_dataframely._errors import (
     CollectionNotSupportedError,
     QuarantineSettingError,
 )
-from dagster_dataframely.metadata import _quarantine_metadata, schema_metadata
-from dagster_dataframely.runtime import AssetYield, process
-from dagster_dataframely.settings import (
+from dagster_dataframely._metadata import _quarantine_metadata, schema_metadata
+from dagster_dataframely._runtime import AssetYield, process
+from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
