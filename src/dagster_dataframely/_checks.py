@@ -12,7 +12,7 @@ import dataframely as dy
 import polars as pl
 from dataframely._rule import Rule
 
-from dagster_dataframely.naming import (
+from dagster_dataframely._naming import (
     GATE_CHECK,
     SCHEMA_RULES_CHECK,
     check_name,
@@ -21,9 +21,9 @@ from dagster_dataframely.naming import (
     validate_namespace,
     validation_rules,
 )
-from dagster_dataframely.rendering import check_description, column_rule_summary
-from dagster_dataframely.samples import Row, sample_metadata, sample_rows
-from dagster_dataframely.settings import (
+from dagster_dataframely._rendering import check_description, column_rule_summary
+from dagster_dataframely._samples import Row, sample_metadata, sample_rows
+from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,

@@ -9,22 +9,22 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely.checks import _rule_results
-from dagster_dataframely.errors import (
+from dagster_dataframely._checks import _rule_results
+from dagster_dataframely._errors import (
     NothingSurvivedError,
     SchemaGateError,
     ValidationAbortError,
 )
-from dagster_dataframely.naming import GATE_CHECK, check_name, validation_rules
-from dagster_dataframely.samples import SAMPLE_KEY, sample_metadata, sample_rows
-from dagster_dataframely.settings import (
+from dagster_dataframely._naming import GATE_CHECK, check_name, validation_rules
+from dagster_dataframely._samples import SAMPLE_KEY, sample_metadata, sample_rows
+from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
     MultiColumnRules,
 )
-from dagster_dataframely.statistics import statistics_metadata
+from dagster_dataframely._statistics import statistics_metadata
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 

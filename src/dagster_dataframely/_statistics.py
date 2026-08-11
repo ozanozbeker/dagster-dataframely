@@ -10,7 +10,7 @@ Two rules divide the cells. `mean`, `std`, `p50` and `true_rate` are derived, so
 
 A column whose dtype belongs to no family reaches no table at all. A `List`, a `Struct` or an `Array` has nothing to say past a count and a null count, and two numbers do not earn a fifth table.
 
-Its own module rather than `metadata`'s. That one holds what an asset declares about its data before it has ever run; this is computed from what a run actually wrote, and the two answer to different things when the schema and the frame disagree.
+Its own module rather than `_metadata`'s. That one holds what an asset declares about its data before it has ever run; this is computed from what a run actually wrote, and the two answer to different things when the schema and the frame disagree.
 """
 
 from collections.abc import Callable, Mapping

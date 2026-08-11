@@ -21,10 +21,10 @@ from dagster import (
 from pydantic import Field
 from upath import UPath
 
-from dagster_dataframely import csv_codecs
-from dagster_dataframely.errors import SchemaGateError, UnwritableDtypeError
-from dagster_dataframely.metadata import carried_schema, schema_dtypes
-from dagster_dataframely.runtime import gate_problems
+from dagster_dataframely import _csv_codecs
+from dagster_dataframely._errors import SchemaGateError, UnwritableDtypeError
+from dagster_dataframely._metadata import carried_schema, schema_dtypes
+from dagster_dataframely._runtime import gate_problems
 
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
@@ -160,7 +160,7 @@ class _CSVIOManager(_FrameIOManager):
     def _unwritable(
         self, dtypes: Mapping[str, pl.DataType]
     ) -> Mapping[str, pl.DataType]:
-        return csv_codecs.unwritable(dtypes)
+        return _csv_codecs.unwritable(dtypes)
 
     @override
     def _check_declaration(
@@ -170,7 +170,7 @@ class _CSVIOManager(_FrameIOManager):
 
         The decode reads a column back into the dtype the schema declares, so a schema the frame disagrees with is not an inverse: a `Duration('ns')` written under a declared `Duration('us')` reads back a thousand times too long, with nothing in the file to catch it. That makes the declaration part of what gets written, and a false one a pipeline defect rather than a data one.
 
-        `dataframely_asset` gates the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `runtime.gate_problems`, which is what stops one gate from admitting what the other refuses.
+        `dataframely_asset` gates the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.gate_problems`, which is what stops one gate from admitting what the other refuses.
         """
         schema = carried_schema(context.definition_metadata)
         if schema is None:
@@ -189,7 +189,7 @@ class _CSVIOManager(_FrameIOManager):
 
         An encoded column no schema declares is a warning rather than an info line. It is written correctly and any CSV reader can still read it, but this package will hand it back as text, and that is worth saying at the moment it happens rather than at the read that surprises someone.
         """
-        encoded, columns = csv_codecs.encode(frame)
+        encoded, columns = _csv_codecs.encode(frame)
         if columns:
             schema = carried_schema(context.definition_metadata)
             declared: Mapping[str, pl.DataType] = (
@@ -200,9 +200,9 @@ class _CSVIOManager(_FrameIOManager):
             }
             # Formatted here rather than left to the logger's own deferral, so the event
             # log a user reads holds the columns rather than a template.
-            named = f"Encoded {len(columns)} column(s) that CSV cannot hold: {csv_codecs.describe(columns)}."
+            named = f"Encoded {len(columns)} column(s) that CSV cannot hold: {_csv_codecs.describe(columns)}."
             if undeclared:
-                message = f"{named} No schema on this asset declares {csv_codecs.describe(undeclared)}, so a read has nothing to decode that with and it comes back as text."
+                message = f"{named} No schema on this asset declares {_csv_codecs.describe(undeclared)}, so a read has nothing to decode that with and it comes back as text."
                 context.log.warning(message)
             else:
                 message = (
@@ -228,11 +228,11 @@ class _CSVIOManager(_FrameIOManager):
         )
 
         with path.open("rb") as file:
-            frame = pl.read_csv(file, schema_overrides=csv_codecs.read_schema(dtypes))
+            frame = pl.read_csv(file, schema_overrides=_csv_codecs.read_schema(dtypes))
 
-        decoded, columns = csv_codecs.decode(frame, dtypes)
+        decoded, columns = _csv_codecs.decode(frame, dtypes)
         if columns:
-            named = f"Decoded {len(columns)} column(s) CSV cannot hold: {csv_codecs.describe(columns)}."
+            named = f"Decoded {len(columns)} column(s) CSV cannot hold: {_csv_codecs.describe(columns)}."
             context.log.info(named)
         return decoded
 

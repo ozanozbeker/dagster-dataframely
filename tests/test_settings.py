@@ -13,7 +13,7 @@ import pytest
 
 import dagster_dataframely
 from dagster_dataframely import InvalidSettingError
-from dagster_dataframely.settings import (
+from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
