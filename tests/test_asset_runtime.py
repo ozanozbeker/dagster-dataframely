@@ -352,6 +352,18 @@ def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
     assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules)
 
 
+def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
+    tmp_path: Path,
+):
+    """The two keys are unconditional. A check whose metadata appeared only on the runs it failed would have a timeline with holes in it, and the expression is what makes a tightened bound visible in that timeline rather than orphaning its history."""
+    evaluations = _evaluations(_materialize(tmp_path, _quarantined))
+    rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
+
+    assert any(e.passed for e in rules)
+    assert any(not e.passed for e in rules)
+    assert all({"dy_rule", "dy_rule__expr"} <= set(e.metadata) for e in rules)
+
+
 def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
     """Landing the survivors is only worth anything if the run does not stop there. The rule checks are non-blocking, so a `WARN` never holds a consumer back."""
     seen: dict[str, int] = {}

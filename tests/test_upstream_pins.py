@@ -76,6 +76,61 @@ def test_a_column_rule_is_not_reachable_by_name():
     assert not isinstance(getattr(Orders, "primary_key", None), RuleFactory)
 
 
+def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it():
+    """Every value-carrying constraint still generates a rule named after its column parameter, and still keeps the value on an attribute of the same name."""
+    # #20 renders the pill from that value, so it reads the attribute by the rule's own name rather than carrying a second table mapping one to the other. The mixins holding these attributes are private, which is why the regularity is pinned rather than typed against.
+    declared: dict[str, dy.Column] = {
+        "min": dy.Int64(min=1),
+        "max": dy.Int64(max=9),
+        "min_exclusive": dy.Float64(min_exclusive=0.0),
+        "max_exclusive": dy.Float64(max_exclusive=1.0),
+        "is_in": dy.Int64(is_in=[1, 2]),
+        "regex": dy.String(regex="^a$"),
+        "min_length": dy.String(min_length=1),
+        "max_length": dy.List(dy.String(), max_length=2),
+        "resolution": dy.Datetime(resolution="1h"),
+    }
+
+    for parameter, column in declared.items():
+        assert parameter in column.validation_rules(pl.col("a"))
+        assert getattr(column, parameter) is not None
+
+
+def test_length_bounds_are_declared_on_exactly_string_and_list():
+    """`min_length` / `max_length` are still parameters of `dy.String` and `dy.List` and of no other column type, and each still counts something different."""
+    # #20 dispatches the pill's unit on the column type, because the parameter name cannot distinguish them: `String` measures bytes and `List` measures elements. A third column type growing the parameter would render silently in whichever unit it is not.
+    columns = [
+        column
+        for name in dy.__all__
+        if isinstance(column := getattr(dy, name), type)
+        and issubclass(column, dy.Column)
+    ]
+    with_length = {
+        column.__name__
+        for column in columns
+        if "max_length" in inspect.signature(column.__init__).parameters
+    }
+
+    assert with_length == {"String", "List"}
+    assert "len_bytes" in str(
+        dy.String(max_length=3).validation_rules(pl.col("a"))["max_length"]
+    )
+    assert ".list.length()" in str(
+        dy.List(dy.String(), max_length=3).validation_rules(pl.col("a"))["max_length"]
+    )
+
+
+def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_allowed():
+    """`allow_inf` and `allow_nan` still default to `False`, and still generate their rules only at that default."""
+    # #20 draws the line for defaulted constraints here: an `inf` pill on every float column would state something no author asked for, and it could never state anything else, because allowing the value removes the rule instead of inverting it.
+    assert not dy.Float64().allow_inf
+    assert not dy.Float64().allow_nan
+    assert {"inf", "nan"} <= set(dy.Float64().validation_rules(pl.col("a")))
+    assert not {"inf", "nan"} & set(
+        dy.Float64(allow_inf=True, allow_nan=True).validation_rules(pl.col("a"))
+    )
+
+
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
     """`FailureInfo.details()` still returns the invalid rows plus one outcome column per rule."""
     # #19 builds the quarantine frame straight off `details()`: original columns untouched, outcome columns renamed into the reserved namespace.
