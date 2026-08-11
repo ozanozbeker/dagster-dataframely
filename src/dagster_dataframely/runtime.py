@@ -16,7 +16,8 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from dagster_dataframely.naming import GATE_CHECK, check_name, validation_rules
-from dagster_dataframely.settings import Granularity, MultiColumnRules
+from dagster_dataframely.settings import STATISTICS, Granularity, MultiColumnRules
+from dagster_dataframely.statistics import statistics_metadata
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
@@ -168,6 +169,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     quarantine_out: str | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
+    statistics: bool | None = None,
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
@@ -183,6 +185,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         quarantine_out: The output name the rejected rows materialize under, or `None` when the asset declares no quarantine.
         check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the door resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
+        statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
 
     Yields:
         A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the good materialization where there is one, standalone where the good out is skipped.
@@ -196,6 +199,8 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     """
     _require_frame(frame, good_out)
     good_key = context.asset_key_for_output(good_out)
+    # Resolved before the gate so a mistyped environment variable fails the same way at either out, rather than only on the runs that reach the second one.
+    emit_statistics: bool = STATISTICS.resolve(statistics)
 
     # --- Stage 1: the schema gate ---
     problems: list[dict[str, str]] = gate_problems(schema, frame)
@@ -223,16 +228,24 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         multi_column_rules=multi_column_rules,
     )
 
-    good_result = dg.MaterializeResult(
-        asset_key=good_key,
-        value=good,
-        metadata={"dagster/row_count": len(good)},
-        check_results=checks,
-    )
+    def good_result() -> dg.MaterializeResult[pl.DataFrame]:
+        """Builds the good out's materialization, where it is yielded rather than ahead of every exit.
+
+        Two of the five discard it, and since the profile is a pass over the whole frame, building it early would charge an aborting run for a table nobody will see.
+        """
+        return dg.MaterializeResult(
+            asset_key=good_key,
+            value=good,
+            metadata={
+                "dagster/row_count": len(good),
+                **statistics_metadata(good, enabled=emit_statistics),
+            },
+            check_results=checks,
+        )
 
     if not rejected:
         # Exit: everything survived. The quarantine out is skipped rather than written empty, so an empty quarantine partition means something.
-        yield good_result
+        yield good_result()
         return
 
     if quarantine_out is None:
@@ -242,12 +255,16 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         raise ValidationAbortError(schema.__name__, rejected, failure.counts())
 
     quarantine_key = context.asset_key_for_output(quarantine_out)
+    # Bound once: the frame is written and profiled, and `quarantine_frame` rebuilds it out of `details()` on every call.
+    rejects: pl.DataFrame = quarantine_frame(schema, failure)
     quarantine_result = dg.MaterializeResult(
         asset_key=quarantine_key,
-        value=quarantine_frame(schema, failure),
+        value=rejects,
         metadata={
             "dagster/row_count": rejected,
             "cooccurrence": _cooccurrence(failure.cooccurrence_counts()),
+            # Profiled like any other table, because it is one somebody reads. What the rejected values look like is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
+            **statistics_metadata(rejects, enabled=emit_statistics),
         },
     )
 
@@ -261,5 +278,5 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         )
 
     # Exit: the middle case. The survivors land, the rest are inspectable next door, and downstream proceeds on the data that is fine.
-    yield good_result
+    yield good_result()
     yield quarantine_result

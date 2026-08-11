@@ -1,6 +1,8 @@
 """The three-tier settings chain, asserted at the seam every knob resolves through.
 
-`_Setting.resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The two knobs the package ships are exercised through it, and a fake setting covers the one tier a shipped knob cannot reach: its own default is valid by construction.
+`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The knobs the package ships are exercised through it, and a fake setting covers the one tier a shipped knob cannot reach: its own default is valid by construction.
+
+A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it.
 """
 
 import importlib
@@ -14,10 +16,12 @@ from dagster_dataframely import InvalidSettingError
 from dagster_dataframely.settings import (
     CHECK_GRANULARITY,
     MULTI_COLUMN_RULES,
+    STATISTICS,
     _Setting,
 )
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
+_STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow: it is what a user without one gets.
 _WRONG: Any = "per_column"
@@ -29,6 +33,7 @@ _BROKEN = _Setting[str](name="fake_setting", default="nonsense", allowed=("on", 
 def test_a_knob_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
     assert MULTI_COLUMN_RULES.resolve(None) == "schema"
+    assert STATISTICS.resolve(None) is True
 
 
 def test_the_environment_variable_beats_the_package_default(
@@ -51,6 +56,42 @@ def test_every_setting_names_its_environment_variable_after_itself():
     """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously machine surface, and it is derived rather than transcribed so the two cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert MULTI_COLUMN_RULES.env_var == "DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES"
+    assert STATISTICS.env_var == _STATISTICS_ENV
+
+
+def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The one tier where a two-valued knob differs from a vocabulary one, asserted in both directions and in the casing a deployment is as likely to write."""
+    monkeypatch.setenv(_STATISTICS_ENV, "false")
+    assert STATISTICS.resolve(None) is False
+
+    monkeypatch.setenv(_STATISTICS_ENV, "TRUE")
+    assert STATISTICS.resolve(None) is True
+
+
+def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The case a truthiness test would get wrong, which is the one that matters: with the tier below saying on, the knob would be impossible to turn off."""
+    monkeypatch.setenv(_STATISTICS_ENV, "true")
+
+    assert STATISTICS.resolve(argument=False) is False
+
+
+def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`1` is the plausible wrong word, and the error has to be the same one a vocabulary knob raises: same setting, same allowed values, same tier order."""
+    monkeypatch.setenv(_STATISTICS_ENV, "1")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        STATISTICS.resolve(None)
+    message = str(raised.value)
+
+    assert "statistics" in message
+    assert "'true', 'false'" in message
+    assert _STATISTICS_ENV in message
 
 
 def test_a_value_outside_the_vocabulary_raises_from_the_argument_tier():
