@@ -2,7 +2,7 @@
 
 Specs come off the schema, never off a run's `FailureInfo`. A rule that rejected nothing still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
 
-How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One bucketing answers that question for both surfaces: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
+How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One grouping answers that question for both surfaces: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
 """
 
 from dataclasses import dataclass, field
@@ -13,8 +13,8 @@ import polars as pl
 from dataframely._rule import Rule
 
 from dagster_dataframely._naming import (
-    GATE_CHECK,
     SCHEMA_RULES_CHECK,
+    SHAPE_CHECK,
     check_name,
     column_check_name,
     split_rule,
@@ -33,14 +33,14 @@ from dagster_dataframely._settings import (
 
 
 @dataclass(frozen=True)
-class _Bucket:
+class _RuleSet:
     """The rules one check reports for, and how that check introduces itself.
 
     Attributes:
         name: The asset-check name.
         description: What the check says it covers.
         rules: The rules it reports for, in the schema's own order.
-        collapsed: Whether the check stands for a set of rules rather than for one rule of its own. It is what the result's metadata shape follows, so a bucket holding a single rule still reports as a set when its siblings do.
+        collapsed: Whether the check stands for a set of rules rather than for one rule of its own. It is what the result's metadata shape follows, so a rule set holding a single rule still reports as a set when its siblings do.
     """
 
     name: str
@@ -49,23 +49,23 @@ class _Bucket:
     collapsed: bool = field(default=False, kw_only=True)
 
 
-def _rule_bucket(schema: type[dy.Schema], rule_name: str) -> _Bucket:
-    """Builds the bucket for a check that is one rule's own, at any granularity."""
-    return _Bucket(
+def _single_rule_set(schema: type[dy.Schema], rule_name: str) -> _RuleSet:
+    """Builds the rule set for a check that is one rule's own, at any granularity."""
+    return _RuleSet(
         check_name(rule_name), check_description(schema, rule_name), [rule_name]
     )
 
 
-def _buckets(
+def _rule_sets(
     schema: type[dy.Schema],
     check_granularity: Granularity | None,
     multi_column_rules: MultiColumnRules | None,
-) -> list[_Bucket]:
+) -> list[_RuleSet]:
     """Groups a schema's rules under the checks that report for them.
 
     The one place the settings are read, so the specs and the results cannot resolve them differently.
 
-    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one bucket.
+    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one rule set.
 
     Args:
         schema: The schema to read rules from.
@@ -73,7 +73,7 @@ def _buckets(
         multi_column_rules: Where the rules no single column owns land at `column` granularity, or `None` to resolve it through the settings chain. Read nowhere else: the other two granularities have no second place to put them.
 
     Returns:
-        One bucket per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no buckets at any granularity, because a check reporting for nothing would pass forever.
+        One rule set per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no rule sets at any granularity, because a check reporting for nothing would pass forever.
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
@@ -81,10 +81,10 @@ def _buckets(
     if not rules:
         return []
     if granularity == "rule":
-        return [_rule_bucket(schema, rule_name) for rule_name in rules]
+        return [_single_rule_set(schema, rule_name) for rule_name in rules]
     if granularity == "schema":
         return [
-            _Bucket(
+            _RuleSet(
                 SCHEMA_RULES_CHECK,
                 f"Every validation rule of {schema.__name__}.",
                 list(rules),
@@ -102,8 +102,8 @@ def _buckets(
         else:
             columns.setdefault(parts[0], []).append(rule_name)
 
-    buckets: list[_Bucket] = [
-        _Bucket(
+    rule_sets: list[_RuleSet] = [
+        _RuleSet(
             column_check_name(column),
             f"Every rule on {column}: {column_rule_summary(schema, members)}.",
             members,
@@ -112,8 +112,8 @@ def _buckets(
         for column, members in columns.items()
     ]
     if unowned:
-        buckets.append(
-            _Bucket(
+        rule_sets.append(
+            _RuleSet(
                 SCHEMA_RULES_CHECK,
                 # By name, not rendered: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside this comma-separated list.
                 f"Every rule of {schema.__name__} that no single column owns: {', '.join(unowned)}.",
@@ -121,8 +121,8 @@ def _buckets(
                 collapsed=True,
             )
         )
-    buckets.extend(_rule_bucket(schema, rule_name) for rule_name in alone)
-    return buckets
+    rule_sets.extend(_single_rule_set(schema, rule_name) for rule_name in alone)
+    return rule_sets
 
 
 def check_specs(
@@ -133,7 +133,7 @@ def check_specs(
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
-    """Builds the schema's check specs, plus the schema gate.
+    """Builds the schema's check specs, plus the shape check.
 
     Args:
         schema: The schema the checks are derived from.
@@ -142,7 +142,7 @@ def check_specs(
         multi_column_rules: Where the rules no single column owns land at `column` granularity. Unset resolves through the settings chain.
 
     Returns:
-        The gate spec first, then one spec per bucket.
+        The shape check's spec first, then one spec per rule set.
 
     Raises:
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
@@ -150,18 +150,22 @@ def check_specs(
         CheckNameCollisionError: Two rules rewrite to the same check name.
     """
     validate_namespace(schema)
-    buckets: list[_Bucket] = _buckets(schema, check_granularity, multi_column_rules)
-    gate = dg.AssetCheckSpec(
-        GATE_CHECK,
+    rule_sets: list[_RuleSet] = _rule_sets(
+        schema, check_granularity, multi_column_rules
+    )
+    shape = dg.AssetCheckSpec(
+        SHAPE_CHECK,
         asset=asset,
         description=f"Columns and dtypes match {schema.__name__}.",
         blocking=True,
     )
     return [
-        gate,
+        shape,
         *(
-            dg.AssetCheckSpec(bucket.name, asset=asset, description=bucket.description)
-            for bucket in buckets
+            dg.AssetCheckSpec(
+                rule_set.name, asset=asset, description=rule_set.description
+            )
+            for rule_set in rule_sets
         ),
     ]
 
@@ -178,7 +182,7 @@ def _rejected_rows(
 ) -> dict[str, list[Row]]:
     """Samples the rows each rule rejected, bounded per rule.
 
-    Per rule rather than per check, because a check can stand for a hundred of them: a bound shared across a bucket would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
+    Per rule rather than per check, because a check can stand for a hundred of them: a bound shared across a rule set would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
 
     Args:
         schema: The schema the rules belong to.
@@ -228,7 +232,7 @@ def _collapsed_metadata(
 
     A single total is deliberately absent. Failure counts are per rule and one row can break several, so summing them would state a row count that is not one.
 
-    The sample carries `dy_rule` for the same reason the counts do: a bucket stands for several rules, so a rejected row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
+    The sample carries `dy_rule` for the same reason the counts do: a rule set stands for several rules, so a rejected row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
     """
     metadata: dict[str, dg.TableMetadataValue] = {
         "dy_rules": dg.MetadataValue.table(
@@ -278,7 +282,7 @@ def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with 
         max_failure_samples: How many rejected rows each rule shows. Unset resolves through the settings chain.
 
     Returns:
-        One result per bucket, in the same order and under the same names `check_specs` claimed, because both read the buckets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
+        One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
     """
     counts: dict[str, int] = failure.counts()
     rules: dict[str, Rule] = validation_rules(schema)
@@ -286,19 +290,19 @@ def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with 
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     )
     results: list[dg.AssetCheckResult] = []
-    for bucket in _buckets(schema, check_granularity, multi_column_rules):
+    for rule_set in _rule_sets(schema, check_granularity, multi_column_rules):
         failed: dict[str, int] = {
-            rule_name: counts.get(rule_name, 0) for rule_name in bucket.rules
+            rule_name: counts.get(rule_name, 0) for rule_name in rule_set.rules
         }
-        first: str = bucket.rules[0]
+        first: str = rule_set.rules[0]
         results.append(
             dg.AssetCheckResult(
-                check_name=bucket.name,
+                check_name=rule_set.name,
                 asset_key=asset_key,
                 passed=not any(failed.values()),
                 severity=severity,
                 metadata=_collapsed_metadata(rules, failed, sampled)
-                if bucket.collapsed
+                if rule_set.collapsed
                 else _rule_metadata(
                     first, rules[first], failed[first], sampled.get(first, [])
                 ),

@@ -374,7 +374,7 @@ def test_a_frame_its_schema_does_not_describe_is_refused_before_the_write(
     def nanoseconds() -> pl.DataFrame:
         return _SHAPES.with_columns(pl.col("took").cast(pl.Duration("ns")))
 
-    with pytest.raises(dd.SchemaGateError) as raised:
+    with pytest.raises(dd.SchemaShapeError) as raised:
         _materialize(tmp_path, nanoseconds)
 
     assert (

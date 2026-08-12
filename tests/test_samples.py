@@ -318,7 +318,7 @@ def _by_column() -> pl.DataFrame:
 
 
 def test_a_collapsed_check_says_which_rule_rejected_each_sampled_row(tmp_path: Path):
-    """A bucket stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace is what makes it a column name no schema can collide with."""
+    """A rule set stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace is what makes it a column name no schema can collide with."""
     result = _materialize(tmp_path, _by_column)
     sampled = _records(_check_metadata(result, "dy_col__amount")["dy_failed_sample"])
 

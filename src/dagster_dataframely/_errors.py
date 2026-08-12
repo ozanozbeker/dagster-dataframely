@@ -105,7 +105,7 @@ class CollectionNotSupportedError(DagsterDataframelyError):
         )
 
 
-class SchemaGateError(DagsterDataframelyError):
+class SchemaShapeError(DagsterDataframelyError):
     """A frame arrived with wrong dtypes or missing columns.
 
     A pipeline defect rather than a data defect, so the whole asset aborts: no rows are filtered and nothing is written.

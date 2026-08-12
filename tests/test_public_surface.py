@@ -40,7 +40,7 @@ _PUBLIC = {
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",
-    "SchemaGateError",
+    "SchemaShapeError",
     "UnwritableDtypeError",
     "ValidationAbortError",
     # The types, so a caller can annotate what it passes the door and what a fan-in hands back.

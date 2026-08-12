@@ -25,7 +25,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 That is the whole integration.
 
 Before the asset has ever run, `Orders` fills the catalog's Columns tab: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and one pill per remaining constraint.
-Every run reports one asset check per dataframely rule, each with its own pass/fail history, behind a blocking gate check that compares the frame's columns and dtypes against the schema before a single row is filtered.
+Every run reports one asset check per dataframely rule, each with its own pass/fail history, behind a blocking shape check that compares the frame's columns and dtypes against the schema before a single row is filtered.
 Add `quarantine=dg.AssetOut()` and the rows the schema rejects land in a sibling asset instead of failing the run, as long as something survives.
 
 The transform keeps plain polars annotations.
@@ -56,7 +56,7 @@ Declaring a quarantine **is** the consent to partial data, so what a rejected ro
 
 | what the transform returned | good table | quarantine | checks | run |
 | --- | --- | --- | --- | --- |
-| columns or dtypes that are not the schema's | not written | not written | the gate fails, blocking | fails, `SchemaGateError` |
+| columns or dtypes that are not the schema's | not written | not written | the shape check fails, blocking | fails, `SchemaShapeError` |
 | every row valid | written | skipped, not written empty | all pass | green |
 | some rows rejected, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
 | some rows rejected, quarantine declared | the survivors | the rejected rows | fail at `WARN` | green |
@@ -81,7 +81,7 @@ Three settings raise `QuarantineSettingError` instead of being honoured: `automa
 
 ## The package never casts
 
-The gate compares the frame's dtypes against the schema's and aborts on a mismatch; the filter runs with `cast=False`.
+The shape check compares the frame's dtypes against the schema's and aborts on a mismatch; the filter runs with `cast=False`.
 A `Duration('ns')` arriving where the schema declares `Duration('us')` is a pipeline defect, and silently widening it is how a thousandfold error reaches a table nobody re-reads.
 
 If you do want conformance, write the cast yourself, in your own asset body, as a line you can see:
@@ -112,10 +112,10 @@ A dtype the format cannot hold raises `UnwritableDtypeError` before the write ra
 
 **These are the supported path.**
 They record `path`, `bytes_written` and `dagster/storage_kind` on each materialization and nothing else.
-No column schema, in particular: the asset definition owns what the data is, and leaving the materialization bucket empty is what keeps the Columns tab showing the schema as declared.
+No column schema, in particular: the asset definition owns what the data is, and leaving the materialization's own metadata empty is what keeps the Columns tab showing the schema as declared.
 
 What degrades on someone else's manager is one surface.
-A stock polars IO manager writes its own `dagster/column_schema` onto the materialization, and with both metadata buckets populated Dagster merges them in the catalog Columns tab: column names come out lowercased and the constraint pills disappear, because the materialization's constraint-free schema becomes the base.
+A stock polars IO manager writes its own `dagster/column_schema` onto the materialization, and with both metadata surfaces populated Dagster merges them in the catalog Columns tab: column names come out lowercased and the constraint pills disappear, because the materialization's constraint-free schema becomes the base.
 Dtypes, descriptions and column tags survive, and the Lineage Metadata accordion is definition-only and never merged, so full fidelity is still one click away.
 This is documented, not designed around.
 Parity is a preference, never a constraint.
@@ -152,7 +152,7 @@ Parquet is self-describing, keeps every dtype natively, and needs no schema to r
 
 `partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no setting here.
 Both outs carry it, which is what makes the quarantine unable to escape its asset's partitioning.
-The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's good count, and a partition whose frame drifts aborts at the gate without touching any other partition's file.
+The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's good count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
 
 **The transform reaches its own partition key through the context.**
 The transform takes no `context` parameter, so a partitioned one fetches the context the same way the wrapper does:
@@ -226,7 +226,7 @@ The temp file goes wherever [`temp_dir`](#temp_dir-decides-which-disk-a-lazy-tra
 **A `LazyFrame` return streams to a local parquet first, then is read back whole and validated exactly as a `DataFrame` return is.**
 Peak memory is then the size of the frame the plan produced rather than the plan's own high-water mark, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
 A `DataFrame` return skips the landing, because a frame you already materialized has nothing left to stream and landing it would be pure cost.
-The gate runs before the landing, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the landed file is removed before the run picks an outcome.
+The shape check runs before the landing, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the landed file is removed before the run picks an outcome.
 
 > [!IMPORTANT]
 > The landing goes to the system temp directory, which in a container is its **ephemeral disk**.
@@ -356,7 +356,7 @@ def orders():
     )
 ```
 
-`is_required=False` matters: the gate and both abort paths end the step without yielding an out.
+`is_required=False` matters: the shape check and both abort paths end the step without yielding an out.
 
 **This is not a route to `dy.Collection` support.**
 Hand-wiring a Collection means reimplementing the hardest part of the package rather than assembling it, because `process` is single-schema by signature.
@@ -401,7 +401,7 @@ The docstring is not decoration: it becomes that check's description in the cata
 
 ## The reserved namespace
 
-Every check name sits under `dy_`, and so does every quarantine outcome column and every key in check metadata: the gate check `dy_schema__dtypes`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`.
+Every check name sits under `dy_`, and so does every quarantine outcome column and every key in check metadata: the shape check `dy_schema__dtypes`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`.
 The materialization keys are deliberately outside it, because `sample`, `cooccurrence` and `stats/*` are for a data consumer rather than for this package's bookkeeping.
 A schema with a column of its own inside the namespace raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
 The prefix is hardcoded rather than configurable: its whole value is being the same string in every project.

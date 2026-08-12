@@ -4,7 +4,7 @@ Widened from the front-door probe's original scenario to the cases the rest of t
 
 Nothing here is a fixture. A schema is a class and a frame is a value, so both are cheaper to read as module constants than as fixture indirection, and `Orders` has to be importable at class-definition time to decorate an asset.
 
-`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them, so a frame that drifts from the schema fails the gate loudly in every runtime test instead of being silently rebuilt to match.
+`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them, so a frame that drifts from the schema fails the shape check loudly in every runtime test instead of being silently rebuilt to match.
 """
 
 import datetime as dt
@@ -177,5 +177,5 @@ def hopeless_orders() -> pl.DataFrame:
 
 
 def wrong_dtype_orders() -> pl.DataFrame:
-    """`quantity` arrives `Int64`: a pipeline defect the gate catches before the filter."""
+    """`quantity` arrives `Int64`: a pipeline defect the shape check catches before the filter."""
     return clean_orders().with_columns(pl.col("quantity").cast(pl.Int64))

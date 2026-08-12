@@ -121,7 +121,7 @@ def test_row_count_is_the_partitions_good_count(tmp_path: Path):
 
 
 # --- a partition whose frame drifts ---
-def test_a_drifting_partition_aborts_at_the_gate_before_any_row_check_reports(
+def test_a_drifting_partition_aborts_at_the_shape_check_before_any_row_check_reports(
     tmp_path: Path,
 ):
     result = _materialize(tmp_path, "wrong", raise_on_error=False)

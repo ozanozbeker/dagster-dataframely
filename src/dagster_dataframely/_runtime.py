@@ -1,4 +1,4 @@
-"""The state machine a schema-backed asset runs: gate, land, filter, then one of five outcomes.
+"""The state machine a schema-backed asset runs: check the shape, land, filter, then one of five outcomes.
 
 The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three outcomes into five: it is the consent to partial data, and its absence is the refusal.
 
@@ -16,10 +16,10 @@ import polars as pl
 from dagster_dataframely._checks import _rule_results
 from dagster_dataframely._errors import (
     NothingSurvivedError,
-    SchemaGateError,
+    SchemaShapeError,
     ValidationAbortError,
 )
-from dagster_dataframely._naming import GATE_CHECK, check_name, validation_rules
+from dagster_dataframely._naming import SHAPE_CHECK, check_name, validation_rules
 from dagster_dataframely._samples import SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
@@ -38,7 +38,7 @@ LANDING_PREFIX = "dagster_dataframely_"
 
 
 def _require_frame(frame: object, out_name: str) -> None:
-    """Rejects a transform output the gate cannot read.
+    """Rejects a transform output the shape check cannot read.
 
     The parameter's annotation is a promise Dagster cannot enforce, because it calls the transform dynamically. Left alone, a forgotten return annotation surfaces two frames down as `'NoneType' object has no attribute 'collect_schema'`.
 
@@ -46,18 +46,18 @@ def _require_frame(frame: object, out_name: str) -> None:
     """
     if isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{out_name}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the gate reads its columns and dtypes before anything is written. An asset that manages its own storage has no schema to validate, so write it as a plain `@dg.asset`."
+    wrong_type: str = f"'{out_name}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. An asset that manages its own storage has no schema to validate, so write it as a plain `@dg.asset`."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
-def gate_problems(
+def shape_problems(
     schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
 ) -> list[dict[str, str]]:
     """Compares the frame's shape against the schema, naming every mismatch.
 
-    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The door promises either return type works, so the gate cannot be built on a difference between them.
+    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The door promises either return type works, so the shape check cannot be built on a difference between them.
 
-    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without a door. Sharing the comparison is what stops two gates from drawing the line differently.
+    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without a door. Sharing the comparison is what stops two shape checks from drawing the line differently.
 
     Only public API, and none of it executes: `collect_schema()` resolves a `LazyFrame`'s shape without running it.
 
@@ -66,7 +66,7 @@ def gate_problems(
         frame: The frame to compare, eager or lazy.
 
     Returns:
-        One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `SchemaGateError`, so the two cannot disagree.
+        One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `SchemaShapeError`, so the two cannot disagree.
     """
     actual: pl.Schema = frame.collect_schema()
     return [
@@ -106,12 +106,12 @@ def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
         return pl.read_parquet(path)
 
 
-def _gate_failure(
+def _shape_failure(
     problems: list[dict[str, str]], *, asset_key: dg.AssetKey
 ) -> dg.AssetCheckResult:
-    """Builds the failing gate check, tabulating every offending column."""
+    """Builds the failing shape check, tabulating every offending column."""
     return dg.AssetCheckResult(
-        check_name=GATE_CHECK,
+        check_name=SHAPE_CHECK,
         asset_key=asset_key,
         passed=False,
         severity=dg.AssetCheckSeverity.ERROR,
@@ -133,15 +133,15 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
     multi_column_rules: MultiColumnRules | None,
     max_failure_samples: int | None,
 ) -> list[dg.AssetCheckResult]:
-    """Builds every check result for a run that made it past the gate.
+    """Builds every check result for a run that made it past the shape check.
 
     Severity is derived here, once, from whether the good table landed. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A rejected row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
 
-    The gate is not a rule, so it reports on its own at every granularity and never joins a bucket.
+    The shape check is not a rule, so it reports on its own at every granularity and never joins a rule set.
     """
     severity = dg.AssetCheckSeverity.ERROR if aborting else dg.AssetCheckSeverity.WARN
     return [
-        dg.AssetCheckResult(check_name=GATE_CHECK, asset_key=asset_key, passed=True),
+        dg.AssetCheckResult(check_name=SHAPE_CHECK, asset_key=asset_key, passed=True),
         *_rule_results(
             schema,
             failure,
@@ -221,7 +221,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
-    Three stages and five exits. The gate runs first, so a wrong-shaped frame never pays to be landed or filtered. A lazy frame then lands to a local parquet and is read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Three stages and five exits. The shape check runs first, so a wrong-shaped frame never pays to be landed or filtered. A lazy frame then lands to a local parquet and is read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
     Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, rejected rows land next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the good out is skipped rather than materialized empty.
 
@@ -245,24 +245,24 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
         DagsterInvariantViolationError: The transform returned something that is not a polars frame.
         FileNotFoundError: `temp_dir` names a directory that does not exist, on a run that had a plan to land.
-        SchemaGateError: The frame's columns or dtypes do not match the schema.
+        SchemaShapeError: The frame's columns or dtypes do not match the schema.
         ValidationAbortError: Rows were rejected and no quarantine is declared.
         NothingSurvivedError: Rows were rejected and none survived.
     """
     _require_frame(frame, good_out)
     good_key = context.asset_key_for_output(good_out)
-    # Resolved before the gate so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
+    # Resolved before the shape check so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
     landing_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
-    # --- Stage 1: the schema gate ---
-    problems: list[dict[str, str]] = gate_problems(schema, frame)
+    # --- Stage 1: the shape check ---
+    problems: list[dict[str, str]] = shape_problems(schema, frame)
     if problems:
         # Exit: pipeline defect. Nothing is filtered and neither out is written, so a wrong-shaped frame cannot corrupt either table.
-        yield _gate_failure(problems, asset_key=good_key)
-        raise SchemaGateError(schema.__name__, problems)
+        yield _shape_failure(problems, asset_key=good_key)
+        raise SchemaShapeError(schema.__name__, problems)
 
     # --- Stage 2: the temp landing ---
     # A plan streams to a local parquet and comes back as the frame it produced. An eager frame passes straight through, because there is nothing left to stream.

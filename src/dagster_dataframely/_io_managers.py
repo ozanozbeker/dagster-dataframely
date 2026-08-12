@@ -27,9 +27,9 @@ from pydantic import Field
 from upath import UPath
 
 from dagster_dataframely import _csv_codecs
-from dagster_dataframely._errors import SchemaGateError, UnwritableDtypeError
+from dagster_dataframely._errors import SchemaShapeError, UnwritableDtypeError
 from dagster_dataframely._metadata import carried_schema, schema_dtypes
-from dagster_dataframely._runtime import LANDING_PREFIX, gate_problems
+from dagster_dataframely._runtime import LANDING_PREFIX, shape_problems
 from dagster_dataframely._settings import TEMP_DIR
 
 if TYPE_CHECKING:
@@ -260,14 +260,14 @@ class _CSVIOManager(_FrameIOManager):
 
         The decode reads a column back into the dtype the schema declares, so a schema the frame disagrees with is not an inverse: a `Duration('ns')` written under a declared `Duration('us')` reads back a thousand times too long, with nothing in the file to catch it. That makes the declaration part of what gets written, and a false one a pipeline defect rather than a data one.
 
-        `dataframely_asset` gates the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.gate_problems`, which is what stops one gate from admitting what the other refuses.
+        `dataframely_asset` runs the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.shape_problems`, which is what stops one shape check from admitting what the other refuses.
         """
         schema = carried_schema(context.definition_metadata)
         if schema is None:
             return
-        problems = gate_problems(schema, frame)
+        problems = shape_problems(schema, frame)
         if problems:
-            raise SchemaGateError(schema.__name__, problems)
+            raise SchemaShapeError(schema.__name__, problems)
 
     def _encoded[F: (pl.DataFrame, pl.LazyFrame)](
         self, context: "OutputContext", frame: F

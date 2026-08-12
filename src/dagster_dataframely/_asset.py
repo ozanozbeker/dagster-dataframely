@@ -59,7 +59,7 @@ _ASSET_OUT_SETTINGS = frozenset(inspect.signature(dg.AssetOut.__init__).paramete
     "kwargs",
 }
 
-# Door-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The gate and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a transform is not a virtual asset.
+# Door-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The shape check and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a transform is not a virtual asset.
 _DOOR_OWNED_SETTINGS = frozenset({"is_required", "dagster_type", "is_virtual"})
 
 # Settings one step cannot hold two of. `partitions_def` and `backfill_policy` need no entry: they live on the `multi_asset`, so both outs carry them identically by construction. That is the property these three lack.
@@ -196,7 +196,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         schema: The dataframely schema the transform's output must satisfy.
         quarantine: Where rejected rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how rejected rows reach a separate storage and ownership domain. Its key defaults to a sibling of the good asset and its IO manager to the good asset's.
         check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity: bucketed into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
+        multi_column_rules: Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
         statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the good out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
         row_sample: How many of the good output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
@@ -285,7 +285,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         outs = {
             asset_name: dg.AssetOut(
                 key=key,
-                # The gate and both abort paths end the step without yielding.
+                # The shape check and both abort paths end the step without yielding.
                 is_required=False,
                 # The package's two keys are applied last, so a user cannot accidentally displace the Columns tab or the schema carrier.
                 metadata={**(metadata or {}), **schema_metadata(schema)},

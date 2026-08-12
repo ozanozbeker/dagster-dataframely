@@ -15,7 +15,7 @@ from polars.testing import assert_frame_equal
 from dagster_dataframely import (
     DataframelyParquetIOManager,
     NothingSurvivedError,
-    SchemaGateError,
+    SchemaShapeError,
     ValidationAbortError,
     dataframely_asset,
 )
@@ -88,7 +88,7 @@ def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
     rules = {name: e for name, e in evaluations.items() if name.startswith("dy_rule__")}
 
     assert len(evaluations) == len(list(orders.check_specs))
-    assert len(rules) == len(evaluations) - 1  # every check but the gate
+    assert len(rules) == len(evaluations) - 1  # every check but the shape check
     assert all(e.passed for e in evaluations.values())
     assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules.values())
 
@@ -105,7 +105,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
 
 
 def test_a_lazy_transform_lands_and_is_read_back_whole(tmp_path: Path):
-    """The round trip through the landed parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the gate has already run by the time the landing happens, so a changed dtype would surface as a filter failure rather than as a gate one."""
+    """The round trip through the landed parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the landing happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
@@ -155,7 +155,7 @@ def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
 
 
 def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
-    """The gate reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
     @dataframely_asset(schema=Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
@@ -179,7 +179,7 @@ def _wrong_dtype() -> pl.DataFrame:
 
 def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
     """A pipeline defect, not a data defect: the message has to be readable without opening a traceback."""
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, _wrong_dtype)
 
     message = str(raised.value)
@@ -194,13 +194,13 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
     def missing_column() -> pl.DataFrame:
         return clean_orders().drop("quantity")
 
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, missing_column)
 
     assert "'quantity' (expected Int32, got <missing>)" in str(raised.value)
 
 
-def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
+def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
     """The message is the only thing a user sees of this error, so it agrees in number."""
 
     @dataframely_asset(schema=Orders, name="orders")
@@ -209,7 +209,7 @@ def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
             clean_orders().drop("email").with_columns(pl.col("quantity").cast(pl.Int64))
         )
 
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, several)
 
     assert "Columns 'email' (expected String, got <missing>), 'quantity' " in str(
@@ -218,25 +218,25 @@ def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
     assert "do not match Orders" in str(raised.value)
 
 
-def test_the_gate_writes_nothing(tmp_path: Path):
+def test_the_shape_check_writes_nothing(tmp_path: Path):
     _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
 
     assert not list(tmp_path.rglob("*.parquet"))
 
 
-def test_the_gate_runs_before_row_filtering(tmp_path: Path):
-    """Only the gate reports. No rule check evaluates, because no row was ever filtered."""
+def test_the_shape_check_runs_before_row_filtering(tmp_path: Path):
+    """Only the shape check reports. No rule check evaluates, because no row was ever filtered."""
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
     evaluations = _evaluations(result)
-    gate = evaluations["dy_schema__dtypes"]
+    shape = evaluations["dy_schema__dtypes"]
 
     assert not result.success
     assert set(evaluations) == {"dy_schema__dtypes"}
-    assert not gate.passed
-    assert gate.severity == dg.AssetCheckSeverity.ERROR
+    assert not shape.passed
+    assert shape.severity == dg.AssetCheckSeverity.ERROR
 
 
-def test_the_gate_check_tabulates_every_offending_column(tmp_path: Path):
+def test_the_shape_check_tabulates_every_offending_column(tmp_path: Path):
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
     metadata = dict(_evaluations(result)["dy_schema__dtypes"].metadata)
     errors = metadata["dy_schema__errors"]
@@ -553,7 +553,7 @@ _EXITS = [
     pytest.param(mixed_orders, None, id="no quarantine"),
     pytest.param(mixed_orders, dg.AssetOut(), id="some survived"),
     pytest.param(hopeless_orders, dg.AssetOut(), id="nothing survived"),
-    pytest.param(wrong_dtype_orders, None, id="gate"),
+    pytest.param(wrong_dtype_orders, None, id="shape"),
 ]
 
 
@@ -702,14 +702,14 @@ def test_the_temp_dir_environment_variable_reaches_the_landing(
     assert str(absent) in str(raised.value)
 
 
-def test_the_gate_runs_before_the_landing(tmp_path: Path):
+def test_the_shape_check_runs_before_the_landing(tmp_path: Path):
     """Resolving a plan's columns and dtypes costs nothing, so a wrong-shaped frame is refused before a single row is streamed.
 
-    Asserted through a landing that cannot work: the gate error is what arrives, so nothing ever tried to write there.
+    Asserted through a landing that cannot work: the shape error is what arrives, so nothing ever tried to write there.
     """
     _, lazy = _both_ways(wrong_dtype_orders, None, temp_dir=str(tmp_path / "absent"))
 
-    with pytest.raises(SchemaGateError):
+    with pytest.raises(SchemaShapeError):
         _materialize(tmp_path / "store", lazy)
 
 
@@ -751,7 +751,7 @@ def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: P
 def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
     tmp_path: Path,
 ):
-    """The count is what collapsing would otherwise cost, so a bucket carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
+    """The count is what collapsing would otherwise cost, so a rule set carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
     evaluations = _evaluations(_materialize(tmp_path, _by_column))
 
     assert _members(evaluations["dy_col__email"]) == {
@@ -789,7 +789,7 @@ def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path)
 
 
 def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
-    """A bucket reports 0 per member rather than going quiet, so a clean run is a row in its history."""
+    """A rule set reports 0 per member rather than going quiet, so a clean run is a row in its history."""
 
     @dataframely_asset(schema=Orders, name="orders", check_granularity="column")
     def spotless() -> pl.DataFrame:

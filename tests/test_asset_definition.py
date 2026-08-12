@@ -71,7 +71,7 @@ def test_the_door_produces_a_multi_asset_with_one_out():
 
 
 def test_the_out_is_not_required():
-    """The gate and the abort paths both end the step without yielding the output."""
+    """The shape check and the abort paths both end the step without yielding the output."""
     (spec,) = orders.specs
     assert spec.skippable
 
@@ -248,7 +248,7 @@ def test_there_is_one_check_per_rule_plus_the_gate():
     assert set(_specs_by_name(orders)) == expected
 
 
-def test_only_the_gate_check_is_blocking():
+def test_only_the_shape_check_is_blocking():
     specs = _specs_by_name(orders)
 
     assert specs["dy_schema__dtypes"].blocking
@@ -296,7 +296,7 @@ def test_no_check_description_is_blank():
     assert all(spec.description for spec in orders.check_specs)
 
 
-def test_the_gate_check_names_the_schema():
+def test_the_shape_check_names_the_schema():
     assert _specs_by_name(orders)["dy_schema__dtypes"].description == (
         "Columns and dtypes match Orders."
     )
@@ -367,7 +367,7 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
 
 
 def test_multi_column_rules_bucket_into_the_schema_check_by_default():
-    """They belong to no column, so at column granularity they have no bucket of their own to land in."""
+    """They belong to no column, so at column granularity they have no rule set of their own to land in."""
     specs = _specs_by_name(by_column)
 
     assert "dy_schema__rules" in specs
@@ -415,8 +415,8 @@ def test_schema_granularity_leaves_one_rules_check_beside_the_gate():
 
 
 @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
-def test_a_schema_with_no_rules_gets_the_gate_and_nothing_else(granularity: Any):
-    """The gate still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
+def test_a_schema_with_no_rules_gets_the_shape_check_and_nothing_else(granularity: Any):
+    """The shape check still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
 
     class Blob(dy.Schema):
         payload = dy.String(nullable=True)
@@ -431,10 +431,10 @@ def test_a_schema_with_no_rules_gets_the_gate_and_nothing_else(granularity: Any)
 
 
 @pytest.mark.parametrize("asset", [orders, by_column, by_schema])
-def test_the_gate_is_present_and_blocking_at_every_granularity(
+def test_the_shape_check_is_present_and_blocking_at_every_granularity(
     asset: dg.AssetsDefinition,
 ):
-    """It is not a rule, so it never joins a bucket, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
+    """It is not a rule, so it never joins a rule set, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
     specs = _specs_by_name(asset)
 
     assert specs["dy_schema__dtypes"].blocking
@@ -1038,7 +1038,7 @@ _ASSET_LEVEL = {
 _NOT_ON_THE_DOOR = {
     "check_specs",  # door-owned: derived from the schema, never contested
     "key",  # door-owned: `key_prefix` plus `name` already say it, once
-    "output_required",  # door-owned: the gate and abort paths must be able to skip
+    "output_required",  # door-owned: the shape check and abort paths must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
     "is_virtual",  # a virtual asset has no compute, so there is no transform
     "io_manager_def",  # not settable per out; the forwarded `resource_defs` covers it
