@@ -33,6 +33,9 @@ from dagster_dataframely._statistics import statistics_metadata
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
+#: What both landings name their temp directory. Shared with the IO manager, which sinks a lazy output through one of its own, so an operator sweeping a filled disk finds every landing this package makes with one glob.
+LANDING_PREFIX = "dagster_dataframely_"
+
 
 def _require_frame(frame: object, out_name: str) -> None:
     """Rejects a transform output the gate cannot read.
@@ -96,9 +99,7 @@ def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     Raises:
         FileNotFoundError: `temp_dir` names a directory that does not exist.
     """
-    with tempfile.TemporaryDirectory(
-        dir=temp_dir, prefix="dagster_dataframely_"
-    ) as landing:
+    with tempfile.TemporaryDirectory(dir=temp_dir, prefix=LANDING_PREFIX) as landing:
         path = Path(landing) / "landed.parquet"
         # Named rather than left to `auto`, because the streaming engine is the whole reason to land: an engine that chose to collect would pay the write and keep the peak.
         frame.sink_parquet(path, engine="streaming")

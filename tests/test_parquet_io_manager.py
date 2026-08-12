@@ -8,6 +8,7 @@ import datetime as dt
 import logging
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 import polars as pl
@@ -127,26 +128,130 @@ def test_a_downstream_query_pushes_down_into_the_scan(tmp_path: Path) -> None:
     assert "SELECTION" in plan
 
 
-def test_a_lazy_frame_output_is_collected_and_says_so(tmp_path: Path) -> None:
-    """`DataFrame` is the supported type, so a lazy output collects rather than sinking. Silently materializing a frame the user asked to keep lazy is the worse failure, so the warning is part of the contract (#27). It stayed part of it when #53 landed: a lazy return through `dataframely_asset` never reaches this path, because the state machine has already landed and read it back by the time the manager sees a frame."""
+@dg.asset(name="orders")
+def _lazy_orders() -> pl.LazyFrame:
+    return _ORDERS.lazy()
 
-    @dg.asset(name="orders")
-    def lazy_orders() -> pl.LazyFrame:
-        return _ORDERS.lazy()
 
+@dg.asset(name="orders")
+def _failing_orders() -> pl.LazyFrame:
+    """A plan that resolves and then fails.
+
+    The cast is legal to the schema resolver, so nothing refuses it before the rows move: `order_id` resolves to `Int64` and the conversion fails on the first row the engine reads. That is the only kind of failure this design has to survive, because a plan that cannot resolve never reaches the write at all.
+    """
+    return _ORDERS.lazy().with_columns(pl.col("order_id").cast(pl.Int64))
+
+
+def test_a_lazy_output_streams_to_storage_and_reports_what_landed(
+    tmp_path: Path,
+) -> None:
+    """The one path in this package where laziness runs end to end, because it is the only one with nothing to report on: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory (#54).
+
+    The absence of a warning is half of what this asserts. The line that used to stand here said a lazy sink was ruled out, and it is what shipping this removed.
+    """
     # `caplog` never sees this. `context.log` writes to the event log, not the stdlib
     # logger tree, and the event log is where a user reads it anyway.
     with dg.DagsterInstance.ephemeral() as instance:
-        result = _materialize(tmp_path, lazy_orders, instance=instance)
+        result = _materialize(tmp_path, _lazy_orders, instance=instance)
         warnings = [
             entry.user_message
             for entry in instance.all_logs(result.run_id)
             if entry.level == logging.WARNING
         ]
+    (event,) = result.get_asset_materialization_events()
+    metadata = dict(event.step_materialization_data.materialization.metadata)
+    written = tmp_path / "orders.parquet"
 
     assert result.success
+    assert_frame_equal(pl.read_parquet(written), _ORDERS)
+    assert metadata["bytes_written"].value == written.stat().st_size
+    assert metadata["dagster/storage_kind"].value == "parquet"
+    assert not warnings
+
+
+def test_the_plan_streams_to_a_file_that_is_not_the_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both halves of the write, pinned as calls because neither has an observable result.
+
+    A manager that collected the plan and wrote the frame would leave the same bytes on disk and keep exactly the peak the sink exists to remove. And a manager that sank at the destination would leave the same bytes again, having truncated whatever was there before it knew the plan worked.
+
+    Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
+    """
+    sunk: list[tuple[str, object]] = []
+    sink = pl.LazyFrame.sink_parquet
+
+    def spy(frame: pl.LazyFrame, path: Path, **kwargs: Any) -> Any:
+        sunk.append((str(path), kwargs.get("engine")))
+        return sink(frame, path, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", spy)
+
+    assert _materialize(tmp_path, _lazy_orders).success
+    assert {engine for _, engine in sunk} == {"streaming"}
+    assert all(path != str(tmp_path / "orders.parquet") for path, _ in sunk)
+
+
+def test_a_local_promote_renames_rather_than_rewriting_in_place(tmp_path: Path) -> None:
+    """A rename is one metadata operation instead of a second copy of the whole file, and it is atomic, so a local destination is never an open empty file waiting to be filled.
+
+    Asserted on the inode, which is what separates the two: a rewrite through the destination's own handle keeps the file that was already there and fills it, while a rename replaces it.
+    """
+    assert _materialize(tmp_path, _orders).success
+    written = tmp_path / "orders.parquet"
+    before = written.stat().st_ino
+
+    assert _materialize(tmp_path, _lazy_orders).success
+    assert written.stat().st_ino != before
+    assert_frame_equal(pl.read_parquet(written), _ORDERS)
+
+
+def test_a_failing_plan_writes_nothing_to_the_destination(tmp_path: Path) -> None:
+    """Sinking at the destination would leave a zero-byte file where the plan died, or a non-empty partial one where it died late. Promoting on success is what keeps the failure invisible from storage."""
+    result = _materialize(tmp_path, _failing_orders, raise_on_error=False)
+
+    assert not result.success
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_a_failing_plan_leaves_the_file_already_there_untouched(tmp_path: Path) -> None:
+    """The same invariant `NothingSurvivedError` protects on the validation side, arriving from the storage side: a failed run does not replace a last-known-good file with a broken one."""
+    assert _materialize(tmp_path, _orders).success
+    written = tmp_path / "orders.parquet"
+    before = written.read_bytes()
+
+    assert not _materialize(tmp_path, _failing_orders, raise_on_error=False).success
+    assert written.read_bytes() == before
+
+
+def test_the_sink_lands_where_the_temp_dir_variable_says(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same knob `dataframely_asset` lands its own transform through, read here from the environment because a manager has no asset argument to take it from.
+
+    A missing directory raises rather than being created, deliberately. The knob is set to move the landing off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    """
+    absent = tmp_path / "absent"
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
+
+    with pytest.raises(FileNotFoundError) as raised:
+        _materialize(tmp_path, _lazy_orders)
+
+    assert str(absent) in str(raised.value)
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_an_eager_output_never_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A frame the caller already materialized has nothing left to stream, so it is written where it always was.
+
+    Asserted by pointing the landing at a directory that does not exist: a run that would land there cannot succeed, and this one does.
+    """
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(tmp_path / "absent"))
+
+    assert _materialize(tmp_path, _orders).success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), _ORDERS)
-    assert any("Collecting a LazyFrame" in message for message in warnings)
 
 
 def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:

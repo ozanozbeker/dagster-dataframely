@@ -261,5 +261,5 @@ MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 #: How many of the good output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
 
-#: Where a lazy transform's plan lands before it is validated. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the knob exists: a landed frame bigger than what the pod has spare fills it.
+#: Which disk a lazy plan lands on: `dataframely_asset` lands its transform before validating it, and an IO manager sinks a lazy output before promoting it to storage. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the knob exists: a landed frame bigger than what the pod has spare fills it.
 TEMP_DIR = _Directory(name="temp_dir", default=None)

@@ -244,6 +244,35 @@ Recorded, not fixed here.
 
 ---
 
+## 10. Addendum, after #53 and #54 shipped
+
+Three findings above are narrower or wider than they read.
+Recorded here rather than edited in place, so what the research concluded stays legible beside what shipping it taught.
+
+**What shipped.** [#53](https://github.com/ozanozbeker/dagster-dataframely/issues/53) landed recommendation B, and [#54](https://github.com/ozanozbeker/dagster-dataframely/issues/54) sank a plain asset's lazy output to a local temp file and promoted it on success.
+That is the streaming-to-the-final-destination §8 says does not survive, and it survives on the one path with nothing to report on: an asset with no schema runs no validation, emits no per-rule checks and no statistics, so nothing forces the plan into memory.
+The §8 to-do about the IO manager docstrings is done.
+
+**`Schema.filter` keeps the good half lazy. [RAN]** Handed a `LazyFrame` it returns a `LazyFrame` good half beside the `FailureInfo`, and the good half is still lazy after `counts()` has run.
+So §3's binding constraint is narrower than it reads: `FailureInfo` collects the rejected rows, not the frame.
+Counting the survivors is `good.select(pl.len()).collect()`, one streaming pass and nothing materialized.
+
+**The IO manager writes while the asset generator is suspended. [RAN]** Traced through a `multi_asset` yielding two `MaterializeResult`s: `handle_output` for the first out runs before the generator resumes to build the second.
+So a `tempfile.TemporaryDirectory` opened inside `process()` is still open while the manager writes, and a landed file can back a scan all the way to storage.
+That was the structural objection to delivering lazily, and it does not hold.
+
+**The statistics pass is already expression-based. [RAN]** Every aggregate in `_statistics.py` is a `pl.struct` over `pl.col`, and `_family_table` holds the only eager call, `.row(0, named=True)`.
+The same aggregate over a frame and over the plan it came from returns the same row, `p50` included, so taking a plan is a `.collect()` inserted there plus one in `sample_rows`.
+It is not the rewrite it looks like.
+
+**Delivering the good half lazily was still declined.**
+Reporting off a plan costs a streaming pass per statistics family, one for the row count, one for the sample and one for the delivery sink, against today's single read of the landed file.
+It also lands the data on local disk twice, once for the validation landing and once for the manager's own promote temp.
+The good half never becoming a frame is worth less than those passes cost, so the schema-backed path keeps materializing and its asymmetry with the plain path stands.
+Decided 2026-08-11.
+
+---
+
 ## Uncertainty ledger
 
 Verified by running code or reading installed source:

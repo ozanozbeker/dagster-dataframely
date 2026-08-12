@@ -193,10 +193,31 @@ def recent(orders: pl.LazyFrame) -> pl.DataFrame:
 ```
 
 Annotate `pl.DataFrame` and the file is read whole, as before.
-Writes dispatch on the runtime type instead, and the asymmetry is deliberate: a write already holds the object, so `isinstance` is the honest test, while a read has no object yet and the annotation is the only signal for what to build.
 
 The scan is built on the same fsspec handle the eager read uses, so a cloud scheme needs no second set of credentials, and polars reads the file's bytes when the scan is built.
 What a scan saves is therefore decoding and materialization, not transfer.
+
+## Writes dispatch on the runtime type
+
+The asymmetry with the read above is deliberate: a write already holds the object, so `isinstance` is the honest test, while a read has no object yet and the annotation is the only signal for what to build.
+
+**Return a `pl.LazyFrame` from a plain `@dg.asset` and the plan streams to storage.**
+It is sunk through the streaming engine to a local temp file, then promoted to `base_dir` once the plan succeeded, so peak memory is the engine's buffers rather than the whole frame:
+
+```python
+@dg.asset
+def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
+    return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
+```
+
+A `pl.DataFrame` return is written where it lands, having nothing left to stream.
+
+**The promote is what keeps a failing plan out of storage.**
+Opening the destination truncates it, so a sink straight there would leave a zero-byte file where a good one was, or a plausible-looking partial one where the plan died late.
+Nothing reaches the destination until the sink succeeded, and a file already there survives the failure untouched.
+A local destination is renamed onto, so the promote itself is atomic there; where it has to copy, a failure partway through it corrupts the destination exactly as an eager write already does.
+
+The temp file goes wherever [`temp_dir`](#temp_dir-decides-which-disk-a-lazy-transform-lands-on) says, and CSV encodes its columns on the way out as it does on the eager path.
 
 ## Validation materializes
 
@@ -212,8 +233,9 @@ The gate runs before the landing, so a frame whose shape disagrees with the sche
 > A landed frame bigger than what the pod has spare fills it.
 > `temp_dir` points it at a mounted volume instead.
 
-Storage stays eager past that point, deliberately.
+Storage stays eager past that point, and that is the difference from the section above.
 This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and the state machine cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+A plain `@dg.asset` streams end to end because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
 The habitat is post-landing transformation: bronze to silver to gold, where the data is already on your side and the question is whether it is fit to publish.
@@ -232,7 +254,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `statistics` | whether each materialization carries a profile of what it wrote | `true` |
 | `max_failure_samples` | how many of the rows a rule rejected reach that rule's check | `5` |
 | `row_sample` | how many of the good table's rows reach its materialization | `5` |
-| `temp_dir` | where a `LazyFrame` return lands before it is validated | the system temp directory |
+| `temp_dir` | which disk a `LazyFrame` lands on, before it is validated or promoted to storage | the system temp directory |
 
 The chain validates on resolve, at every tier including the package's own, so a typo raises `InvalidSettingError` naming the value and the tier that supplied it rather than quietly becoming something else three modules later.
 
@@ -288,7 +310,7 @@ The string family deliberately carries no value-bearing statistic at any setting
 
 ### `temp_dir` decides which disk a lazy transform lands on
 
-Read on the lazy path only, so an asset that returns a `DataFrame` is unaffected by whatever it holds.
+Two landings read it, both on the lazy path only, so an asset that returns a `DataFrame` is unaffected by whatever it holds: a `dataframely_asset` lands its transform there before validating it, and an IO manager sinks a `LazyFrame` output there before promoting it to storage.
 
 Unset, the landing goes wherever `tempfile` puts things, which in a container is the ephemeral disk its `/tmp` sits on.
 That disk is usually small, it is shared with everything else in the pod, and filling it takes the pod down rather than failing the asset.
@@ -305,6 +327,9 @@ Or per asset, where one transform is the one with the large intermediate:
 def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
 ```
+
+The argument tier is the decorator's alone.
+An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to the state machine, which has landed and validated the frame long before a manager sees one.
 
 A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
 Both are the same decision: this knob is set to move the landing off the ephemeral disk, so a typo that quietly lands there anyway is the failure it exists to prevent.
