@@ -1,8 +1,8 @@
-"""The state machine a schema-backed asset runs: check the shape, land, filter, then one of five outcomes.
+"""The state machine a schema-backed asset runs: check the shape, stage, filter, then one of five outcomes.
 
 The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three rule_columns into five: it is the consent to partial data, and its absence is the refusal.
 
-The middle stage is the only one a transform can skip, and its return type is what skips it: see `_landed_frame` for what a plan buys by landing. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
+The middle stage is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
 import tempfile
@@ -33,8 +33,8 @@ from dagster_dataframely._statistics import statistics_metadata
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
-#: What both landings name their temp directory. Shared with the IO manager, which sinks a lazy output through one of its own, so an operator sweeping a filled disk finds every landing this package makes with one glob.
-LANDING_PREFIX = "dagster_dataframely_"
+#: What both staging files name their temp directory. Shared with the IO manager, which sinks a lazy output through one of its own, so an operator sweeping a filled disk finds every staging file this package makes with one glob.
+STAGING_PREFIX = "dagster_dataframely_"
 
 
 def _require_frame(frame: object, out_name: str) -> None:
@@ -80,18 +80,18 @@ def shape_problems(
     ]
 
 
-def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
+def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     """Streams a plan to a local parquet, reads it back whole, and removes the file.
 
-    What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so landing it would be pure cost.
+    What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
     The file is gone before this returns, so no exit of the state machine can leave one behind, including the two whose whole purpose is that nothing is written.
 
-    A configured directory is not created. The setting exists to move the landing off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
+    A configured directory is not created. The setting exists to move the staging file off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
 
     Args:
-        frame: The plan to land.
-        temp_dir: Where the landing goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process lands the frame.
+        frame: The plan to stage.
+        temp_dir: Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
 
     Returns:
         The frame the plan produced, read back whole.
@@ -99,9 +99,9 @@ def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     Raises:
         FileNotFoundError: `temp_dir` names a directory that does not exist.
     """
-    with tempfile.TemporaryDirectory(dir=temp_dir, prefix=LANDING_PREFIX) as landing:
-        path = Path(landing) / "landed.parquet"
-        # Named rather than left to `auto`, because the streaming engine is the whole reason to land: an engine that chose to collect would pay the write and keep the peak.
+    with tempfile.TemporaryDirectory(dir=temp_dir, prefix=STAGING_PREFIX) as staging:
+        path = Path(staging) / "staged.parquet"
+        # Named rather than left to `auto`, because the streaming engine is the whole reason to stage: an engine that chose to collect would pay the write and keep the peak.
         frame.sink_parquet(path, engine="streaming")
         return pl.read_parquet(path)
 
@@ -135,7 +135,7 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
 ) -> list[dg.AssetCheckResult]:
     """Builds every check result for a run that made it past the shape check.
 
-    Severity is derived here, once, from whether the valid table landed. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A invalid row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
+    Severity is derived here, once, from whether the valid table was written. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A invalid row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
 
     The shape check is not a rule, so it reports on its own at every granularity and never joins a rule set.
     """
@@ -221,9 +221,9 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
-    Three stages and five exits. The shape check runs first, so a wrong-shaped frame never pays to be landed or filtered. A lazy frame then lands to a local parquet and is read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Three stages and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
-    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, invalid rows land next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
+    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, invalid rows are written next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
 
     Args:
         schema: The schema the frame must satisfy.
@@ -236,7 +236,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
         statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
         row_sample: How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
-        temp_dir: Where a lazy frame lands. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
+        temp_dir: Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields:
         A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the valid out's materialization where there is one, standalone where the valid out is skipped.
@@ -244,7 +244,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     Raises:
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
         DagsterInvariantViolationError: The transform returned something that is not a polars frame.
-        FileNotFoundError: `temp_dir` names a directory that does not exist, on a run that had a plan to land.
+        FileNotFoundError: `temp_dir` names a directory that does not exist, on a run that had a plan to stage.
         SchemaShapeError: The frame's columns or dtypes do not match the schema.
         ValidationAbortError: Rows were rejected and no quarantine is declared.
         NothingSurvivedError: Rows were rejected and none survived.
@@ -255,7 +255,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    landing_dir: str | None = TEMP_DIR.resolve(temp_dir)
+    staging_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
     # --- Stage 1: the shape check ---
     problems: list[dict[str, str]] = shape_problems(schema, frame)
@@ -264,10 +264,10 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         yield _shape_failure(problems, asset_key=valid_key)
         raise SchemaShapeError(schema.__name__, problems)
 
-    # --- Stage 2: the temp landing ---
+    # --- Stage 2: the temp file ---
     # A plan streams to a local parquet and comes back as the frame it produced. An eager frame passes straight through, because there is nothing left to stream.
     materialized: pl.DataFrame = (
-        _landed_frame(frame, temp_dir=landing_dir)
+        _staged_frame(frame, temp_dir=staging_dir)
         if isinstance(frame, pl.LazyFrame)
         else frame
     )
@@ -341,6 +341,6 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
             schema.__name__, rejected, failure.counts(), quarantine_key.to_user_string()
         )
 
-    # Exit: the middle case. The survivors land, the rest are inspectable next door, and downstream proceeds on the data that is fine.
+    # Exit: the middle case. The survivors are written, the rest are inspectable next door, and downstream proceeds on the data that is fine.
     yield valid_result()
     yield quarantine_result

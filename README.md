@@ -26,7 +26,7 @@ That is the whole integration.
 
 Before the asset has ever run, `Orders` fills the catalog's Columns tab: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and one pill per remaining constraint.
 Every run reports one asset check per dataframely rule, each with its own pass/fail history, behind a blocking shape check that compares the frame's columns and dtypes against the schema before a single row is filtered.
-Add `quarantine=dg.AssetOut()` and the rows the schema rejects land in a sibling asset instead of failing the run, as long as something survives.
+Add `quarantine=dg.AssetOut()` and the rows the schema rejects are written to a sibling asset instead of failing the run, as long as something survives.
 
 The transform keeps plain polars annotations.
 Upstream assets bind as ordinary parameters, the return may be a `DataFrame` or a `LazyFrame`, and there is no `context` parameter to write: the wrapper reaches the context itself.
@@ -136,7 +136,7 @@ Each is encoded on the way out and decoded on the way back by its declared inver
 A run log line names the encoded columns on both paths, because that is the only surface that can carry it.
 
 Two cases are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`.
-Polars cannot write the first to JSON and cannot read the second back, so encoding either would land a file that no longer round-trips.
+Polars cannot write the first to JSON and cannot read the second back, so encoding either would write a file that no longer round-trips.
 `Object` is refused by both managers.
 
 **The read needs the schema.**
@@ -164,8 +164,8 @@ daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 @dd.dataframely_asset(schema=Orders, partitions_def=daily)
 def orders() -> pl.DataFrame:
     day = dg.AssetExecutionContext.get().partition_key
-    landed = pl.read_parquet(f"landing/orders/{day}.parquet")
-    return landed.select("order_id", "amount")
+    raw = pl.read_parquet(f"raw/orders/{day}.parquet")
+    return raw.select("order_id", "amount")
 ```
 
 `dg.AssetExecutionContext.get()` is the door's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two traps below, where Dagster rejects an annotated one under postponed annotations.
@@ -210,14 +210,14 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
 ```
 
-A `pl.DataFrame` return is written where it lands, having nothing left to stream.
+A `pl.DataFrame` return is written where it is, having nothing left to stream.
 
 **The promote is what keeps a failing plan out of storage.**
 Opening the destination truncates it, so a sink straight there would leave a zero-byte file where a good one was, or a plausible-looking partial one where the plan died late.
 Nothing reaches the destination until the sink succeeded, and a file already there survives the failure untouched.
 A local destination is renamed onto, so the promote itself is atomic there; where it has to copy, a failure partway through it corrupts the destination exactly as an eager write already does.
 
-The temp file goes wherever [`temp_dir`](#temp_dir-decides-which-disk-a-lazy-transform-lands-on) says, and CSV encodes its columns on the way out as it does on the eager path.
+The temp file goes wherever [`temp_dir`](#temp_dir-decides-which-disk-a-lazy-transform-is-staged-on) says, and CSV encodes its columns on the way out as it does on the eager path.
 
 ## Validation materializes
 
@@ -225,12 +225,12 @@ The temp file goes wherever [`temp_dir`](#temp_dir-decides-which-disk-a-lazy-tra
 
 **A `LazyFrame` return streams to a local parquet first, then is read back whole and validated exactly as a `DataFrame` return is.**
 Peak memory is then the size of the frame the plan produced rather than the plan's own high-water mark, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
-A `DataFrame` return skips the landing, because a frame you already materialized has nothing left to stream and landing it would be pure cost.
-The shape check runs before the landing, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the landed file is removed before the run picks an outcome.
+A `DataFrame` return skips the staging, because a frame you already materialized has nothing left to stream and staging it would be pure cost.
+The shape check runs before the staging, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the staged file is removed before the run picks an outcome.
 
 > [!IMPORTANT]
-> The landing goes to the system temp directory, which in a container is its **ephemeral disk**.
-> A landed frame bigger than what the pod has spare fills it.
+> The staging file goes to the system temp directory, which in a container is its **ephemeral disk**.
+> A staged frame bigger than what the pod has spare fills it.
 > `temp_dir` points it at a mounted volume instead.
 
 Storage stays eager past that point, and that is the difference from the section above.
@@ -238,7 +238,7 @@ This package does not promise to write a file, it promises to write a file and r
 A plain `@dg.asset` streams end to end because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
-The habitat is post-landing transformation: bronze to silver to gold, where the data is already on your side and the question is whether it is fit to publish.
+The habitat is post-ingest transformation: bronze to silver to gold, where the data is already on your side and the question is whether it is fit to publish.
 Ingestion-scale and larger-than-memory work belongs to other tools.
 
 ## Settings
@@ -254,7 +254,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `statistics` | whether each materialization carries a profile of what it wrote | `true` |
 | `max_failure_samples` | how many of the rows a rule rejected reach that rule's check | `5` |
 | `row_sample` | how many of the valid table's rows reach its materialization | `5` |
-| `temp_dir` | which disk a `LazyFrame` lands on, before it is validated or promoted to storage | the system temp directory |
+| `temp_dir` | which disk a `LazyFrame` is staged on, before it is validated or promoted to storage | the system temp directory |
 
 The chain validates on resolve, at every tier including the package's own, so a typo raises `InvalidSettingError` naming the value and the tier that supplied it rather than quietly becoming something else three modules later.
 
@@ -308,11 +308,11 @@ DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 Turning the samples off leaves `statistics` on.
 The string family deliberately carries no value-bearing statistic at any setting, only lengths and cardinality: consenting to summary statistics is not consenting to raw values.
 
-### `temp_dir` decides which disk a lazy transform lands on
+### `temp_dir` decides which disk a lazy transform is staged on
 
-Two landings read it, both on the lazy path only, so an asset that returns a `DataFrame` is unaffected by whatever it holds: a `dataframely_asset` lands its transform there before validating it, and an IO manager sinks a `LazyFrame` output there before promoting it to storage.
+Two staging paths read it, both on the lazy path only, so an asset that returns a `DataFrame` is unaffected by whatever it holds: a `dataframely_asset` stages its transform there before validating it, and an IO manager sinks a `LazyFrame` output there before promoting it to storage.
 
-Unset, the landing goes wherever `tempfile` puts things, which in a container is the ephemeral disk its `/tmp` sits on.
+Unset, the staging file goes wherever `tempfile` puts things, which in a container is the ephemeral disk its `/tmp` sits on.
 That disk is usually small, it is shared with everything else in the pod, and filling it takes the pod down rather than failing the asset.
 Point it at a volume for the whole code location:
 
@@ -329,10 +329,10 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
 ```
 
 The argument tier is the decorator's alone.
-An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to the state machine, which has landed and validated the frame long before a manager sees one.
+An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to the state machine, which has staged and validated the frame long before a manager sees one.
 
 A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
-Both are the same decision: this setting is set to move the landing off the ephemeral disk, so a typo that quietly lands there anyway is the failure it exists to prevent.
+Both are the same decision: this setting is set to move the staging file off the ephemeral disk, so a typo that quietly stages there anyway is the failure it exists to prevent.
 
 ## The kit
 

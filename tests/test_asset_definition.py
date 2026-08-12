@@ -709,7 +709,7 @@ def test_the_quarantine_out_is_not_required_either():
 
 
 def test_the_quarantine_key_is_a_sibling_that_inherits_the_prefix():
-    """The two land next to each other with no configuration."""
+    """The two sit next to each other with no configuration."""
 
     @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=dg.AssetOut())
     def prefixed_quarantine() -> pl.DataFrame:

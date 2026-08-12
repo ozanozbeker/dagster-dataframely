@@ -55,7 +55,7 @@ def _evaluations(
 
 
 def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | None]:
-    """The partition each materialization landed under, keyed by asset."""
+    """The partition each materialization was written under, keyed by asset."""
     return {
         event.asset_key: event.step_materialization_data.materialization.partition
         for event in result.get_asset_materialization_events()

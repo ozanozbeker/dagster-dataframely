@@ -268,7 +268,7 @@ def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with 
 ) -> list[dg.AssetCheckResult]:
     """Builds one result per check out of what the filter rejected.
 
-    Severity is the run's outcome rather than the rule's: when nothing lands, no failure is a warning.
+    Severity is the run's outcome rather than the rule's: when nothing is written, no failure is a warning.
 
     The whole `FailureInfo` rather than its counts, because a check reports two things about a rule and they have to come from the same object: how many rows it rejected, and which rows those were.
 

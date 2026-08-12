@@ -186,7 +186,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         valid, _ = Orders.filter(raw_orders)
         return valid
 
-    With a quarantine, invalid rows land in a sibling asset carrying the original columns plus a rule column for every rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the valid output rather than emptying it.
+    With a quarantine, invalid rows are written to a sibling asset carrying the original columns plus a rule column for every rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the valid output rather than emptying it.
 
     Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `outs`, `check_specs` and `specs` are surfaces this decorator owns and are simply absent, so they cannot be contested. `can_subset` is absent too: a subset executes but saves nothing.
 
@@ -200,7 +200,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
         statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the valid out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
         row_sample: How many of the valid output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
-        temp_dir: Where a `LazyFrame` return lands before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the landing goes to the system temp directory, which in a container is its ephemeral disk**, and a landed frame bigger than what the pod has spare fills it; pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
+        temp_dir: Where a `LazyFrame` return is staged before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the staging file goes to the system temp directory, which in a container is its ephemeral disk**, and a staged frame bigger than what the pod has spare fills it; pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
         key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
         io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
         group_name: Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
@@ -257,7 +257,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    landing_dir: str | None = TEMP_DIR.resolve(temp_dir)
+    staging_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -305,7 +305,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
             outs[quarantine_name] = _quarantine_out(
                 quarantine,
                 schema=schema,
-                # The default key is a sibling inheriting the asset's own prefix, so the two land next to each other with no configuration.
+                # The default key is a sibling inheriting the asset's own prefix, so the two sit next to each other with no configuration.
                 key=dg.AssetKey([*prefix, quarantine_name]),
                 io_manager_key=io_manager_key,
                 group_name=group_name,
@@ -336,7 +336,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
                 max_failure_samples=failure_samples,
                 statistics=emit_statistics,
                 row_sample=sampled_rows,
-                temp_dir=landing_dir,
+                temp_dir=staging_dir,
             )
 
         return compute

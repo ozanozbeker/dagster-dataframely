@@ -221,9 +221,9 @@ def test_a_directory_reads_the_environment_tier_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The shape with nothing to parse and nothing to match: the environment tier already arrives as what the setting holds."""
-    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/landing")
+    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/staging")
 
-    assert TEMP_DIR.resolve(None) == "/scratch/landing"
+    assert TEMP_DIR.resolve(None) == "/scratch/staging"
     assert TEMP_DIR.resolve("/mnt/volume") == "/mnt/volume"
 
 
@@ -232,7 +232,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 ):
     """`DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
 
-    Reading that as unset would land the frame on the ephemeral disk the setting was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
+    Reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
     """
     monkeypatch.setenv(_TEMP_DIR_ENV, "   ")
 

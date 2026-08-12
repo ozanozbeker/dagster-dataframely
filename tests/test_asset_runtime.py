@@ -105,7 +105,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
 
 
 def test_a_lazy_transform_lands_and_is_read_back_whole(tmp_path: Path):
-    """The round trip through the landed parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the landing happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
+    """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
@@ -310,7 +310,7 @@ def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
 
 
 def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
-    """Severity is the run's outcome, not the rule's: nothing landed, so nothing is a warning."""
+    """Severity is the run's outcome, not the rule's: nothing was written, so nothing is a warning."""
     evaluations = _evaluations(_materialize(tmp_path, _mixed, raise_on_error=False))
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
@@ -329,7 +329,7 @@ def _quarantined() -> pl.DataFrame:
 
 
 def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
-    """The middle case: 3 valid rows land, 3 invalid ones are inspectable, and downstream proceeds."""
+    """The middle case: 3 valid rows are written, 3 invalid ones are inspectable, and downstream proceeds."""
     result = _materialize(tmp_path, _quarantined)
 
     assert result.success
@@ -533,7 +533,7 @@ def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
 
 
 def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
-    """Severity is the run's outcome, not the rule's: nothing landed in the valid table, so nothing is a warning."""
+    """Severity is the run's outcome, not the rule's: nothing was written to the valid table, so nothing is a warning."""
     result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
     evaluations = _evaluations(result)
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -546,7 +546,7 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     )
 
 
-# --- the temp landing ---
+# --- the temp file ---
 # One entry per exit of the state machine, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
     pytest.param(clean_orders, None, id="everything survived"),
@@ -611,7 +611,7 @@ def _written(root: Path) -> dict[str, pl.DataFrame]:
 def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
 ):
-    """The landing moves where the data is materialized, not what happens to it afterwards.
+    """The staging file moves where the data is materialized, not what happens to it afterwards.
 
     Asserted at every exit and over everything the package emits: the outs that materialized, the row counts, the statistics, the samples, the co-occurrence table, every check with its severity and metadata, and the bytes on disk.
     """
@@ -632,13 +632,13 @@ def test_the_landing_is_removed_whichever_exit_the_run_takes(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
 ):
     """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
-    landing = tmp_path / "landing"
-    landing.mkdir()
-    _, lazy = _both_ways(frame, quarantine, temp_dir=str(landing))
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _, lazy = _both_ways(frame, quarantine, temp_dir=str(staging))
 
     _materialize(tmp_path / "store", lazy, raise_on_error=False)
 
-    assert list(landing.iterdir()) == []
+    assert list(staging.iterdir()) == []
 
 
 def test_the_landing_sinks_with_the_streaming_engine(
@@ -646,7 +646,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
 ):
     """The one clause of this design with no observable consequence, and the one the whole argument rests on.
 
-    A landing that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the landing exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
+    A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
 
     Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
     """
@@ -665,9 +665,9 @@ def test_the_landing_sinks_with_the_streaming_engine(
 
 
 def test_an_eager_return_never_lands(tmp_path: Path):
-    """A frame the user already materialized has nothing left to stream, so landing it would be pure cost.
+    """A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
-    Asserted by pointing the landing at a directory that does not exist: a run that would land there cannot succeed, and this one does.
+    Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
     """
     eager, _ = _both_ways(clean_orders, None, temp_dir=str(tmp_path / "absent"))
 
@@ -677,7 +677,7 @@ def test_an_eager_return_never_lands(tmp_path: Path):
 def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
     """The other half of the same assertion, and the reason the setting exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
 
-    A missing directory raises rather than being created, deliberately. The setting is set to move the landing off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
     _, lazy = _both_ways(clean_orders, None, temp_dir=str(absent))
@@ -691,7 +691,7 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
 def test_the_temp_dir_environment_variable_reaches_the_landing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier, asserted through a materialization rather than through `resolve`: the door reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the landing."""
+    """The house-style tier, asserted through a materialization rather than through `resolve`: the door reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
     _, lazy = _both_ways(clean_orders, None)
@@ -705,7 +705,7 @@ def test_the_temp_dir_environment_variable_reaches_the_landing(
 def test_the_shape_check_runs_before_the_landing(tmp_path: Path):
     """Resolving a plan's columns and dtypes costs nothing, so a wrong-shaped frame is refused before a single row is streamed.
 
-    Asserted through a landing that cannot work: the shape error is what arrives, so nothing ever tried to write there.
+    Asserted through a staging file that cannot work: the shape error is what arrives, so nothing ever tried to write there.
     """
     _, lazy = _both_ways(wrong_dtype_orders, None, temp_dir=str(tmp_path / "absent"))
 

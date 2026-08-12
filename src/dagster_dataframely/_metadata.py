@@ -1,6 +1,6 @@
 """What the asset definition declares about its data, before it has ever run.
 
-The seam: the asset body owns what the data is, the IO manager owns where and how it landed. A schema is what the data is, so it lives here and the IO manager never emits it.
+The seam: the asset body owns what the data is, the IO manager owns where and how it was written. A schema is what the data is, so it lives here and the IO manager never emits it.
 """
 
 from collections.abc import Mapping

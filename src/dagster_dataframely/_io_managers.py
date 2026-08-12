@@ -1,6 +1,6 @@
 """The package's IO managers.
 
-The asset body owns what the data is; the manager owns where and how it lands. So the manager emits only what varied this run: `path`, `bytes_written` and `dagster/storage_kind`.
+The asset body owns what the data is; the manager owns where and how it is written. So the manager emits only what varied this run: `path`, `bytes_written` and `dagster/storage_kind`.
 
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
@@ -29,7 +29,7 @@ from upath import UPath
 from dagster_dataframely import _csv_codecs
 from dagster_dataframely._errors import SchemaShapeError, UnwritableDtypeError
 from dagster_dataframely._metadata import carried_schema, schema_dtypes
-from dagster_dataframely._runtime import LANDING_PREFIX, shape_problems
+from dagster_dataframely._runtime import STAGING_PREFIX, shape_problems
 from dagster_dataframely._settings import TEMP_DIR
 
 if TYPE_CHECKING:
@@ -58,23 +58,23 @@ def _wants_lazy(context: "InputContext") -> bool:
     return pl.LazyFrame in (annotation, *get_args(annotation))
 
 
-def _promote(landed: Path, path: UPath) -> None:
+def _promote(staged: Path, path: UPath) -> None:
     """Puts the sunk file where the asset's output belongs.
 
-    A local destination is renamed onto: one metadata operation rather than a second copy of the whole file, and atomic, so the destination is never a truncated file waiting to be filled. `shutil.move` copies instead when the landing sits on another device, which is what `temp_dir` pointed at a mounted volume makes of it.
+    A local destination is renamed onto: one metadata operation rather than a second copy of the whole file, and atomic, so the destination is never a truncated file waiting to be filled. `shutil.move` copies instead when the staging file sits on another device, which is what `temp_dir` pointed at a mounted volume makes of it.
 
     Everything else copies through both handles. An object store has no rename, so asking for one there would buy a full server-side copy, and this is the transfer that was always going to happen: it starts only once the sink succeeded, so the network still sees one pass of the data.
 
     `isinstance` against `pathlib.Path` is the test for local, because universal-pathlib hands back a real `PosixPath` or `WindowsPath` subclass for a plain filesystem path and an fsspec-backed class for everything else, `file://` included. A `file://` destination therefore copies, which is correct if not the cheapest thing available.
 
     Args:
-        landed: The temp file the plan was sunk to. It is consumed either way, by the rename or by the temp directory that removes it.
+        staged: The temp file the plan was sunk to. It is consumed either way, by the rename or by the temp directory that removes it.
         path: The destination it belongs at.
     """
     if isinstance(path, Path):
-        shutil.move(landed, path)
+        shutil.move(staged, path)
         return
-    with landed.open("rb") as sunk, path.open("wb") as destination:
+    with staged.open("rb") as sunk, path.open("wb") as destination:
         shutil.copyfileobj(sunk, destination)
 
 
@@ -116,7 +116,7 @@ class _FrameIOManager(UPathIOManager):
     def _sink(self, context: "OutputContext", plan: pl.LazyFrame, path: Path) -> None:
         """Streams the plan to a local file through the streaming engine.
 
-        The path is always the temp landing and never the destination, which is what `_promoted_sink` exists to guarantee.
+        The path is always the temp file and never the destination, which is what `_promoted_sink` exists to guarantee.
         """
 
     def _check_declaration(
@@ -155,7 +155,7 @@ class _FrameIOManager(UPathIOManager):
 
         **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
 
-        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has landed and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
 
         Args:
             context: The executing output's context, forwarded to the format's own sink.
@@ -163,17 +163,17 @@ class _FrameIOManager(UPathIOManager):
             path: The destination the sunk file is promoted to.
 
         Raises:
-            FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the setting exists to move the landing off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
+            FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the setting exists to move the staging file off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
         """
         with tempfile.TemporaryDirectory(
-            dir=TEMP_DIR.resolve(None), prefix=LANDING_PREFIX
-        ) as landing:
+            dir=TEMP_DIR.resolve(None), prefix=STAGING_PREFIX
+        ) as staging:
             # The destination's own suffix rather than a bare name: polars reads a
-            # compression setting off the extension it is handed, and a landing that
+            # compression setting off the extension it is handed, and a staging file that
             # outlived a killed process still says what it holds.
-            landed = Path(landing) / f"landed{self._suffix}"
-            self._sink(context, plan, landed)
-            _promote(landed, path)
+            staged = Path(staging) / f"staged{self._suffix}"
+            self._sink(context, plan, staged)
+            _promote(staged, path)
 
     @override
     def dump_to_path(
@@ -183,7 +183,7 @@ class _FrameIOManager(UPathIOManager):
 
         A plan is sunk and promoted; a frame is written straight to the destination. The split is the runtime type and nothing else, so a caller who wants the streaming path asks for it by handing over a plan.
 
-        `get_metadata` never sees the path it was written to, so the size is taken here. It comes off the disk, so it reports the compression actually achieved rather than an in-memory estimate, and on both paths it reports what actually landed rather than what was meant to.
+        `get_metadata` never sees the path it was written to, so the size is taken here. It comes off the disk, so it reports the compression actually achieved rather than an in-memory estimate, and on both paths it reports what was actually written rather than what was meant to be.
         """
         if isinstance(obj, pl.LazyFrame):
             self._sink_and_promote(context, obj, path)
@@ -223,7 +223,7 @@ class _ParquetIOManager(_FrameIOManager):
     def _sink(self, context: "OutputContext", plan: pl.LazyFrame, path: Path) -> None:
         """`context` is unused for the same reason the eager write does not read it.
 
-        The engine is named rather than left to `auto`, because streaming is the whole reason to sink: an engine that chose to collect would pay for the landing and keep the peak it exists to remove.
+        The engine is named rather than left to `auto`, because streaming is the whole reason to sink: an engine that chose to collect would pay for the staging and keep the peak it exists to remove.
         """
         plan.sink_parquet(path, engine="streaming")
 
@@ -276,7 +276,7 @@ class _CSVIOManager(_FrameIOManager):
 
         Shared by both writes rather than living on the eager one, because the encode is what makes a CSV of this package's dtypes readable again and a sink that skipped it would write a file nothing can decode. Nothing here executes, so a plan arrives and leaves a plan.
 
-        The log is the only home the codec has. Materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager an asset will bind to, so neither can say that a column landed as base64.
+        The log is the only home the codec has. Materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager an asset will bind to, so neither can say that a column was written as base64.
 
         An encoded column no schema declares is a warning rather than an info line. It is written correctly and any CSV reader can still read it, but this package will hand it back as text, and that is worth saying at the moment it happens rather than at the read that surprises someone.
 
@@ -365,9 +365,9 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
 
     **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
 
-    **A write dispatches on the runtime type instead, and a `LazyFrame` output streams.** It is sunk through the streaming engine to a local temp file and promoted to `base_dir` once the plan succeeded, so peak memory is the engine's buffers rather than the whole frame. A plan that fails writes nothing to the destination and leaves a file already there untouched, which is what the promote buys: sinking at the destination would truncate it before knowing the plan works. A `DataFrame` output is written where it lands, having nothing left to stream.
+    **A write dispatches on the runtime type instead, and a `LazyFrame` output streams.** It is sunk through the streaming engine to a local temp file and promoted to `base_dir` once the plan succeeded, so peak memory is the engine's buffers rather than the whole frame. A plan that fails writes nothing to the destination and leaves a file already there untouched, which is what the promote buys: sinking at the destination would truncate it before knowing the plan works. A `DataFrame` output is written where it is, having nothing left to stream.
 
-    `DAGSTER_DATAFRAMELY_TEMP_DIR` decides which disk the temp file lands on. Unset, it is the system temp directory, which in a container is its ephemeral disk, and a frame bigger than what the pod has spare fills it.
+    `DAGSTER_DATAFRAMELY_TEMP_DIR` decides which disk the staging file goes on. Unset, it is the system temp directory, which in a container is its ephemeral disk, and a frame bigger than what the pod has spare fills it.
 
     Attributes:
         base_dir: Directory or cloud URI the manager writes parquet files under.
@@ -411,7 +411,7 @@ class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
 
     **The read needs the schema, so attach the asset's schema to reach it.** The decode reads the dtype off the carrier `dataframely_asset` puts in the asset's definition metadata, which `schema_metadata` also builds for a plain `@dg.asset`. Without one, the read is an ordinary inferred CSV read and an encoded column arrives as text. The schema never comes from a sidecar file and never from the data, so it costs no round trip and cannot drift.
 
-    Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would land a file that no longer round-trips.
+    Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would write a file that no longer round-trips.
 
     A `pl.LazyFrame` input annotation reads back a scan here too, and it keeps everything above: `scan_csv` takes the same schema-driven dtypes, and the decode is the same expression over `with_columns`, run when the caller collects.
 

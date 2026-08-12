@@ -212,7 +212,7 @@ class _Directory(_Setting[str | None]):
 
     Its own shape rather than a `_Choice`, because a path has no vocabulary: the whole point is that nothing here knows which directories a deployment has. It is also the shape with the least to do, since the environment tier already arrives as what the setting holds.
 
-    It is the one setting whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate: the door resolves every setting where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames land on a worker.
+    It is the one setting whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate: the door resolves every setting where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames are staged on a worker.
     """
 
     @override
@@ -224,7 +224,7 @@ class _Directory(_Setting[str | None]):
     def _checked(self, value: str | None, tier: str) -> str | None:
         """Rejects everything that is not a written path.
 
-        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would land the frame on the ephemeral disk the setting was set to move it off. That failure is silent, and the disk it fills is the one the pod dies on.
+        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off. That failure is silent, and the disk it fills is the one the pod dies on.
 
         Raises:
             InvalidSettingError: The value is not a string, or holds nothing but whitespace.
@@ -261,5 +261,5 @@ MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 #: How many of the valid output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
 
-#: Which disk a lazy plan lands on: `dataframely_asset` lands its transform before validating it, and an IO manager sinks a lazy output before promoting it to storage. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a landed frame bigger than what the pod has spare fills it.
+#: Which disk a lazy plan is staged on: `dataframely_asset` stages its transform before validating it, and an IO manager sinks a lazy output before promoting it to storage. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a staged frame bigger than what the pod has spare fills it.
 TEMP_DIR = _Directory(name="temp_dir", default=None)

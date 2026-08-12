@@ -136,7 +136,7 @@ def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: 
 
 
 def test_a_frame_with_no_rows_materializes_without_a_sample(tmp_path: Path):
-    """A valid frame with nothing in it is an ordinary outcome: a partition nothing landed in this time.
+    """A valid frame with nothing in it is an ordinary outcome: a partition nothing was written to this time.
 
     There is no row to show, so the key is absent for the same reason a passing check's is. Dagster enforces the same judgement from the other side, refusing a table value with no records and no schema, so an empty one here would take the run down.
     """

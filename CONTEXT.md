@@ -49,6 +49,7 @@ _Avoid_: pill, chip, badge
 ### Storage
 
 **Staging**: The local temporary file a lazy frame streams to before it is validated or promoted.
+"Land" stays available for where a rule or a dtype ends up, but never for a row or a file: a row is written, a file is staged.
 _Avoid_: landing, spill, scratch
 
 **Promote**: Moving a staged file to its destination, once the plan that wrote it has succeeded.

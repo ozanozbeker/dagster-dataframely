@@ -227,9 +227,9 @@ def test_a_failing_plan_leaves_the_file_already_there_untouched(tmp_path: Path) 
 def test_the_sink_lands_where_the_temp_dir_variable_says(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same setting `dataframely_asset` lands its own transform through, read here from the environment because a manager has no asset argument to take it from.
+    """The same setting `dataframely_asset` stages its own transform through, read here from the environment because a manager has no asset argument to take it from.
 
-    A missing directory raises rather than being created, deliberately. The setting is set to move the landing off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
@@ -246,7 +246,7 @@ def test_an_eager_output_never_lands(
 ) -> None:
     """A frame the caller already materialized has nothing left to stream, so it is written where it always was.
 
-    Asserted by pointing the landing at a directory that does not exist: a run that would land there cannot succeed, and this one does.
+    Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
     """
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(tmp_path / "absent"))
 
