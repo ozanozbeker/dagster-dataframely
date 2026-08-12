@@ -10,6 +10,7 @@ import logging
 import warnings
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 import dataframely as dy
@@ -224,6 +225,56 @@ def test_the_decoded_columns_are_named_at_read_time(run_log: list[str]) -> None:
 
     assert "5 column(s)" in decoded
     assert all(f"'{column}'" in decoded for column in _CODEC_COLUMNS)
+
+
+@dg.asset(name="shapes", metadata=dd.schema_metadata(Shapes))
+def _lazy_shapes() -> pl.LazyFrame:
+    """`_SHAPES` handed over as a plan, for the writes that stream it."""
+    return _SHAPES.lazy()
+
+
+def test_a_lazy_output_writes_the_bytes_an_eager_one_does(tmp_path: Path) -> None:
+    """A lazy output streams to storage here too, and every codec survives the change of engine: each one is an expression over `with_columns`, which behaves the same on a plan as on a frame (#54).
+
+    Byte equality rather than a round trip, because the round trip would pass on a file whose quoting, null spelling or duration ticks had all quietly changed together.
+    """
+    assert _materialize(tmp_path / "lazy", _lazy_shapes).success
+    assert _materialize(tmp_path / "eager", _shapes).success
+
+    written = (tmp_path / "lazy" / "shapes.csv").read_bytes()
+    assert written == (tmp_path / "eager" / "shapes.csv").read_bytes()
+
+
+def test_a_lazy_output_still_names_the_columns_it_encoded(tmp_path: Path) -> None:
+    """The log is the codec's only home on both paths. A sink that skipped the encode would write a file nothing can read back, and a sink that encoded silently would write one nobody knows to."""
+    with dg.DagsterInstance.ephemeral() as instance:
+        result = _materialize(tmp_path, _lazy_shapes, instance=instance)
+        messages = [entry.user_message for entry in instance.all_logs(result.run_id)]
+
+    assert result.success
+    (encoded,) = [message for message in messages if message.startswith("Encoded")]
+    assert "5 column(s)" in encoded
+    assert all(f"'{column}'" in encoded for column in _CODEC_COLUMNS)
+
+
+def test_the_csv_sink_runs_the_streaming_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pinned per format rather than once on the spine, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
+
+    Counted as a set rather than a list, because polars reaches its own `sink_csv` again on the way through and the number of times it does is its business, not this package's.
+    """
+    engines: list[object] = []
+    sink = pl.LazyFrame.sink_csv
+
+    def spy(frame: pl.LazyFrame, path: Path, **kwargs: Any) -> Any:
+        engines.append(kwargs.get("engine"))
+        return sink(frame, path, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "sink_csv", spy)
+
+    assert _materialize(tmp_path, _lazy_shapes).success
+    assert set(engines) == {"streaming"}
 
 
 def _warnings(tmp_path: Path, asset: dg.AssetsDefinition) -> list[str]:

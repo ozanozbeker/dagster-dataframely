@@ -159,14 +159,18 @@ def unwritable(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
     }
 
 
-def encode(frame: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, str]]:
+def encode[F: (pl.DataFrame, pl.LazyFrame)](frame: F) -> tuple[F, dict[str, str]]:
     """Encodes every column CSV cannot hold, leaving the rest untouched.
 
+    Takes a plan as readily as a frame, like `decode` below, and for the same reason: every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data.
+
+    A constrained type parameter rather than the union `decode` returns, because this one's caller has to narrow what it gets back: an eager frame is written through `write_csv` and a plan is streamed through `sink_csv`, and only a same-type-out promise saves that from a cast.
+
     Args:
-        frame: The frame about to be written.
+        frame: The frame or plan about to be written.
 
     Returns:
-        The frame to write, and the encoded columns mapped to what their cells now hold.
+        What to write, of the type it arrived as, and the encoded columns mapped to what their cells now hold.
     """
     expressions: list[pl.Expr] = []
     encoded: dict[str, str] = {}

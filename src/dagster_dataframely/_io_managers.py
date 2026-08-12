@@ -5,11 +5,15 @@ The asset body owns what the data is; the manager owns where and how it lands. S
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
     - Both managers share one spine, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into polars.
+    - **A lazy output sinks to a local temp file and is promoted, rather than sinking at the destination.** See `_FrameIOManager._sink_and_promote` for why the two steps are not one.
     - **A scan is built on the open handle, not on the path.** Handed a file object, polars reads its bytes there and then, which is why the plan still collects after the handle closes. That gives up the transfer a scan of an `s3://` path would have pruned with range requests, and it buys two things worth more here: credentials stay one mechanism, fsspec's, rather than the second one polars' own object-store would need, and a missing file raises `FileNotFoundError` from the open, where `UPathIOManager` can still catch it and honour `allow_missing_partitions`. A scan of a path raises nothing until the caller collects, long after the manager has returned. So laziness buys decoding and materialization here, not transfer: the same bytes an eager read moves, and only the rows and columns a query keeps.
 """
 
+import shutil
+import tempfile
 from abc import abstractmethod
 from collections.abc import Mapping
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, get_args, override
 
 import polars as pl
@@ -25,7 +29,8 @@ from upath import UPath
 from dagster_dataframely import _csv_codecs
 from dagster_dataframely._errors import SchemaGateError, UnwritableDtypeError
 from dagster_dataframely._metadata import carried_schema, schema_dtypes
-from dagster_dataframely._runtime import gate_problems
+from dagster_dataframely._runtime import LANDING_PREFIX, gate_problems
+from dagster_dataframely._settings import TEMP_DIR
 
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
@@ -51,6 +56,26 @@ def _wants_lazy(context: "InputContext") -> bool:
     """
     annotation = context.dagster_type.typing_type
     return pl.LazyFrame in (annotation, *get_args(annotation))
+
+
+def _promote(landed: Path, path: UPath) -> None:
+    """Puts the sunk file where the asset's output belongs.
+
+    A local destination is renamed onto: one metadata operation rather than a second copy of the whole file, and atomic, so the destination is never a truncated file waiting to be filled. `shutil.move` copies instead when the landing sits on another device, which is what `temp_dir` pointed at a mounted volume makes of it.
+
+    Everything else copies through both handles. An object store has no rename, so asking for one there would buy a full server-side copy, and this is the transfer that was always going to happen: it starts only once the sink succeeded, so the network still sees one pass of the data.
+
+    `isinstance` against `pathlib.Path` is the test for local, because universal-pathlib hands back a real `PosixPath` or `WindowsPath` subclass for a plain filesystem path and an fsspec-backed class for everything else, `file://` included. A `file://` destination therefore copies, which is correct if not the cheapest thing available.
+
+    Args:
+        landed: The temp file the plan was sunk to. It is consumed either way, by the rename or by the temp directory that removes it.
+        path: The destination it belongs at.
+    """
+    if isinstance(path, Path):
+        shutil.move(landed, path)
+        return
+    with landed.open("rb") as sunk, path.open("wb") as destination:
+        shutil.copyfileobj(sunk, destination)
 
 
 class _FrameIOManager(UPathIOManager):
@@ -87,6 +112,13 @@ class _FrameIOManager(UPathIOManager):
     ) -> None:
         """Writes the frame to an open handle on the resolved path."""
 
+    @abstractmethod
+    def _sink(self, context: "OutputContext", plan: pl.LazyFrame, path: Path) -> None:
+        """Streams the plan to a local file through the streaming engine.
+
+        The path is always the temp landing and never the destination, which is what `_promoted_sink` exists to guarantee.
+        """
+
     def _check_declaration(
         self, context: "OutputContext", frame: pl.DataFrame | pl.LazyFrame
     ) -> None:
@@ -114,24 +146,50 @@ class _FrameIOManager(UPathIOManager):
         self._check_declaration(context, obj)
         super().handle_output(context, obj)
 
+    def _sink_and_promote(
+        self, context: "OutputContext", plan: pl.LazyFrame, path: UPath
+    ) -> None:
+        """Streams the plan to a local temp file, then promotes that file to the destination.
+
+        **The two steps are what keep a failing plan out of storage.** Opening the destination truncates it, so a sink straight to it would leave a zero-byte file where a good one was, or a plausible-looking partial one where the plan died late. That is the invariant `NothingSurvivedError` protects on the validation side, arriving from the storage side. What is left uncovered is an I/O failure partway through a *copying* promote, which corrupts the destination exactly as today's eager write already does: this widens an existing window rather than opening a new one, and `_promote` closes it outright where a rename is available.
+
+        **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
+
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has landed and validated its transform long before a manager sees a frame. The knob names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+
+        Args:
+            context: The executing output's context, forwarded to the format's own sink.
+            plan: The plan to stream.
+            path: The destination the sunk file is promoted to.
+
+        Raises:
+            FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the knob exists to move the landing off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
+        """
+        with tempfile.TemporaryDirectory(
+            dir=TEMP_DIR.resolve(None), prefix=LANDING_PREFIX
+        ) as landing:
+            # The destination's own suffix rather than a bare name: polars reads a
+            # compression setting off the extension it is handed, and a landing that
+            # outlived a killed process still says what it holds.
+            landed = Path(landing) / f"landed{self._suffix}"
+            self._sink(context, plan, landed)
+            _promote(landed, path)
+
     @override
     def dump_to_path(
         self, context: "OutputContext", obj: pl.DataFrame | pl.LazyFrame, path: UPath
     ) -> None:
-        """Writes the frame, then stats the path for `bytes_written`.
+        """Writes the frame or sinks the plan, then stats the path for `bytes_written`.
 
-        `get_metadata` never sees the path it was written to, so the size is taken here. It comes off the disk, so it reports the compression actually achieved rather than an in-memory estimate.
+        A plan is sunk and promoted; a frame is written straight to the destination. The split is the runtime type and nothing else, so a caller who wants the streaming path asks for it by handing over a plan.
+
+        `get_metadata` never sees the path it was written to, so the size is taken here. It comes off the disk, so it reports the compression actually achieved rather than an in-memory estimate, and on both paths it reports what actually landed rather than what was meant to.
         """
         if isinstance(obj, pl.LazyFrame):
-            context.log.warning(
-                "Collecting a LazyFrame before the write. This manager writes polars DataFrame. "
-                "A lazy sink to the final path is ruled out rather than pending, because every "
-                "write here reports on what it wrote; `dataframely_asset` streams a lazy return "
-                "through a local parquet before validating it instead."
-            )
-        frame: pl.DataFrame = obj.collect() if isinstance(obj, pl.LazyFrame) else obj
-        with path.open("wb") as file:
-            self._write(context, frame, file)
+            self._sink_and_promote(context, obj, path)
+        else:
+            with path.open("wb") as file:
+                self._write(context, obj, file)
 
         context.add_output_metadata(
             {
@@ -160,6 +218,14 @@ class _ParquetIOManager(_FrameIOManager):
     ) -> None:
         """`context` is unused: parquet holds every dtype this manager accepts, so nothing has to be declared."""
         frame.write_parquet(file)
+
+    @override
+    def _sink(self, context: "OutputContext", plan: pl.LazyFrame, path: Path) -> None:
+        """`context` is unused for the same reason the eager write does not read it.
+
+        The engine is named rather than left to `auto`, because streaming is the whole reason to sink: an engine that chose to collect would pay for the landing and keep the peak it exists to remove.
+        """
+        plan.sink_parquet(path, engine="streaming")
 
     @override
     def load_from_path(
@@ -203,15 +269,23 @@ class _CSVIOManager(_FrameIOManager):
         if problems:
             raise SchemaGateError(schema.__name__, problems)
 
-    @override
-    def _write(
-        self, context: "OutputContext", frame: pl.DataFrame, file: IO[bytes]
-    ) -> None:
-        """Encodes what a cell cannot hold, names those columns in the run log, then writes plain CSV.
+    def _encoded[F: (pl.DataFrame, pl.LazyFrame)](
+        self, context: "OutputContext", frame: F
+    ) -> F:
+        """Encodes what a cell cannot hold and names those columns in the run log.
+
+        Shared by both writes rather than living on the eager one, because the encode is what makes a CSV of this package's dtypes readable again and a sink that skipped it would write a file nothing can decode. Nothing here executes, so a plan arrives and leaves a plan.
 
         The log is the only home the codec has. Materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager an asset will bind to, so neither can say that a column landed as base64.
 
         An encoded column no schema declares is a warning rather than an info line. It is written correctly and any CSV reader can still read it, but this package will hand it back as text, and that is worth saying at the moment it happens rather than at the read that surprises someone.
+
+        Args:
+            context: The executing output's context, for the schema on the asset and the run log.
+            frame: The frame or plan about to be written.
+
+        Returns:
+            What to write, of the type it arrived as.
         """
         encoded, columns = _csv_codecs.encode(frame)
         if columns:
@@ -233,7 +307,18 @@ class _CSVIOManager(_FrameIOManager):
                     f"{named} The schema on this asset decodes them on the way back."
                 )
                 context.log.info(message)
-        encoded.write_csv(file)
+        return encoded
+
+    @override
+    def _write(
+        self, context: "OutputContext", frame: pl.DataFrame, file: IO[bytes]
+    ) -> None:
+        self._encoded(context, frame).write_csv(file)
+
+    @override
+    def _sink(self, context: "OutputContext", plan: pl.LazyFrame, path: Path) -> None:
+        """The engine is named for the reason parquet's is: an engine that chose to collect would keep the peak the sink exists to remove."""
+        self._encoded(context, plan).sink_csv(path, engine="streaming")
 
     @override
     def load_from_path(
@@ -280,7 +365,9 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
 
     **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
 
-    A write dispatches on the runtime type instead, because a write already holds the object: a `LazyFrame` output is collected before the write, with a warning in the run log. A lazy sink to the final path is ruled out rather than pending, because every write here reports on what it wrote. `dataframely_asset` streams a lazy return through a local parquet before validating it, which is where the peak is actually saved.
+    **A write dispatches on the runtime type instead, and a `LazyFrame` output streams.** It is sunk through the streaming engine to a local temp file and promoted to `base_dir` once the plan succeeded, so peak memory is the engine's buffers rather than the whole frame. A plan that fails writes nothing to the destination and leaves a file already there untouched, which is what the promote buys: sinking at the destination would truncate it before knowing the plan works. A `DataFrame` output is written where it lands, having nothing left to stream.
+
+    `DAGSTER_DATAFRAMELY_TEMP_DIR` decides which disk the temp file lands on. Unset, it is the system temp directory, which in a container is its ephemeral disk, and a frame bigger than what the pod has spare fills it.
 
     Attributes:
         base_dir: Directory or cloud URI the manager writes parquet files under.
@@ -327,6 +414,8 @@ class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
     Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would land a file that no longer round-trips.
 
     A `pl.LazyFrame` input annotation reads back a scan here too, and it keeps everything above: `scan_csv` takes the same schema-driven dtypes, and the decode is the same expression over `with_columns`, run when the caller collects.
+
+    A `pl.LazyFrame` output streams to storage exactly as parquet's does, temp file and promote included, and the encodings survive the change of engine: each one is an expression over `with_columns`, so the sink writes the same bytes the eager write does and the run log names the same columns.
 
     Prefer parquet unless something downstream needs text. Parquet is self-describing, keeps every dtype natively, and needs no schema to read.
 
