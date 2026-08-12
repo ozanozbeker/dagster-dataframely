@@ -112,7 +112,7 @@ def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
     assert not (tmp_path / "orders_quarantine").exists()
 
 
-def test_row_count_is_the_partitions_good_count(tmp_path: Path):
+def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
     """The partition's own count, not the asset's: `dg.build_metadata_bounds_checks` then trends a partition against itself."""
     _materialize(tmp_path, "clean")
     counts = _row_counts(_materialize(tmp_path, "mixed"))

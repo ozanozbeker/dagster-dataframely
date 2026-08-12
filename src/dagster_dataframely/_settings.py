@@ -258,7 +258,7 @@ STATISTICS = _Flag(name="statistics", default=True)
 #: How many of the rows a rule rejected reach that rule's check metadata. On by default, because what three of the failing rows look like is the question a red check raises and the counts cannot answer. It is deliberately not the `statistics` setting: consenting to summary statistics is not consenting to raw values.
 MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 
-#: How many of the good output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
+#: How many of the valid output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
 
 #: Which disk a lazy plan lands on: `dataframely_asset` lands its transform before validating it, and an IO manager sinks a lazy output before promoting it to storage. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a landed frame bigger than what the pod has spare fills it.

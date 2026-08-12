@@ -1,6 +1,6 @@
 """The state machine a schema-backed asset runs: check the shape, land, filter, then one of five outcomes.
 
-The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three outcomes into five: it is the consent to partial data, and its absence is the refusal.
+The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three rule_columns into five: it is the consent to partial data, and its absence is the refusal.
 
 The middle stage is the only one a transform can skip, and its return type is what skips it: see `_landed_frame` for what a plan buys by landing. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
@@ -135,7 +135,7 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
 ) -> list[dg.AssetCheckResult]:
     """Builds every check result for a run that made it past the shape check.
 
-    Severity is derived here, once, from whether the good table landed. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A rejected row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
+    Severity is derived here, once, from whether the valid table landed. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A invalid row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
 
     The shape check is not a rule, so it reports on its own at every granularity and never joins a rule set.
     """
@@ -157,16 +157,16 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
 def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
     """Builds the frame the quarantine out materializes.
 
-    `FailureInfo.details()` rather than `invalid()`: the rejected rows plus one outcome column per rule reading `valid` / `invalid` / `unknown`. Attribution has to be here because check-metadata samples are bounded, so without it the per-row detail exists nowhere at volume.
+    `FailureInfo.details()` rather than `invalid()`: the invalid rows plus a rule column for every rule, reading `valid` / `invalid` / `unknown`. Attribution has to be here because check-metadata samples are bounded, so without it the per-row detail exists nowhere at volume.
 
-    Two changes to what dataframely hands over. The outcome columns are renamed into the reserved namespace, so a column of this table and the asset check for the same rule are the same string. And they are cast from `Enum` to `String`, which is mandatory rather than defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`. It is the one cast this package makes, and it touches only columns the package itself generated.
+    Two changes to what dataframely hands over. The rule columns are renamed into the reserved namespace, so a column of this table and the asset check for the same rule are the same string. And they are cast from `Enum` to `String`, which is mandatory rather than defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`. It is the one cast this package makes, and it touches only columns the package itself generated.
 
     Args:
         schema: The schema that rejected the rows.
         failure: What `Schema.filter` reported.
 
     Returns:
-        The rejected rows: the original columns in their own order, then one `String` outcome column per rule.
+        The invalid rows: the original columns in their own order, then a `String` rule column for every rule.
     """
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
@@ -210,7 +210,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     context: dg.AssetExecutionContext,
-    good_out: str,
+    valid_out: str,
     quarantine_out: str | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
@@ -223,23 +223,23 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
 
     Three stages and five exits. The shape check runs first, so a wrong-shaped frame never pays to be landed or filtered. A lazy frame then lands to a local parquet and is read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
-    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, rejected rows land next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the good out is skipped rather than materialized empty.
+    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, invalid rows land next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
 
     Args:
         schema: The schema the frame must satisfy.
         frame: Whatever the transform returned.
         context: The executing asset's context, for resolving each out to its key.
-        good_out: The output name the validated frame materializes under.
-        quarantine_out: The output name the rejected rows materialize under, or `None` when the asset declares no quarantine.
+        valid_out: The output name the validated frame materializes under.
+        quarantine_out: The output name the invalid rows materialize under, or `None` when the asset declares no quarantine.
         check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the door resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
         statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
-        row_sample: How many of the good output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
+        row_sample: How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
         temp_dir: Where a lazy frame lands. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields:
-        A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the good materialization where there is one, standalone where the good out is skipped.
+        A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the valid out's materialization where there is one, standalone where the valid out is skipped.
 
     Raises:
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
@@ -249,8 +249,8 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         ValidationAbortError: Rows were rejected and no quarantine is declared.
         NothingSurvivedError: Rows were rejected and none survived.
     """
-    _require_frame(frame, good_out)
-    good_key = context.asset_key_for_output(good_out)
+    _require_frame(frame, valid_out)
+    valid_key = context.asset_key_for_output(valid_out)
     # Resolved before the shape check so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
@@ -261,7 +261,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     problems: list[dict[str, str]] = shape_problems(schema, frame)
     if problems:
         # Exit: pipeline defect. Nothing is filtered and neither out is written, so a wrong-shaped frame cannot corrupt either table.
-        yield _shape_failure(problems, asset_key=good_key)
+        yield _shape_failure(problems, asset_key=valid_key)
         raise SchemaShapeError(schema.__name__, problems)
 
     # --- Stage 2: the temp landing ---
@@ -276,39 +276,39 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     # Eager either way by now, which is what `filter` would have done anyway: it collects internally, and `row_count` needs the length.
     result, failure = schema.filter(materialized, cast=False)
     # Annotated because `filter` returns dataframely's phantom `dy.DataFrame[Schema]`, and the out is declared as a plain polars frame.
-    good: pl.DataFrame = result
+    valid: pl.DataFrame = result
     rejected: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
-    aborting = bool(rejected) and (quarantine_out is None or not len(good))
+    aborting = bool(rejected) and (quarantine_out is None or not len(valid))
     checks = _check_results(
         schema,
         failure,
-        asset_key=good_key,
+        asset_key=valid_key,
         aborting=aborting,
         check_granularity=check_granularity,
         multi_column_rules=multi_column_rules,
         max_failure_samples=failure_samples,
     )
 
-    def good_result() -> dg.MaterializeResult[pl.DataFrame]:
-        """Builds the good out's materialization, where it is yielded rather than ahead of every exit.
+    def valid_result() -> dg.MaterializeResult[pl.DataFrame]:
+        """Builds the valid out's materialization, where it is yielded rather than ahead of every exit.
 
         Two of the five discard it, and since the profile is a pass over the whole frame, building it early would charge an aborting run for a table nobody will see.
         """
         return dg.MaterializeResult(
-            asset_key=good_key,
-            value=good,
+            asset_key=valid_key,
+            value=valid,
             metadata={
-                "dagster/row_count": len(good),
-                **statistics_metadata(good, enabled=emit_statistics),
-                **sample_metadata(SAMPLE_KEY, sample_rows(good, sampled_rows)),
+                "dagster/row_count": len(valid),
+                **statistics_metadata(valid, enabled=emit_statistics),
+                **sample_metadata(SAMPLE_KEY, sample_rows(valid, sampled_rows)),
             },
             check_results=checks,
         )
 
     if not rejected:
         # Exit: everything survived. The quarantine out is skipped rather than written empty, so an empty quarantine partition means something.
-        yield good_result()
+        yield valid_result()
         return
 
     if quarantine_out is None:
@@ -319,22 +319,22 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
 
     quarantine_key = context.asset_key_for_output(quarantine_out)
     # Bound once: the frame is written and profiled, and `quarantine_frame` rebuilds it out of `details()` on every call.
-    rejects: pl.DataFrame = quarantine_frame(schema, failure)
+    invalid: pl.DataFrame = quarantine_frame(schema, failure)
     quarantine_result = dg.MaterializeResult(
         asset_key=quarantine_key,
-        value=rejects,
+        value=invalid,
         metadata={
             "dagster/row_count": rejected,
             "cooccurrence": _cooccurrence(failure.cooccurrence_counts()),
             # Profiled like any other table, because it is one somebody reads. What the rejected values look like in aggregate is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
-            **statistics_metadata(rejects, enabled=emit_statistics),
+            **statistics_metadata(invalid, enabled=emit_statistics),
             # No row sample, deliberately. These rows already reach the event log once, through the check that rejected each of them and with the rule attached. A second copy here would carry less and cost the same.
         },
     )
 
-    if not len(good):
-        # Exit: nothing survived. The rows are all inspectable next door, but the good out is skipped so an empty table cannot replace a last-known-good snapshot.
-        # The checks are yielded standalone: there is no good materialization to bundle them onto.
+    if not len(valid):
+        # Exit: nothing survived. The rows are all inspectable next door, but the valid out is skipped so an empty table cannot replace a last-known-good snapshot.
+        # The checks are yielded standalone: there is no valid materialization to bundle them onto.
         yield quarantine_result
         yield from checks
         raise NothingSurvivedError(
@@ -342,5 +342,5 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         )
 
     # Exit: the middle case. The survivors land, the rest are inspectable next door, and downstream proceeds on the data that is fine.
-    yield good_result()
+    yield valid_result()
     yield quarantine_result

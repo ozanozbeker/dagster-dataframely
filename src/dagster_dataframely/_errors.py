@@ -136,7 +136,7 @@ def _culprits(counts: Mapping[str, int]) -> str:
 class ValidationAbortError(DagsterDataframelyError):
     """Rows were rejected and no quarantine is declared, so the asset writes nothing.
 
-    Without somewhere to route rejected rows, every row has to be good. Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration: a drop is a line the engineer writes in the asset body, the way a cast is.
+    Without somewhere to route invalid rows, every row has to be valid. Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration: a drop is a line the engineer writes in the asset body, the way a cast is.
     """
 
     def __init__(
@@ -160,7 +160,7 @@ class ValidationAbortError(DagsterDataframelyError):
 class NothingSurvivedError(DagsterDataframelyError):
     """Every row was rejected, so only the quarantine was written.
 
-    The good output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
+    The valid output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
     """
 
     def __init__(
@@ -176,7 +176,7 @@ class NothingSurvivedError(DagsterDataframelyError):
         """
         plural = "" if rejected == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the good output was skipped rather than written empty, so the last-known-good table survives."
+            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the valid output was skipped rather than written empty, so the last-known-good table survives."
         )
 
 

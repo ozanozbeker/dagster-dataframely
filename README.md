@@ -52,17 +52,17 @@ Writing to `s3://`, `gs://` or `az://` needs that scheme's fsspec filesystem ins
 ## The failure policy is the asset's declared shape
 
 There is no lenient mode and no strict flag, deliberately.
-Declaring a quarantine **is** the consent to partial data, so what a rejected row costs is visible in the definition and cannot disagree with what the asset declares.
+Declaring a quarantine **is** the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
-| what the transform returned | good table | quarantine | checks | run |
+| what the transform returned | valid table | quarantine | checks | run |
 | --- | --- | --- | --- | --- |
 | columns or dtypes that are not the schema's | not written | not written | the shape check fails, blocking | fails, `SchemaShapeError` |
 | every row valid | written | skipped, not written empty | all pass | green |
 | some rows rejected, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
-| some rows rejected, quarantine declared | the survivors | the rejected rows | fail at `WARN` | green |
+| some rows rejected, quarantine declared | the survivors | the invalid rows | fail at `WARN` | green |
 | every row rejected, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
 
-**Without a quarantine, every row has to be good.**
+**Without a quarantine, every row has to be valid.**
 A run that rejects even one row fails and writes nothing, so the last-known-good table stays in place.
 Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration.
 To drop rows anyway, drop them in your own asset body, where the drop is a line you wrote:
@@ -70,13 +70,13 @@ To drop rows anyway, drop them in your own asset body, where the drop is a line 
 ```python
 @dd.dataframely_asset(schema=Orders)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    good, _ = Orders.filter(raw_orders)
-    return good
+    valid, _ = Orders.filter(raw_orders)
+    return valid
 ```
 
-The quarantine table carries the rejected rows with the original columns, then one `String` column per rule reading `valid`, `invalid` or `unknown`, named exactly as that rule's asset check.
+The quarantine table carries the invalid rows with the original columns, then one `String` column per rule reading `valid`, `invalid` or `unknown`, named exactly as that rule's asset check.
 Its materialization also carries a `cooccurrence` table, so one broken upstream field tripping three rules reads as one row rather than three unrelated counts.
-It inherits the good asset's key prefix, group and IO manager, and its own `dg.AssetOut` can override any of them, which is how rejected rows reach a separate storage and ownership domain.
+It inherits the asset's own key prefix, group and IO manager, and its own `dg.AssetOut` can override any of them, which is how invalid rows reach a separate storage and ownership domain.
 Three settings raise `QuarantineSettingError` instead of being honoured: `automation_condition`, `freshness_policy` and `code_version` cannot differ between two outs of one step, so they belong on the decorator, where they cover both.
 
 ## The package never casts
@@ -92,7 +92,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return Orders.cast(raw_orders)
 ```
 
-The one cast the package makes is on columns it generated itself: the quarantine's outcome columns go from `Enum` to `String`, because a raw `Enum` panics the Delta writer.
+The one cast the package makes is on columns it generated itself: the quarantine's rule columns go from `Enum` to `String`, because a raw `Enum` panics the Delta writer.
 
 ## Storage
 
@@ -152,7 +152,7 @@ Parquet is self-describing, keeps every dtype natively, and needs no schema to r
 
 `partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no setting here.
 Both outs carry it, which is what makes the quarantine unable to escape its asset's partitioning.
-The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's good count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
+The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
 
 **The transform reaches its own partition key through the context.**
 The transform takes no `context` parameter, so a partitioned one fetches the context the same way the wrapper does:
@@ -253,7 +253,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `multi_column_rules` | where the rules no single column owns land at `column` granularity: `schema` or `per_rule` | `schema` |
 | `statistics` | whether each materialization carries a profile of what it wrote | `true` |
 | `max_failure_samples` | how many of the rows a rule rejected reach that rule's check | `5` |
-| `row_sample` | how many of the good table's rows reach its materialization | `5` |
+| `row_sample` | how many of the valid table's rows reach its materialization | `5` |
 | `temp_dir` | which disk a `LazyFrame` lands on, before it is validated or promoted to storage | the system temp directory |
 
 The chain validates on resolve, at every tier including the package's own, so a typo raises `InvalidSettingError` naming the value and the tier that supplied it rather than quietly becoming something else three modules later.
@@ -270,7 +270,7 @@ Nothing migrates them, so choose it before the asset ships rather than after.
 
 ### Statistics and both samples are on by default
 
-Each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, under `stats/numeric`, `stats/temporal`, `stats/string` and `stats/boolean`, on the quarantine as well as the good table.
+Each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, under `stats/numeric`, `stats/temporal`, `stats/string` and `stats/boolean`, on the quarantine as well as the valid table.
 
 > [!IMPORTANT]
 > Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
@@ -280,7 +280,7 @@ Each materialization carries a `skimr`-style profile of what it wrote: one table
 | setting | what it writes | where |
 | --- | --- | --- |
 | `max_failure_samples` | up to this many of the rows each rule rejected | that rule's asset check, under `dy_failed_sample` |
-| `row_sample` | up to this many of the rows the good table holds | its materialization, under `sample` |
+| `row_sample` | up to this many of the rows the valid table holds | its materialization, under `sample` |
 
 The quarantine carries no row sample, deliberately.
 Its rows already reach the event log once, through the check that rejected each of them and with the rule attached, so a second copy would carry less and cost the same.
@@ -352,7 +352,7 @@ def orders():
         Orders,
         transform(),
         context=dg.AssetExecutionContext.get(),
-        good_out="orders",
+        valid_out="orders",
     )
 ```
 
@@ -401,7 +401,7 @@ The docstring is not decoration: it becomes that check's description in the cata
 
 ## The reserved namespace
 
-Every check name sits under `dy_`, and so does every quarantine outcome column and every key in check metadata: the shape check `dy_schema__dtypes`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`.
+Every check name sits under `dy_`, and so does every quarantine rule column and every key in check metadata: the shape check `dy_schema__dtypes`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`.
 The materialization keys are deliberately outside it, because `sample`, `cooccurrence` and `stats/*` are for a data consumer rather than for this package's bookkeeping.
 A schema with a column of its own inside the namespace raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
 The prefix is hardcoded rather than configurable: its whole value is being the same string in every project.

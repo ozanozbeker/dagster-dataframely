@@ -187,7 +187,7 @@ def _rejected_rows(
     Args:
         schema: The schema the rules belong to.
         failure: What `Schema.filter` reported.
-        counts: Failure count per rule, which the caller already asked for. Taken rather than read off `failure` again, because `counts()` is an aggregate over the rejected rows rather than a lookup.
+        counts: Failure count per rule, which the caller already asked for. Taken rather than read off `failure` again, because `counts()` is an aggregate over the invalid rows rather than a lookup.
         limit: How many rows to keep per rule. Zero samples nothing and never touches the frame.
 
     Returns:
@@ -197,13 +197,13 @@ def _rejected_rows(
         return {}
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
-    # Dropped from every sample: the outcome columns are the quarantine's shape, and the check already says which rule this is.
-    outcomes: list[str] = [
+    # Dropped from every sample: the rule columns are the quarantine's shape, and the check already says which rule this is.
+    rule_columns: list[str] = [
         rule for rule in validation_rules(schema) if rule in details.collect_schema()
     ]
     return {
         rule: sample_rows(
-            details.filter(pl.col(rule) == _INVALID).drop(outcomes), limit
+            details.filter(pl.col(rule) == _INVALID).drop(rule_columns), limit
         )
         for rule in counts
     }
@@ -232,7 +232,7 @@ def _collapsed_metadata(
 
     A single total is deliberately absent. Failure counts are per rule and one row can break several, so summing them would state a row count that is not one.
 
-    The sample carries `dy_rule` for the same reason the counts do: a rule set stands for several rules, so a rejected row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
+    The sample carries `dy_rule` for the same reason the counts do: a rule set stands for several rules, so a invalid row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
     """
     metadata: dict[str, dg.TableMetadataValue] = {
         "dy_rules": dg.MetadataValue.table(
@@ -279,7 +279,7 @@ def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with 
         severity: Severity for every failing result in this run.
         check_granularity: How far the rules collapse. Pass what the specs were derived with; the door does, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity.
-        max_failure_samples: How many rejected rows each rule shows. Unset resolves through the settings chain.
+        max_failure_samples: How many invalid rows each rule shows. Unset resolves through the settings chain.
 
     Returns:
         One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.

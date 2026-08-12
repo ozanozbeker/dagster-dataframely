@@ -158,8 +158,8 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
 
 
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
-    """`FailureInfo.details()` still returns the invalid rows plus one outcome column per rule."""
-    # #19 builds the quarantine frame straight off `details()`: original columns untouched, outcome columns renamed into the reserved namespace.
+    """`FailureInfo.details()` still returns the invalid rows plus one column for each rule."""
+    # #19 builds the quarantine frame straight off `details()`: original columns untouched, rule columns renamed into the reserved namespace.
     # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows each rule rejected.
     # Guide-documented and upstream-tested, but absent from dataframely's API reference.
     _, failure = Orders.filter(_MIXED_ORDERS)
@@ -170,7 +170,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
         Orders._validation_rules(with_cast=False)
     )
 
-    # #19 casts the outcome columns to String because a raw Enum panics the Delta writer.
+    # #19 casts the rule columns to String because a raw Enum panics the Delta writer.
     # This dtype is the whole reason that cast is mandatory rather than defensive, so it is pinned alongside the vocabulary it carries.
     assert details.schema["amount|min"] == pl.Enum(["valid", "invalid", "unknown"])
     assert (

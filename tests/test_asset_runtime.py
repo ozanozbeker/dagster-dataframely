@@ -1,6 +1,6 @@
 """Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
 
-The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine outcomes are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
+The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine rule_columns are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
 """
 
 from collections.abc import Callable, Mapping
@@ -75,7 +75,7 @@ def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
 
 
 def test_a_clean_run_emits_row_count(tmp_path: Path):
-    """The good count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package."""
+    """The valid count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package."""
     result = _materialize(tmp_path, _raw_orders, orders)
     metadata = _materialized(result)[dg.AssetKey(["orders"])]
 
@@ -247,14 +247,14 @@ def test_the_shape_check_tabulates_every_offending_column(tmp_path: Path):
     ]
 
 
-# --- rejected rows with no quarantine ---
+# --- invalid rows with no quarantine ---
 @dataframely_asset(schema=Orders, name="orders")
 def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
 
 def test_rejected_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
-    """A partial table must never silently replace a good one."""
+    """A partial table must never silently replace a complete one."""
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, _mixed)
 
@@ -318,7 +318,7 @@ def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
     assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
 
 
-# --- rejected rows with a quarantine, some surviving ---
+# --- invalid rows with a quarantine, some surviving ---
 _GOOD_KEY = dg.AssetKey(["orders"])
 _QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
 
@@ -329,7 +329,7 @@ def _quarantined() -> pl.DataFrame:
 
 
 def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
-    """The middle case: 3 good rows land, 3 bad ones are inspectable, and downstream proceeds."""
+    """The middle case: 3 valid rows land, 3 invalid ones are inspectable, and downstream proceeds."""
     result = _materialize(tmp_path, _quarantined)
 
     assert result.success
@@ -339,7 +339,7 @@ def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
-    """Consent to partial data was given by declaring the out, so a rejected row is a warning rather than a failure."""
+    """Consent to partial data was given by declaring the out, so a invalid row is a warning rather than a failure."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -378,32 +378,32 @@ def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
     assert seen == {"rows": 3}
 
 
-def test_the_quarantine_holds_the_original_columns_plus_one_outcome_per_rule(
+def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
     tmp_path: Path,
 ):
     """`invalid()` was rejected as the content: check-metadata samples are bounded, so without per-row attribution here it exists nowhere at volume."""
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
-    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+    rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
     checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__dtypes"}
 
     assert quarantine.columns[: len(Orders.columns())] == list(Orders.columns())
-    assert set(quarantine.columns) == set(Orders.columns()) | set(outcomes)
+    assert set(quarantine.columns) == set(Orders.columns()) | set(rule_columns)
     # Byte-identical to the check names, asserted against the written frame rather than
     # only the declaration, so the two surfaces cannot drift apart.
-    assert set(outcomes) == checks
+    assert set(rule_columns) == checks
 
 
-def test_the_outcome_columns_are_cast_from_enum_to_string(tmp_path: Path):
+def test_the_rule_columns_are_cast_from_enum_to_string(tmp_path: Path):
     """Mandatory, not defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`."""
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
-    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+    rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
 
-    assert all(quarantine.schema[name] == pl.String for name in outcomes)
+    assert all(quarantine.schema[name] == pl.String for name in rule_columns)
 
 
-def test_an_outcome_column_says_which_rule_rejected_which_row(tmp_path: Path):
+def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
         "order_id"
@@ -492,13 +492,13 @@ def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
     assert not (tmp_path / "orders_quarantine.parquet").exists()
 
 
-# --- rejected rows with a quarantine, none surviving ---
+# --- invalid rows with a quarantine, none surviving ---
 @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
 def _nothing_survived() -> pl.DataFrame:
     return hopeless_orders()
 
 
-def test_nothing_surviving_materializes_the_quarantine_and_skips_the_good_out(
+def test_nothing_surviving_materializes_the_quarantine_and_skips_the_valid_out(
     tmp_path: Path,
 ):
     """The load-bearing case: an empty table must never silently replace a last-known-good snapshot."""
@@ -533,7 +533,7 @@ def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
 
 
 def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
-    """Severity is the run's outcome, not the rule's: nothing landed in the good table, so nothing is a warning."""
+    """Severity is the run's outcome, not the rule's: nothing landed in the valid table, so nothing is a warning."""
     result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
     evaluations = _evaluations(result)
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]

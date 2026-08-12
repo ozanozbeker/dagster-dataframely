@@ -453,12 +453,12 @@ def test_the_door_puts_the_schema_where_the_manager_reads_it(tmp_path: Path) -> 
     assert_frame_equal(_round_trip(tmp_path, orders, "orders"), scenario.clean_orders())
 
 
-def test_a_quarantine_decodes_the_same_columns_the_good_table_does(
+def test_a_quarantine_decodes_the_same_columns_the_valid_table_does(
     tmp_path: Path,
 ) -> None:
     """The quarantine carries the same carrier, so the columns it inherits from the schema come back as themselves rather than as text.
 
-    The outcome columns beside them are the schema's own reserved namespace and no schema declares them, so they ride through the read on inference, which is what `String` wanted anyway.
+    The rule columns beside them are the schema's own reserved namespace and no schema declares them, so they ride through the read on inference, which is what `String` wanted anyway.
     """
 
     @dd.dataframely_asset(schema=scenario.Orders, quarantine=dg.AssetOut())

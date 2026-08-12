@@ -704,7 +704,7 @@ def test_declaring_a_quarantine_adds_a_second_out():
 
 
 def test_the_quarantine_out_is_not_required_either():
-    """The clean run skips it, and the nothing-survived path skips the good one."""
+    """The clean run skips it, and the nothing-survived path skips the valid one."""
     assert all(spec.skippable for spec in quarantined.specs)
 
 
@@ -754,7 +754,7 @@ def test_an_explicit_key_overrides_the_sibling_completely():
 
 
 def test_the_quarantine_inherits_the_io_manager_key_when_it_names_none():
-    """One declaration stores both tables together, and routing the rejected rows elsewhere stays a one-word change."""
+    """One declaration stores both tables together, and routing the invalid rows elsewhere stays a one-word change."""
 
     @dataframely_asset(
         schema=Orders, io_manager_key="warehouse", quarantine=dg.AssetOut()
@@ -815,10 +815,10 @@ def test_a_setting_that_cannot_differ_between_the_outs_raises_at_definition_time
     assert "One step always produces both tables" in str(raised.value)
 
 
-def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_good_out():
+def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_valid_out():
     """The `AssetOut` cannot contest these, but the door's own values do not reach the quarantine either.
 
-    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the good asset's condition already requests, since neither out can execute alone.
+    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the valid out's condition already requests, since neither out can execute alone.
     """
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
@@ -833,11 +833,11 @@ def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_good_out():
         return pl.DataFrame()
 
     specs = {spec.key: spec for spec in scheduled.specs}
-    good = specs[dg.AssetKey(["scheduled"])]
+    valid = specs[dg.AssetKey(["scheduled"])]
     bad = specs[dg.AssetKey(["scheduled_quarantine"])]
 
-    assert good.automation_condition == condition
-    assert good.freshness_policy == freshness
+    assert valid.automation_condition == condition
+    assert valid.freshness_policy == freshness
     assert bad.automation_condition is None
     assert bad.freshness_policy is None
 
@@ -868,7 +868,7 @@ def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
 
 
 def test_the_quarantine_mirror_carries_no_constraint():
-    """These rows are here precisely because they violate them. The primary key above all: the rejected rows are exactly where a duplicate key ends up."""
+    """These rows are here precisely because they violate them. The primary key above all: the invalid rows are exactly where a duplicate key ends up."""
     assert all(
         column.constraints == dg.TableColumnConstraints()
         for column in _quarantine_columns().values()
@@ -878,25 +878,27 @@ def test_the_quarantine_mirror_carries_no_constraint():
     )
 
 
-def test_the_quarantine_declares_one_string_outcome_column_per_rule():
+def test_the_quarantine_declares_a_string_rule_column_for_every_rule():
     """Named byte-identically to the asset checks, so an engineer carries the string across by eye."""
     columns = _quarantine_columns()
-    outcomes = {name: columns[name] for name in columns if name.startswith("dy_rule__")}
+    rule_columns = {
+        name: columns[name] for name in columns if name.startswith("dy_rule__")
+    }
     expected = {f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES}
 
-    assert set(outcomes) == expected
+    assert set(rule_columns) == expected
     assert expected <= set(_specs_by_name(quarantined))
-    assert all(column.type == "String" for column in outcomes.values())
+    assert all(column.type == "String" for column in rule_columns.values())
 
 
-def test_each_outcome_column_is_described_as_the_outcome_of_its_rule():
+def test_each_rule_column_is_described_as_the_outcome_of_its_rule():
     assert _quarantine_columns()["dy_rule__amount__min"].description == (
         "Outcome of rule 'amount|min': 'valid' / 'invalid' / 'unknown'."
     )
 
 
 def test_the_quarantine_carries_the_schema_carrier_too():
-    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the good one."""
+    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the valid one."""
     assert (
         quarantined.metadata_by_key[_QUARANTINE_KEY][_SCHEMA_CARRIER_KEY].instance
         is Orders
@@ -1022,7 +1024,7 @@ _NO_DG_ASSET_COUNTERPART = {
     "temp_dir",
 }
 
-# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
+# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the valid `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
 _ASSET_LEVEL = {
     "io_manager_key",
     "group_name",

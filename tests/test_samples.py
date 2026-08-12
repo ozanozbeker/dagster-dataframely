@@ -1,6 +1,6 @@
 """The two row samples, asserted through the metadata a run emits.
 
-Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the good materialization's for the rows that survived.
+Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the valid out's materialization's for the rows that survived.
 
 Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out setting that has to work.
 """
@@ -87,7 +87,7 @@ def _check_metadata(
     )
 
 
-# --- the good output's row sample ---
+# --- the valid output's row sample ---
 @dataframely_asset(schema=Orders, name="orders")
 def _clean() -> pl.DataFrame:
     return clean_orders()
@@ -185,7 +185,7 @@ def test_a_cell_no_table_record_can_hold_is_rendered_as_the_value_it_is(tmp_path
 
 
 def test_the_quarantine_carries_no_row_sample(tmp_path: Path):
-    """The rejected rows reach the event log once, through the checks that rejected them and with the rule attached. A second unattributed copy here would say less and cost the same."""
+    """The invalid rows reach the event log once, through the checks that rejected them and with the rule attached. A second unattributed copy here would say less and cost the same."""
 
     @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
     def quarantined() -> pl.DataFrame:
@@ -214,8 +214,10 @@ def test_a_failing_check_carries_the_rows_it_rejected(tmp_path: Path):
     assert sampled[0]["amount"] == "-4.00"
 
 
-def test_a_sampled_row_holds_the_columns_of_the_data_and_no_outcomes(tmp_path: Path):
-    """The outcome columns are the quarantine's shape, not a sample's: the check already says which rule this is."""
+def test_a_sampled_row_holds_the_columns_of_the_data_and_no_rule_columns(
+    tmp_path: Path,
+):
+    """The rule columns are the quarantine's shape, not a sample's: the check already says which rule this is."""
     result = _materialize(tmp_path, _quarantined)
     sampled = _records(
         _check_metadata(result, "dy_rule__amount__min")["dy_failed_sample"]
@@ -294,7 +296,7 @@ def test_the_environment_tier_sets_the_house_failure_sample(
 
 
 def test_an_aborting_run_still_samples_what_it_rejected(tmp_path: Path):
-    """The run writes nothing, so the checks are the only place the rejected rows exist. That is the run where a sample is worth most."""
+    """The run writes nothing, so the checks are the only place the invalid rows exist. That is the run where a sample is worth most."""
 
     @dataframely_asset(schema=Orders, name="orders")
     def aborting() -> pl.DataFrame:

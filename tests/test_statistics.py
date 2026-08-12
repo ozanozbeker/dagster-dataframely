@@ -395,7 +395,7 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
 
 
 def test_the_quarantine_is_profiled_too(tmp_path: Path):
-    """The rejected rows are a table a consumer reads, and what the values in them look like is the question the checks do not answer."""
+    """The invalid rows are a table a consumer reads, and what the values in them look like is the question the checks do not answer."""
 
     @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
     def quarantined() -> pl.DataFrame:

@@ -98,19 +98,19 @@ def _quarantine_out(
 
     `dg.AssetOut` is already the typed container for everything quarantine-specific, so the door takes one rather than growing a second two-valued container that could disagree with it. What it costs is a rule per setting that also exists on the door:
 
-    - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: rejected rows to a different key and ownership domain.
-    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the good out: the Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
-    - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the rejected rows elsewhere stays a one-word change.
+    - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: invalid rows to a different key and ownership domain.
+    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the valid out: the Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
+    - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the invalid rows elsewhere stays a one-word change.
     - The three in `_CONTESTED_SETTINGS` raise.
 
-    The door's own `automation_condition` and `freshness_policy` stay on the good out rather than reaching this one. A freshness policy here would fail forever on a healthy pipeline, because a clean run skips the quarantine by design; and a condition here would request a step the good asset's condition already requests, since neither out can execute alone.
+    The door's own `automation_condition` and `freshness_policy` stay on the valid out rather than reaching this one. A freshness policy here would fail forever on a healthy pipeline, because a clean run skips the quarantine by design; and a condition here would request a step the valid out's condition already requests, since neither out can execute alone.
 
     Args:
         quarantine: The out the user declared, verbatim.
-        schema: The schema whose rejected rows the out holds.
+        schema: The schema whose invalid rows the out holds.
         key: The default sibling key, used only when the user named neither a key nor a prefix.
-        io_manager_key: The good out's manager, inherited when the quarantine names none.
-        group_name: The good out's group, inherited when the quarantine names none.
+        io_manager_key: The valid out's manager, inherited when the quarantine names none.
+        group_name: The valid out's group, inherited when the quarantine names none.
 
     Returns:
         The out to hand `@dg.multi_asset`.
@@ -124,7 +124,7 @@ def _quarantine_out(
 
     overrides: dict[str, Any] = {
         "is_required": False,
-        # The package's key is applied last, as on the good out.
+        # The package's key is applied last, as on the valid out.
         "metadata": {**(quarantine.metadata or {}), **_quarantine_metadata(schema)},
         "io_manager_key": quarantine.io_manager_key or io_manager_key,
         "group_name": quarantine.group_name or group_name,
@@ -179,14 +179,14 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 
     The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`. It takes no `context` parameter; the wrapper reaches the context itself.
 
-    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a rejected row costs is visible in the definition and cannot disagree with what the asset declares.
+    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
-    With no quarantine, every row has to be good: a run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
+    With no quarantine, every row has to be valid: a run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
 
-        good, _ = Orders.filter(raw_orders)
-        return good
+        valid, _ = Orders.filter(raw_orders)
+        return valid
 
-    With a quarantine, rejected rows land in a sibling asset carrying the original columns plus one outcome column per rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the good output rather than emptying it.
+    With a quarantine, invalid rows land in a sibling asset carrying the original columns plus a rule column for every rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the valid output rather than emptying it.
 
     Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `outs`, `check_specs` and `specs` are surfaces this decorator owns and are simply absent, so they cannot be contested. `can_subset` is absent too: a subset executes but saves nothing.
 
@@ -194,12 +194,12 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 
     Args:
         schema: The dataframely schema the transform's output must satisfy.
-        quarantine: Where rejected rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how rejected rows reach a separate storage and ownership domain. Its key defaults to a sibling of the good asset and its IO manager to the good asset's.
+        quarantine: Where invalid rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's.
         check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
         multi_column_rules: Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
-        statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the good out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
-        row_sample: How many of the good output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
+        statistics: Whether each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, on both the valid out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
+        row_sample: How many of the valid output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
         temp_dir: Where a `LazyFrame` return lands before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the landing goes to the system temp directory, which in a container is its ephemeral disk**, and a landed frame bigger than what the pod has spare fills it; pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
         key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
         io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
@@ -305,7 +305,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
             outs[quarantine_name] = _quarantine_out(
                 quarantine,
                 schema=schema,
-                # The default key is a sibling inheriting the good asset's prefix, so the two land next to each other with no configuration.
+                # The default key is a sibling inheriting the asset's own prefix, so the two land next to each other with no configuration.
                 key=dg.AssetKey([*prefix, quarantine_name]),
                 io_manager_key=io_manager_key,
                 group_name=group_name,
@@ -329,7 +329,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
                 schema,
                 fn(*args, **kwargs),
                 context=dg.AssetExecutionContext.get(),
-                good_out=asset_name,
+                valid_out=asset_name,
                 quarantine_out=quarantine_name,
                 check_granularity=granularity,
                 multi_column_rules=multi_column,
