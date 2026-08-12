@@ -1,4 +1,4 @@
-"""The three-tier settings chain, asserted at the seam every setting resolves through.
+"""The three-tier settings chain, asserted at the one call every setting resolves through.
 
 `resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it, and a fake one covers the tier a shipped setting cannot reach: its own default is valid by construction.
 

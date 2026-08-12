@@ -1,6 +1,6 @@
 """Definition-time behaviour of `@dataframely_asset`, asserted with no execution.
 
-The seam is the `AssetsDefinition` the decorator returns. Everything a user sees before the asset has ever run is on it: the keys, the check specs, and the definition metadata that fills the Columns tab.
+These tests assert against the `AssetsDefinition` the decorator returns. Everything a user sees before the asset has ever run is on it: the keys, the check specs, and the definition metadata that fills the Columns tab.
 """
 
 import datetime as dt
@@ -546,7 +546,7 @@ def test_a_primary_key_column_never_claims_to_be_unique():
 class Measurements(dy.Schema):
     """The constraint shapes `Orders` has no natural column for.
 
-    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to pin one arm of the constraint renderer.
+    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to cover one arm of the constraint renderer.
     """
 
     reading_at = dy.Datetime(resolution="1h")
@@ -1050,7 +1050,7 @@ _NOT_ON_THE_DECORATOR = {
 def test_the_door_speaks_dg_assets_vocabulary():
     """The interface is designed for one table, so anything `@dg.asset` can say about an asset should be sayable here under the same name.
 
-    Asserted in both directions, like the `multi_asset` pin: nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
+    Asserted in both directions, like the `multi_asset` characterization test: nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
     """
     decorator = (
         set(inspect.signature(dataframely_asset).parameters) - _NO_DG_ASSET_COUNTERPART
@@ -1064,7 +1064,7 @@ def test_the_door_speaks_dg_assets_vocabulary():
 
 
 def test_the_forwarded_parameter_list_matches_multi_assets_signature():
-    """Asserted in both directions, so the curated list neither breaks silently nor silently lags a new Dagster feature (#15, pin-and-assert obligation 4)."""
+    """Asserted in both directions, so the curated list neither breaks silently nor silently lags a new Dagster feature (#15)."""
     forwarded = (
         set(inspect.signature(dataframely_asset).parameters)
         - _DECORATOR_OWNED
@@ -1085,7 +1085,7 @@ def test_the_surfaces_the_package_owns_are_not_parameters():
 
 
 def test_the_code_location_snapshot_degrades_the_schema_carrier():
-    """The carrier holds a live class, which cannot be serialized. Dagster must drop the instance rather than refuse to build the snapshot (#15, behavioural pin).
+    """The carrier holds a live class, which cannot be serialized. Dagster must drop the instance rather than refuse to build the snapshot (#15, characterization test).
 
     `RepositorySnap` and `serialize_value` are private paths; they are what a code location actually runs on load, and there is no public equivalent.
     """

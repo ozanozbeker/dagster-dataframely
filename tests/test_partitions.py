@@ -1,6 +1,6 @@
 """What a partitioned `@dataframely_asset` actually does, asserted rather than assumed.
 
-Partitioning is forwarded, not designed around (#25), so the risk was never that the mechanics are wrong; it is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is pinned here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
+Partitioning is forwarded, not designed around (#25), so the risk was never that the mechanics are wrong; it is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
 
 Static partitions throughout except where a test says otherwise: they name the frame each partition gets, which makes the fixture readable, and a date would only obscure it.
 """
@@ -86,7 +86,7 @@ def test_an_out_cannot_declare_partitioning_of_its_own():
     assert "partitions_def" not in inspect.signature(dg.AssetOut.__init__).parameters
 
 
-# --- the state machine runs per partition, on that partition's frame ---
+# --- validation runs per partition, on that partition's frame ---
 def test_each_partition_materializes_its_own_frame(tmp_path: Path):
     assert _materialize(tmp_path, "clean").success
     assert _materialize(tmp_path, "mixed").success
@@ -179,7 +179,7 @@ def test_check_history_across_a_backfill_is_one_timeline_per_check(tmp_path: Pat
         _materialize(tmp_path, "mixed", instance=instance)
         _materialize(tmp_path, "clean", instance=instance)
 
-        # Private upstream storage, and the only seam that answers "what would the catalog show" without a webserver. Newest first.
+        # Private upstream storage, and the only route that answers "what would the catalog show" without a webserver. Newest first.
         history = instance.event_log_storage.get_asset_check_execution_history(
             check_key=_AMOUNT_MIN, limit=10
         )

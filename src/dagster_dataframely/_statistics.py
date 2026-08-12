@@ -25,7 +25,7 @@ _DERIVED = frozenset({"mean", "std", "p50", "true_rate"})
 
 _PLACES = 4
 
-#: polars' own duration rendering, `8d` / `1m 30s` / `2h 5m`, which is the form its own frame repr uses. The default gives ISO-8601 and a plain cast to `String` raises, so this format string is the only route to a span a human reads. Pinned by its own test (#23).
+#: polars' own duration rendering, `8d` / `1m 30s` / `2h 5m`, which is the form its own frame repr uses. The default gives ISO-8601 and a plain cast to `String` raises, so this format string is the only route to a span a human reads. Covered by a characterization test (#23).
 _DURATION_STYLE = "polars"
 
 #: The dtypes whose useful statistics are all lengths and counts, which is what makes them one table rather than four.

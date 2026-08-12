@@ -1,8 +1,8 @@
-"""The state machine a schema-backed asset runs: check the shape, stage, filter, then one of five outcomes.
+"""What a schema-backed asset runs after its transform: check the shape, stage, filter, then one of five exits.
 
-The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three rule_columns into five: it is the consent to partial data, and its absence is the refusal.
+The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three exits into five: it is the consent to partial data, and its absence is the refusal.
 
-The middle stage is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
+The middle phase is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
 import tempfile
@@ -85,7 +85,7 @@ def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
 
     What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
-    The file is gone before this returns, so no exit of the state machine can leave one behind, including the two whose whole purpose is that nothing is written.
+    The file is gone before this returns, so no exit can leave one behind, including the two whose whole purpose is that nothing is written.
 
     A configured directory is not created. The setting exists to move the staging file off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
 
@@ -205,7 +205,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     )
 
 
-def process(  # noqa: PLR0913 - the escape hatch for hand-wiring: everything the decorator decides has to be passable by hand
+def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decides to be passable by hand
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
@@ -221,7 +221,7 @@ def process(  # noqa: PLR0913 - the escape hatch for hand-wiring: everything the
 ) -> AssetYield:
     """Validates a transform's output and reports it to Dagster.
 
-    Three stages and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that stage, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Three phases and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
     Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, invalid rows are written next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
 
@@ -257,14 +257,14 @@ def process(  # noqa: PLR0913 - the escape hatch for hand-wiring: everything the
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
     staging_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
-    # --- Stage 1: the shape check ---
+    # --- Phase 1: the shape check ---
     problems: list[dict[str, str]] = shape_problems(schema, frame)
     if problems:
         # Exit: pipeline defect. Nothing is filtered and neither out is written, so a wrong-shaped frame cannot corrupt either table.
         yield _shape_failure(problems, asset_key=valid_key)
         raise SchemaShapeError(schema.__name__, problems)
 
-    # --- Stage 2: the temp file ---
+    # --- Phase 2: staging ---
     # A plan streams to a local parquet and comes back as the frame it produced. An eager frame passes straight through, because there is nothing left to stream.
     materialized: pl.DataFrame = (
         _staged_frame(frame, temp_dir=staging_dir)
@@ -272,7 +272,7 @@ def process(  # noqa: PLR0913 - the escape hatch for hand-wiring: everything the
         else frame
     )
 
-    # --- Stage 3: the row filter ---
+    # --- Phase 3: the row filter ---
     # Eager either way by now, which is what `filter` would have done anyway: it collects internally, and `row_count` needs the length.
     result, failure = schema.filter(materialized, cast=False)
     # Annotated because `filter` returns dataframely's phantom `dy.DataFrame[Schema]`, and the out is declared as a plain polars frame.
