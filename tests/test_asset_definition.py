@@ -57,7 +57,7 @@ _RULES = [
 
 @dataframely_asset(schema=Orders, group_name="sales")
 def orders() -> pl.DataFrame:
-    """Doc line that becomes the asset description."""
+    """The transform's own docstring, which `Orders`'s outranks."""
     return pl.DataFrame()
 
 
@@ -233,6 +233,133 @@ def test_user_metadata_cannot_displace_the_packages_own():
     assert definition_metadata["own"] == "kept"
     assert isinstance(definition_metadata[_COLUMN_SCHEMA_KEY], dg.TableSchema)
     assert definition_metadata[_SCHEMA_CARRIER_KEY].instance is Orders
+
+
+# --- the description ---
+class _Documented(dy.Schema):
+    """Postal codes, one row per code."""
+
+    code = dy.String(primary_key=True)
+
+
+class _Undocumented(dy.Schema):
+    code = dy.String(primary_key=True)
+
+
+class _Blank(dy.Schema):
+    """ """
+
+    code = dy.String(primary_key=True)
+
+
+def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
+    @dataframely_asset(schema=_Documented)
+    def postal_codes() -> pl.DataFrame:
+        """The transform's own docstring, which the schema outranks."""
+        return pl.DataFrame()
+
+    (spec,) = postal_codes.specs
+    assert spec.description == "Postal codes, one row per code."
+
+
+def test_an_explicit_description_outranks_the_schema_docstring():
+    @dataframely_asset(schema=_Documented, description="Said at the call site.")
+    def explicit() -> pl.DataFrame:
+        """The transform's own docstring."""
+        return pl.DataFrame()
+
+    (spec,) = explicit.specs
+    assert spec.description == "Said at the call site."
+
+
+def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
+    """The last source is Dagster's, not the package's: with nothing to fill the gap the transform's docstring lands, exactly as it did before."""
+
+    @dataframely_asset(schema=_Undocumented)
+    def undocumented() -> pl.DataFrame:
+        """The transform's own docstring."""
+        return pl.DataFrame()
+
+    (spec,) = undocumented.specs
+    assert spec.description == "The transform's own docstring."
+
+
+def test_the_base_schemas_docstring_never_reaches_an_asset():
+    """`inspect.getdoc` walks the MRO, so reading the docstring through it would describe every undocumented schema as a base class."""
+
+    assert dy.Schema.__doc__ is not None
+
+    @dataframely_asset(schema=_Undocumented, name="inherits_nothing")
+    def inherits_nothing() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    (spec,) = inherits_nothing.specs
+    assert spec.description is None
+
+
+def test_an_empty_description_counts_as_absent_too():
+    """The same emptiness rule on both sources. Neither can say "no description at all", because Dagster's fallback takes over the moment the package has nothing."""
+
+    @dataframely_asset(schema=_Documented, description="")
+    def empty() -> pl.DataFrame:
+        """The transform's own docstring."""
+        return pl.DataFrame()
+
+    (spec,) = empty.specs
+    assert spec.description == "Postal codes, one row per code."
+
+
+def test_a_whitespace_only_schema_docstring_counts_as_absent():
+    @dataframely_asset(schema=_Blank)
+    def blank() -> pl.DataFrame:
+        """The transform's own docstring."""
+        return pl.DataFrame()
+
+    (spec,) = blank.specs
+    assert spec.description == "The transform's own docstring."
+
+
+def test_a_multi_line_schema_docstring_arrives_dedented():
+    """Raw `__doc__` keeps its source indentation, which the catalog renders as a code block."""
+
+    @dataframely_asset(schema=Orders)
+    def dedented() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    (spec,) = dedented.specs
+    assert spec.description is not None
+    assert spec.description.startswith("Customer orders, one row per order line.\n\n")
+    assert not any(line.startswith(" ") for line in spec.description.splitlines()), (
+        spec.description
+    )
+    assert spec.description == spec.description.strip()
+
+
+def test_the_quarantine_inherits_the_resolved_description():
+    """It is what already happens at every call site that passes `description=Schema.__doc__` by hand, so filling the description does not move the quarantine."""
+
+    @dataframely_asset(schema=_Documented, quarantine=dg.AssetOut())
+    def inherited() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert inherited.descriptions_by_key == {
+        dg.AssetKey(["inherited"]): "Postal codes, one row per code.",
+        dg.AssetKey(["inherited_quarantine"]): "Postal codes, one row per code.",
+    }
+
+
+def test_the_quarantine_can_describe_itself_instead():
+    @dataframely_asset(
+        schema=_Documented,
+        quarantine=dg.AssetOut(description="The codes that failed a rule."),
+    )
+    def owned() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert owned.descriptions_by_key == {
+        dg.AssetKey(["owned"]): "Postal codes, one row per code.",
+        dg.AssetKey(["owned_quarantine"]): "The codes that failed a rule.",
+    }
 
 
 # --- checks ---
