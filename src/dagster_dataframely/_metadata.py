@@ -177,7 +177,7 @@ def _quarantine_metadata(
 
     Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking. Then the same carrier the valid out gets, because the two entries answer different questions and only the first of them is about conformance.
 
-    The carrier was withheld at first, on the reading that a table with a rule column for every rule is not schema-shaped. What reads it settles the question: the CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The outcome columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the valid table, which is the parity a reader would expect and the earlier reading cost them.
+    The carrier was withheld at first, on the reading that a table with a rule column for every rule is not schema-shaped. What reads it settles the question: the CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The rule columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the valid table, which is the parity a reader would expect and the earlier reading cost them.
 
     Args:
         schema: The schema whose invalid rows the out holds.
