@@ -348,15 +348,18 @@ Then the `@dg.multi_asset` is yours to wire, out of the same parts.
     check_specs=dd.check_specs(Orders, asset="orders"),
 )
 def orders():
+    context = dg.AssetExecutionContext.get()
     yield from dd.process(
         Orders,
         transform(),
-        context=dg.AssetExecutionContext.get(),
-        valid_out="orders",
+        valid_key=context.asset_key_for_output("orders"),
     )
 ```
 
 `is_required=False` matters: the shape check and both abort paths end the step without yielding an out.
+
+Resolve the key with `asset_key_for_output` rather than building it by hand.
+An out that declares `key_prefix` has an asset key its output name does not spell, and results yielded against a key no out owns fail the step on the first yield with `Asset key ... not found in AssetsDefinition`.
 
 **This is not a route to `dy.Collection` support.**
 Hand-wiring a Collection means reimplementing the hardest part of the package rather than assembling it, because `process` is single-schema by signature.

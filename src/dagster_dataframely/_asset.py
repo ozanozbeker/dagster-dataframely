@@ -326,12 +326,17 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         @functools.wraps(fn)
         def compute(*args: object, **kwargs: object) -> AssetYield:
             # No `context` parameter, deliberately: a user-side postponed-annotations import makes Dagster reject a qualified annotation for one.
+            context = dg.AssetExecutionContext.get()
             yield from process(
                 schema,
                 fn(*args, **kwargs),
-                context=dg.AssetExecutionContext.get(),
-                valid_out=asset_name,
-                quarantine_out=quarantine_name,
+                # Both keys come from the one accessor rather than the valid one being closed over. `key` above is what the valid out was built with and could be reused, but a quarantine that named its own `key_prefix` has a key only Dagster derives, and two mechanisms for one question would need explaining every time it is read.
+                valid_key=context.asset_key_for_output(asset_name),
+                quarantine_key=(
+                    None
+                    if quarantine_name is None
+                    else context.asset_key_for_output(quarantine_name)
+                ),
                 check_granularity=granularity,
                 multi_column_rules=multi_column,
                 max_failure_samples=failure_samples,
