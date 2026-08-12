@@ -37,7 +37,7 @@ AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 STAGING_PREFIX = "dagster_dataframely_"
 
 
-def _require_frame(frame: object, out_name: str) -> None:
+def _require_frame(frame: object, asset: str) -> None:
     """Rejects a transform output the shape check cannot read.
 
     The parameter's annotation is a promise Dagster cannot enforce, because it calls the transform dynamically. Left alone, a forgotten return annotation surfaces two frames down as `'NoneType' object has no attribute 'collect_schema'`.
@@ -46,7 +46,7 @@ def _require_frame(frame: object, out_name: str) -> None:
     """
     if isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{out_name}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. An asset that manages its own storage has no schema to validate, so write it as a plain `@dg.asset`."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. An asset that manages its own storage has no schema to validate, so write it as a plain `@dg.asset`."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
@@ -209,9 +209,8 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
-    context: dg.AssetExecutionContext,
-    valid_out: str,
-    quarantine_out: str | None = None,
+    valid_key: dg.AssetKey,
+    quarantine_key: dg.AssetKey | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
     max_failure_samples: int | None = None,
@@ -223,14 +222,13 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
 
     Three phases and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
-    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_out` is the whole policy: with it, invalid rows are written next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
+    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_key` is the whole policy: with it, invalid rows are written next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
 
     Args:
         schema: The schema the frame must satisfy.
         frame: Whatever the transform returned.
-        context: The executing asset's context, for resolving each out to its key.
-        valid_out: The output name the validated frame materializes under.
-        quarantine_out: The output name the invalid rows materialize under, or `None` when the asset declares no quarantine.
+        valid_key: The asset key the validated frame materializes under. Resolve it with `context.asset_key_for_output(...)` rather than building it by hand: an out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`.
+        quarantine_key: The asset key the invalid rows materialize under, or `None` when the asset declares no quarantine.
         check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
@@ -249,8 +247,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         ValidationAbortError: Rows were rejected and no quarantine is declared.
         NothingSurvivedError: Rows were rejected and none survived.
     """
-    _require_frame(frame, valid_out)
-    valid_key = context.asset_key_for_output(valid_out)
+    _require_frame(frame, valid_key.to_user_string())
     # Resolved before the shape check so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
@@ -279,7 +276,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     valid: pl.DataFrame = result
     rejected: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
-    aborting = bool(rejected) and (quarantine_out is None or not len(valid))
+    aborting = bool(rejected) and (quarantine_key is None or not len(valid))
     checks = _check_results(
         schema,
         failure,
@@ -311,13 +308,12 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         yield valid_result()
         return
 
-    if quarantine_out is None:
+    if quarantine_key is None:
         # Exit: data defect with nowhere to route it, so consent to partial data was never given.
         # Both halves are discarded and the last-known-good table survives, but every rule still reports, so the failed run says what failed and by how much.
         yield from checks
         raise ValidationAbortError(schema.__name__, rejected, failure.counts())
 
-    quarantine_key = context.asset_key_for_output(quarantine_out)
     # Bound once: the frame is written and summarized, and `quarantine_frame` rebuilds it out of `details()` on every call.
     invalid: pl.DataFrame = quarantine_frame(schema, failure)
     quarantine_result = dg.MaterializeResult(

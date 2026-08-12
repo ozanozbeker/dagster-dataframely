@@ -13,11 +13,13 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from dagster_dataframely import (
+    DagsterDataframelyError,
     DataframelyParquetIOManager,
     NothingSurvivedError,
     SchemaShapeError,
     ValidationAbortError,
     dataframely_asset,
+    process,
 )
 from tests.scenario import (
     Orders,
@@ -808,3 +810,141 @@ def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
 
     assert "dy_rule__amount__min" in quarantine.columns
     assert not [name for name in quarantine.columns if name.startswith("dy_col__")]
+
+
+# --- the five exits, reached by calling `process` directly ---
+_Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
+
+
+class TestExitSelection:
+    """Which of the five exits a frame reaches, asserted by calling `process` directly.
+
+    The tests above assert what Dagster ends up holding, which takes a run. These assert which objects leave the generator and which error ends it, which does not: no run, no IO manager, no `tmp_path`.
+
+    The helpers are scoped to this class rather than module-level, because the file already has a `_written` and a `_reported` that answer the same questions of a run.
+
+    The keys are built by hand here because nothing declares an out for them to belong to, which is safe only because nothing consumes them. A real caller resolves them with `context.asset_key_for_output`, since an out that declares `key_prefix` has an asset key its output name does not spell.
+    """
+
+    VALID = dg.AssetKey(["orders"])
+    QUARANTINE = dg.AssetKey(["orders_quarantine"])
+
+    @classmethod
+    def _drained(
+        cls, frame: pl.DataFrame, *, quarantine: bool
+    ) -> tuple[_Yielded, DagsterDataframelyError | None]:
+        """Runs `process` to exhaustion, keeping both what it yielded and whatever ended it.
+
+        Three of the five exits raise after yielding, so draining with `list()` alone would discard the results that say what happened.
+        """
+        yielded: _Yielded = []
+        results = process(
+            Orders,
+            frame,
+            valid_key=cls.VALID,
+            quarantine_key=cls.QUARANTINE if quarantine else None,
+        )
+        try:
+            for result in results:
+                yielded.append(result)
+        except DagsterDataframelyError as error:
+            return yielded, error
+        return yielded, None
+
+    @staticmethod
+    def _tables(yielded: _Yielded) -> list[dg.AssetKey]:
+        """The keys that got a materialization, in the order they were yielded.
+
+        `MaterializeResult.asset_key` is optional upstream, but `process` sets it on every result it builds, so a `None` reaching here would be a defect and the list comparisons below would catch it.
+        """
+        return [
+            r.asset_key
+            for r in yielded
+            if isinstance(r, dg.MaterializeResult) and r.asset_key is not None
+        ]
+
+    @staticmethod
+    def _checks(yielded: _Yielded) -> list[dg.AssetCheckResult]:
+        """Every check result, from whichever of the two places the exit put it.
+
+        They are bundled onto the valid materialization where there is one and yielded standalone where the valid out is skipped, so reading only one of the two would make an exit's checks appear to vanish.
+        """
+        return [
+            check
+            for result in yielded
+            if isinstance(result, dg.MaterializeResult)
+            for check in (result.check_results or [])
+        ] + [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
+
+    @classmethod
+    def _rules(cls, yielded: _Yielded) -> list[dg.AssetCheckResult]:
+        """The rule checks alone.
+
+        The shape check is dropped because it is not a rule: it is built without a severity, so it keeps Dagster's default rather than taking the one the run's outcome derives.
+        """
+        return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__dtypes"]
+
+    def test_a_clean_frame_writes_the_valid_table_and_nothing_else(self):
+        yielded, error = self._drained(clean_orders(), quarantine=False)
+
+        assert error is None
+        assert self._tables(yielded) == [self.VALID]
+
+    def test_a_clean_frame_skips_a_declared_quarantine(self):
+        """An empty quarantine is not written, so an empty quarantine partition means something."""
+        yielded, error = self._drained(clean_orders(), quarantine=True)
+
+        assert error is None
+        assert self._tables(yielded) == [self.VALID]
+
+    def test_a_wrong_shape_reports_the_shape_check_and_writes_nothing(self):
+        yielded, error = self._drained(wrong_dtype_orders(), quarantine=True)
+
+        assert isinstance(error, SchemaShapeError)
+        assert self._tables(yielded) == []
+        assert [c.check_name for c in self._checks(yielded)] == ["dy_schema__dtypes"]
+
+    def test_rejected_rows_with_no_quarantine_write_nothing_but_still_report(self):
+        yielded, error = self._drained(mixed_orders(), quarantine=False)
+
+        assert isinstance(error, ValidationAbortError)
+        assert self._tables(yielded) == []
+        assert any(not c.passed for c in self._checks(yielded))
+
+    def test_rejected_rows_with_a_quarantine_write_both_tables(self):
+        yielded, error = self._drained(mixed_orders(), quarantine=True)
+
+        assert error is None
+        assert self._tables(yielded) == [self.VALID, self.QUARANTINE]
+
+    def test_nothing_surviving_writes_the_quarantine_alone(self):
+        """The valid out is skipped rather than materialized empty, so a last-known-good table survives."""
+        yielded, error = self._drained(hopeless_orders(), quarantine=True)
+
+        assert isinstance(error, NothingSurvivedError)
+        assert self._tables(yielded) == [self.QUARANTINE]
+
+    def test_nothing_surviving_without_a_quarantine_aborts_instead(self):
+        """A quarantine splits three exits into five; without one this is the same abort as any other rejection."""
+        yielded, error = self._drained(hopeless_orders(), quarantine=False)
+
+        assert isinstance(error, ValidationAbortError)
+        assert self._tables(yielded) == []
+
+    def test_the_checks_ride_the_valid_materialization_where_there_is_one(self):
+        """Bundled where a valid table is written, standalone where it is skipped. Nothing above states this directly, because a run flattens the two into one event stream."""
+        middle, _ = self._drained(mixed_orders(), quarantine=True)
+        nothing, _ = self._drained(hopeless_orders(), quarantine=True)
+
+        assert [r for r in middle if isinstance(r, dg.AssetCheckResult)] == []
+        assert [r for r in nothing if isinstance(r, dg.AssetCheckResult)] != []
+
+    def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
+        """The same rejected rows warn when they have somewhere to go and error when they do not."""
+        warned, _ = self._drained(mixed_orders(), quarantine=True)
+        errored, _ = self._drained(mixed_orders(), quarantine=False)
+
+        assert {c.severity for c in self._rules(warned)} == {dg.AssetCheckSeverity.WARN}
+        assert {c.severity for c in self._rules(errored)} == {
+            dg.AssetCheckSeverity.ERROR
+        }
