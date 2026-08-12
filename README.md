@@ -62,6 +62,8 @@ Declaring a quarantine **is** the consent to partial data, so what a invalid row
 | some rows rejected, quarantine declared | the survivors | the invalid rows | fail at `WARN` | green |
 | every row rejected, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
 
+Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the family.
+
 **Without a quarantine, every row has to be valid.**
 A run that rejects even one row fails and writes nothing, so the last-known-good table stays in place.
 Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration.
@@ -140,7 +142,7 @@ Polars cannot write the first to JSON and cannot read the second back, so encodi
 `Object` is refused by both managers.
 
 **The read needs the schema.**
-The decode reads each column's declared dtype off the carrier the decorator puts in the asset's definition metadata, which `dd.schema_metadata` also builds for a plain `@dg.asset`.
+The decode reads each column's declared dtype off the carrier the decorator puts in the asset's definition metadata, which `dd.wiring.schema_metadata` also builds for a plain `@dg.asset`.
 With no schema in reach the read is an ordinary inferred CSV read, and an encoded column arrives as text.
 The schema never comes from a sidecar file and never from the data, so it costs no round trip and cannot drift.
 The carrier holds the live class rather than a copy of it, and a live object does not cross a process boundary, so a manager that only reaches a deserialized definition falls back to the inferred read too.
@@ -175,12 +177,12 @@ An unpartitioned asset depending on the whole of a partitioned one gets a dict k
 
 ```python
 @dg.asset
-def rollup(orders: dd.DataFramePartitions) -> None: ...
+def rollup(orders: dict[str, pl.DataFrame]) -> None: ...
 ```
 
-`dd.DataFramePartitions` is `dict[str, pl.DataFrame]`, exported so the shape a fan-in has to annotate has a name.
+Annotate the dict, not the frame.
 The obvious annotation, `pl.DataFrame`, fails Dagster's type check after every partition has already been read.
-`dd.LazyFramePartitions` is its lazy twin, `dict[str, pl.LazyFrame]`, and reads each partition the way the section below reads a single one.
+`dict[str, pl.LazyFrame]` is the lazy spelling, and reads each partition the way the section below reads a single one.
 
 ## Reads dispatch on the annotation
 
@@ -336,20 +338,24 @@ Both are the same decision: this setting is set to move the staging file off the
 
 ## Hand-wiring
 
-The decorator is one arrangement of parts the package also exports on their own: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_table_schema`, `quarantine_frame`, `process` and `check_name`.
+The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_table_schema`, `quarantine_frame`, `process`, `check_name` and the `AssetYield` type they produce.
 Reach for them when the decorator's shape is not the shape you need: a schema attached to an asset you did not declare, or an out arrangement the decorator does not offer.
 Then the `@dg.multi_asset` is yours to wire, out of the same parts.
+
+They sit in their own namespace rather than the root because the decorator is the happy path, and a user who never hand-wires should not have to read past `quarantine_frame` to find it.
 
 ```python
 @dg.multi_asset(
     outs={
-        "orders": dg.AssetOut(metadata=dd.schema_metadata(Orders), is_required=False)
+        "orders": dg.AssetOut(
+            metadata=dd.wiring.schema_metadata(Orders), is_required=False
+        )
     },
-    check_specs=dd.check_specs(Orders, asset="orders"),
+    check_specs=dd.wiring.check_specs(Orders, asset="orders"),
 )
-def orders():
+def orders() -> dd.wiring.AssetYield:
     context = dg.AssetExecutionContext.get()
-    yield from dd.process(
+    yield from dd.wiring.process(
         Orders,
         transform(),
         valid_key=context.asset_key_for_output("orders"),

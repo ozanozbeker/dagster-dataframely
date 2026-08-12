@@ -14,13 +14,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal, override
 
-from dagster_dataframely._errors import InvalidSettingError
+from dagster_dataframely.errors import InvalidSettingError
 
 #: How many asset checks a schema's rules collapse into.
-Granularity = Literal["rule", "column", "schema"]
+type Granularity = Literal["rule", "column", "schema"]
 
 #: Where the rules that no single column owns land at `column` granularity.
-MultiColumnRules = Literal["schema", "per_rule"]
+type MultiColumnRules = Literal["schema", "per_rule"]
 
 
 @dataclass(frozen=True)

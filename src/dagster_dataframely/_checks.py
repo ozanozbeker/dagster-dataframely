@@ -256,7 +256,7 @@ def _collapsed_metadata(
     return metadata | sample_metadata("dy_failed_sample", attributed)
 
 
-def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
+def rule_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,

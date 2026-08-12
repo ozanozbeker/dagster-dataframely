@@ -10,7 +10,6 @@ Design decisions:
 """
 
 import shutil
-import tempfile
 from abc import abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,19 +26,13 @@ from pydantic import Field
 from upath import UPath
 
 from dagster_dataframely import _csv_codecs
-from dagster_dataframely._errors import SchemaShapeError, UnwritableDtypeError
-from dagster_dataframely._metadata import carried_schema, schema_dtypes
-from dagster_dataframely._runtime import STAGING_PREFIX, shape_problems
+from dagster_dataframely._carrier import carried_schema, schema_dtypes
+from dagster_dataframely._frames import shape_problems, staging
 from dagster_dataframely._settings import TEMP_DIR
+from dagster_dataframely.errors import SchemaShapeError, UnwritableDtypeError
 
 if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
-
-# Exported because nothing in this module's signatures says a read can return a dict: `load_from_path` is typed for a single file, while the `load_input` above it calls that hook once per partition key and assembles the results. A fan-in over every partition therefore lands on the obvious annotation, `pl.DataFrame`, which fails Dagster's type check after every partition has already been read.
-# A plain assignment rather than a `type` statement, because Dagster resolves the annotation at runtime and rejects the `TypeAliasType` a PEP 695 alias produces. `tests/test_upstream_characterization.py` covers that refusal.
-# The names are `dagster-polars`', so a user arriving from there writes what they already know. Which of the two to write is decided the same way a single-partition read is: by the frame the annotation asks for.
-DataFramePartitions = dict[str, pl.DataFrame]
-LazyFramePartitions = dict[str, pl.LazyFrame]
 
 _STORAGE_KIND_KEY = "dagster/storage_kind"
 
@@ -52,7 +45,7 @@ def _wants_lazy(context: "InputContext") -> bool:
 
     Reads dispatch on the annotation, writes on the runtime type. The asymmetry is deliberate rather than an oversight: a write already holds the object, so `isinstance` is the honest test, while a read has no object yet and the annotation is the only signal for what to build.
 
-    A fan-in annotates the shape rather than the element, so the wrapper comes off first. That is the same unwrapping `LazyFramePartitions` exists to spare a user.
+    A fan-in over every partition of an upstream asset annotates the shape rather than the element, `dict[str, pl.LazyFrame]`, so the wrapper comes off first.
     """
     annotation = context.dagster_type.typing_type
     return pl.LazyFrame in (annotation, *get_args(annotation))
@@ -165,13 +158,11 @@ class _FrameIOManager(UPathIOManager):
         Raises:
             FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the setting exists to move the staging file off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
         """
-        with tempfile.TemporaryDirectory(
-            dir=TEMP_DIR.resolve(None), prefix=STAGING_PREFIX
-        ) as staging:
+        with staging(TEMP_DIR.resolve(None)) as directory:
             # The destination's own suffix rather than a bare name: polars reads a
             # compression setting off the extension it is handed, and a staging file that
             # outlived a killed process still says what it holds.
-            staged = Path(staging) / f"staged{self._suffix}"
+            staged = directory / f"staged{self._suffix}"
             self._sink(context, plan, staged)
             _promote(staged, path)
 
@@ -260,7 +251,7 @@ class _CSVIOManager(_FrameIOManager):
 
         The decode reads a column back into the dtype the schema declares, so a schema the frame disagrees with is not an inverse: a `Duration('ns')` written under a declared `Duration('us')` reads back a thousand times too long, with nothing in the file to catch it. That makes the declaration part of what gets written, and a false one a pipeline defect rather than a data one.
 
-        `dataframely_asset` runs the same comparison at the decorator, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.shape_problems`, which is what stops one shape check from admitting what the other refuses.
+        `dataframely_asset` runs the same comparison at the decorator, so this only ever fires for an asset that attached a schema by hand. Both call `_frames.shape_problems`, which is what stops one shape check from admitting what the other refuses.
         """
         schema = carried_schema(context.definition_metadata)
         if schema is None:

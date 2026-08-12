@@ -144,7 +144,11 @@ The read half needs nothing from the write half, measured against a written parq
 None of §2 through §4 applies, because a read performs no validation.
 This is the cheapest genuine win in the ticket and it should not wait on the rest.
 
-`_io_managers.py:35` already reserves the `LazyFramePartitions` name for the fan-in shape, decided alongside the eager name in [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).
+`_io_managers.py` already reserves the `LazyFramePartitions` name for the fan-in shape, decided alongside the eager name in [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).
+
+> **Both aliases were later dropped, during the module-layout audit.**
+> A fan-in annotates `dict[str, pl.LazyFrame]` directly.
+> `docs/research/partitioned-assets.md` §6 carries the reasoning; nothing else in this document changes, because neither alias ever did anything at runtime.
 
 **The open question above, answered while shipping [#52](https://github.com/ozanozbeker/dagster-dataframely/issues/52): a scan rides the fsspec handle.** **[RAN]** Measured against a local handle and an fsspec one (`memory://`), for `scan_parquet` and `scan_csv` alike: both accept the object `UPath.open("rb")` returns, and the plan still collects after that handle is closed.
 It survives because polars reads the file's bytes when it is handed a file object rather than a path: a counting wrapper saw one read of the whole file at `scan_parquet` time, before `collect`.
@@ -208,7 +212,7 @@ Two changes, independent, in this order.
 
 **A.
 Lazy reads.** `load_from_path` returns `pl.scan_parquet` when the input annotation is `pl.LazyFrame`, built on the handle it already opens, which is what makes the §6 guard unnecessary.
-Export `LazyFramePartitions` alongside `DataFramePartitions`.
+Export `LazyFramePartitions` alongside `DataFramePartitions`, which shipped and was then dropped again; see the note above.
 No validation implications, no interaction with anything below.
 
 **B.

@@ -15,12 +15,8 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import (
-    DataframelyParquetIOManager,
-    DataFramePartitions,
-    LazyFramePartitions,
-    UnwritableDtypeError,
-)
+from dagster_dataframely import DataframelyParquetIOManager
+from dagster_dataframely.errors import UnwritableDtypeError
 
 # The dtypes a round trip could plausibly get wrong: Decimal, Duration, Binary and a nested List. Nulls ride along in every column that admits them.
 _ORDERS = pl.DataFrame(
@@ -278,12 +274,12 @@ def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
 def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
     """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed for a single file, which hides that `load_input` can return a dict, so the shape a user has to annotate is covered here rather than left to be discovered at runtime.
 
-    Annotated with the exported alias rather than the literal shape, because the alias is what the README tells a user to write. That makes this the alias's characterization test as well: Dagster type-checks the input against it, as the test below shows, so an alias that drifted from what the manager assembles fails here rather than in someone's project (#35).
+    Annotated with the literal shape, which is what the README tells a user to write: Dagster type-checks the input against it, so a manager that stopped assembling a dict fails here rather than in someone's project (#35).
     """
     read_back: dict[str, object] = {}
 
     @dg.asset(name="rollup")
-    def rollup(orders_by_day: DataFramePartitions) -> None:
+    def rollup(orders_by_day: dict[str, pl.DataFrame]) -> None:
         read_back.update(orders_by_day)
 
     for day in _DAYS.get_partition_keys():
@@ -295,11 +291,11 @@ def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
 
 
 def test_a_lazy_fan_in_arrives_as_a_dict_of_scans(tmp_path: Path) -> None:
-    """The fan-in shape has to be unwrapped to find the element type, because `dict[str, pl.LazyFrame]` is what a user annotates and `pl.LazyFrame` is what decides the read. `LazyFramePartitions` is the exported spelling, so this is its characterization test as well (#52)."""
+    """The fan-in shape has to be unwrapped to find the element type, because `dict[str, pl.LazyFrame]` is what a user annotates and `pl.LazyFrame` is what decides the read (#52)."""
     read_back: dict[str, object] = {}
 
     @dg.asset(name="rollup")
-    def rollup(orders_by_day: LazyFramePartitions) -> None:
+    def rollup(orders_by_day: dict[str, pl.LazyFrame]) -> None:
         read_back.update(orders_by_day)
 
     for day in _DAYS.get_partition_keys():
@@ -321,7 +317,7 @@ def test_a_missing_partition_is_still_skipped_on_the_lazy_path(tmp_path: Path) -
         name="rollup",
         ins={"orders_by_day": dg.AssetIn(metadata={"allow_missing_partitions": True})},
     )
-    def rollup(orders_by_day: LazyFramePartitions) -> None:
+    def rollup(orders_by_day: dict[str, pl.LazyFrame]) -> None:
         read_back.update(orders_by_day)
 
     _materialize(tmp_path, _orders_by_day, partition_key="2026-01-01")

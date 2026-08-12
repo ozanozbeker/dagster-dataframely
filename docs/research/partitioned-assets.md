@@ -213,6 +213,17 @@ Both shapes are covered in `tests/test_parquet_io_manager.py`, so the decision c
 > Nothing upstream reserves either name.
 > It is a plain assignment and not a `type` statement, because Dagster resolves annotations at runtime and rejects the `TypeAliasType` a PEP 695 alias produces.
 > That refusal is covered in `tests/test_upstream_characterization.py`, so the modern spelling becomes available the moment upstream unwraps it.
+>
+> **Reverted again during the module-layout audit, back to what this section decided first.**
+> Both aliases are gone and the shape is documented, not exported.
+> What settles it is the direction an alias moves information.
+> `dict[str, pl.DataFrame]` states that the key is a partition key and the value is one frame; `DataFramePartitions` states neither and sends the reader off to look it up.
+> The alias was exported to *teach* that shape, so a name that hides it cannot do the job, and the README paragraph was always what actually did it.
+> The prior art survives only as a name to reuse if an alias is ever exported, not as a reason to export one: a user arriving from `dagster-polars` and writing `dd.DataFramePartitions` gets an `AttributeError` at import, which is the cheapest failure available and nothing like the one the alias was meant to prevent.
+> Neither alias did anything at runtime.
+> `_wants_lazy` reads `get_args()` off the user's own annotation, and `get_args(dict[str, pl.LazyFrame])` is the same tuple whether the user reached it through an alias or not.
+> The `type`-statement characterization test went with them, because nothing in the package holds an annotation-shaped alias anymore.
+> It comes back with whatever alias needs it.
 
 **The IO manager carries a partitioned round-trip test.** `load_from_path` and `dump_to_path` mention no partitions and need to mention none, so the layout is inherited rather than written.
 That is exactly what makes it worth a test: nothing in this repo would notice if the base class stopped resolving the partition path.

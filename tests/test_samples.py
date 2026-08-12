@@ -16,11 +16,8 @@ import dataframely as dy
 import polars as pl
 import pytest
 
-from dagster_dataframely import (
-    DataframelyParquetIOManager,
-    InvalidSettingError,
-    dataframely_asset,
-)
+from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely.errors import InvalidSettingError
 from tests.scenario import Orders, clean_orders, mixed_orders
 
 _FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"

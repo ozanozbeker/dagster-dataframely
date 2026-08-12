@@ -3,22 +3,19 @@
 The asset body owns what the data is, the IO manager owns where and how it was written. A schema is what the data is, so it lives here and the IO manager never emits it.
 """
 
-from collections.abc import Mapping
-
 import dagster as dg
 import dataframely as dy
-import polars as pl
 
-# `@public` upstream, but absent from `dagster` and with no `MetadataValue.object()` factory. Covered by a characterization test (#16).
+# Absent from `dagster`; see `_carrier` for why it is reached for here.
 from dagster._core.definitions.metadata.metadata_value import (
     ObjectMetadataValue,
 )
 
+from dagster_dataframely._carrier import SCHEMA_CARRIER_KEY, carrier
 from dagster_dataframely._naming import check_name, validation_rules
 from dagster_dataframely._rendering import column_constraints, table_constraints
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
-SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"
 
 
 def _tags(column: dy.Column) -> dict[str, str] | None:
@@ -109,7 +106,7 @@ def schema_metadata(
 ) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
     """Builds the definition metadata a schema-backed asset declares.
 
-    Two entries: the Columns tab, and the carrier that takes the live schema class to the IO manager on both the write and the read path. The carrier's label is passed explicitly because deriving it would yield the metaclass name, `SchemaMeta`.
+    Two entries: the Columns tab, and the carrier that takes the live schema class to the IO manager on both the write and the read path.
 
     Args:
         schema: The schema being attached to the asset.
@@ -123,54 +120,15 @@ def schema_metadata(
         >>> import dagster_dataframely as dd
         >>> class Orders(dy.Schema):
         ...     order_id = dy.String(primary_key=True)
-        >>> out = dg.AssetOut(metadata=dd.schema_metadata(Orders))
+        >>> out = dg.AssetOut(metadata=dd.wiring.schema_metadata(Orders))
     """
     return {
         _COLUMN_SCHEMA_KEY: table_schema(schema),
-        # A raw class here is deprecated upstream, so the carrier is explicit.
-        SCHEMA_CARRIER_KEY: ObjectMetadataValue(schema.__name__, instance=schema),
+        SCHEMA_CARRIER_KEY: carrier(schema),
     }
 
 
-def carried_schema(
-    definition_metadata: Mapping[str, object],
-) -> type[dy.Schema] | None:
-    """Recovers the live schema class the carrier took to the IO manager.
-
-    The other end of `schema_metadata`. It never re-imports and never reads the data, so what the manager holds is the class the definition declared and cannot drift from it.
-
-    Everything absent returns `None` rather than raising, and one of those cases is relied on deliberately: `ObjectMetadataValue` keeps the instance only inside the process that built it, so a manager reading across a process boundary gets the label and no object. A CSV then reads back as an ordinary inferred CSV, which is a smaller failure than a run that cannot read its own input.
-
-    Args:
-        definition_metadata: An `OutputContext`'s, or an upstream output's on the read path.
-
-    Returns:
-        The schema, or `None` when the asset declares none or the object did not survive the trip.
-    """
-    carrier = definition_metadata.get(SCHEMA_CARRIER_KEY)
-    if not isinstance(carrier, ObjectMetadataValue):
-        return None
-    schema = carrier.instance
-    if isinstance(schema, type) and issubclass(schema, dy.Schema):
-        return schema
-    return None
-
-
-def schema_dtypes(schema: type[dy.Schema]) -> dict[str, pl.DataType]:
-    """Reads a schema as the polars dtypes it declares, one per column.
-
-    What a reader that is not dataframely needs from a schema: the CSV manager decodes and reads against these, and nothing else on it.
-
-    Args:
-        schema: The schema to read.
-
-    Returns:
-        The declared dtypes, in the schema's own column order.
-    """
-    return {name: column.dtype for name, column in schema.columns().items()}
-
-
-def _quarantine_metadata(
+def quarantine_metadata(
     schema: type[dy.Schema],
 ) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
     """Builds the definition metadata the quarantine out declares.
@@ -187,5 +145,5 @@ def _quarantine_metadata(
     """
     return {
         _COLUMN_SCHEMA_KEY: quarantine_table_schema(schema),
-        SCHEMA_CARRIER_KEY: ObjectMetadataValue(schema.__name__, instance=schema),
+        SCHEMA_CARRIER_KEY: carrier(schema),
     }

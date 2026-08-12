@@ -10,7 +10,7 @@ import dataframely as dy
 # Neither has a public equivalent. Covered by characterization tests (#16).
 from dataframely._rule import Rule, RuleFactory
 
-from dagster_dataframely._errors import CheckNameCollisionError, ReservedColumnError
+from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnError
 
 # Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
 RESERVED_PREFIX = "dy_"

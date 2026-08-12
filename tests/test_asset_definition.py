@@ -16,14 +16,14 @@ from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValu
 from dagster._core.remote_representation.external_data import RepositorySnap
 from dagster._serdes import deserialize_value, serialize_value
 
-from dagster_dataframely import (
+from dagster_dataframely import dataframely_asset
+from dagster_dataframely.errors import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
     InvalidSettingError,
     QuarantineSettingError,
     ReservedColumnError,
-    dataframely_asset,
 )
 from tests.scenario import Orders
 

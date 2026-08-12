@@ -13,7 +13,6 @@ from typing import Any
 import pytest
 
 import dagster_dataframely
-from dagster_dataframely import InvalidSettingError
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
@@ -26,6 +25,7 @@ from dagster_dataframely._settings import (
     _Directory,
     _Flag,
 )
+from dagster_dataframely.errors import InvalidSettingError
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"

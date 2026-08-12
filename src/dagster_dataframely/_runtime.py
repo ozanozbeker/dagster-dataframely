@@ -5,20 +5,14 @@ The asset's declared shape is the failure policy. There is no lenient/strict fla
 The middle phase is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
-import tempfile
 from collections.abc import Iterator, Mapping
-from pathlib import Path
 
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._checks import _rule_results
-from dagster_dataframely._errors import (
-    NothingSurvivedError,
-    SchemaShapeError,
-    ValidationAbortError,
-)
+from dagster_dataframely._checks import rule_results
+from dagster_dataframely._frames import shape_problems, staging
 from dagster_dataframely._naming import SHAPE_CHECK, check_name, validation_rules
 from dagster_dataframely._samples import SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
@@ -30,11 +24,13 @@ from dagster_dataframely._settings import (
     MultiColumnRules,
 )
 from dagster_dataframely._statistics import statistics_metadata
+from dagster_dataframely.errors import (
+    NothingSurvivedError,
+    SchemaShapeError,
+    ValidationAbortError,
+)
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-
-#: What both staging files name their temp directory. Shared with the IO manager, which sinks a lazy output through one of its own, so an operator sweeping a filled disk finds every staging file this package makes with one glob.
-STAGING_PREFIX = "dagster_dataframely_"
 
 
 def _require_frame(frame: object, asset: str) -> None:
@@ -50,44 +46,12 @@ def _require_frame(frame: object, asset: str) -> None:
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
-def shape_problems(
-    schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
-) -> list[dict[str, str]]:
-    """Compares the frame's shape against the schema, naming every mismatch.
-
-    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The decorator promises either return type works, so the shape check cannot be built on a difference between them.
-
-    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without the decorator. Sharing the comparison is what stops two shape checks from drawing the line differently.
-
-    Only public API, and none of it executes: `collect_schema()` resolves a `LazyFrame`'s shape without running it.
-
-    Args:
-        schema: The schema the frame claims to match.
-        frame: The frame to compare, eager or lazy.
-
-    Returns:
-        One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `SchemaShapeError`, so the two cannot disagree.
-    """
-    actual: pl.Schema = frame.collect_schema()
-    return [
-        {
-            "column": name,
-            "expected": str(column.dtype),
-            "actual": str(actual[name]) if name in actual else "<missing>",
-        }
-        for name, column in schema.columns().items()
-        if name not in actual or not column.validate_dtype(actual[name])
-    ]
-
-
 def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     """Streams a plan to a local parquet, reads it back whole, and removes the file.
 
     What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
     The file is gone before this returns, so no exit can leave one behind, including the two whose whole purpose is that nothing is written.
-
-    A configured directory is not created. The setting exists to move the staging file off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
 
     Args:
         frame: The plan to stage.
@@ -99,8 +63,8 @@ def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     Raises:
         FileNotFoundError: `temp_dir` names a directory that does not exist.
     """
-    with tempfile.TemporaryDirectory(dir=temp_dir, prefix=STAGING_PREFIX) as staging:
-        path = Path(staging) / "staged.parquet"
+    with staging(temp_dir) as directory:
+        path = directory / "staged.parquet"
         # Named rather than left to `auto`, because the streaming engine is the whole reason to stage: an engine that chose to collect would pay the write and keep the peak.
         frame.sink_parquet(path, engine="streaming")
         return pl.read_parquet(path)
@@ -142,7 +106,7 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
     severity = dg.AssetCheckSeverity.ERROR if aborting else dg.AssetCheckSeverity.WARN
     return [
         dg.AssetCheckResult(check_name=SHAPE_CHECK, asset_key=asset_key, passed=True),
-        *_rule_results(
+        *rule_results(
             schema,
             failure,
             asset_key=asset_key,
