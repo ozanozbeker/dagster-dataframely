@@ -1,6 +1,6 @@
 """Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
 
-The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine rule_columns are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
+Everything here is asserted against what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five exits are here; which one a frame reaches is decided by the frame and by whether the asset declares a quarantine.
 """
 
 from collections.abc import Callable, Mapping
@@ -501,7 +501,7 @@ def _nothing_survived() -> pl.DataFrame:
 def test_nothing_surviving_materializes_the_quarantine_and_skips_the_valid_out(
     tmp_path: Path,
 ):
-    """The load-bearing case: an empty table must never silently replace a last-known-good snapshot."""
+    """The case that matters most: an empty table must never silently replace a last-known-good snapshot."""
     result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
 
     assert not result.success
@@ -547,7 +547,7 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
 
 
 # --- the temp file ---
-# One entry per exit of the state machine, each as the frame that reaches it and the quarantine that decides it.
+# One entry per exit, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
     pytest.param(clean_orders, None, id="everything survived"),
     pytest.param(mixed_orders, None, id="no quarantine"),
@@ -646,7 +646,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
 ):
     """The one clause of this design with no observable consequence, and the one the whole argument rests on.
 
-    A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
+    A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is covered rather than the output: `sink_parquet`, with the engine named.
 
     Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
     """

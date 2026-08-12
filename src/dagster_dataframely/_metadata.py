@@ -1,6 +1,6 @@
 """What the asset definition declares about its data, before it has ever run.
 
-The seam: the asset body owns what the data is, the IO manager owns where and how it was written. A schema is what the data is, so it lives here and the IO manager never emits it.
+The asset body owns what the data is, the IO manager owns where and how it was written. A schema is what the data is, so it lives here and the IO manager never emits it.
 """
 
 from collections.abc import Mapping
@@ -9,7 +9,7 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-# `@public` upstream, but absent from `dagster` and with no `MetadataValue.object()` factory. Pinned by its own test (#16).
+# `@public` upstream, but absent from `dagster` and with no `MetadataValue.object()` factory. Covered by a characterization test (#16).
 from dagster._core.definitions.metadata.metadata_value import (
     ObjectMetadataValue,
 )
@@ -139,7 +139,7 @@ def carried_schema(
 
     The other end of `schema_metadata`. It never re-imports and never reads the data, so what the manager holds is the class the definition declared and cannot drift from it.
 
-    Everything absent returns `None` rather than raising, and one of those cases is load-bearing: `ObjectMetadataValue` keeps the instance only inside the process that built it, so a manager reading across a process boundary gets the label and no object. A CSV then reads back as an ordinary inferred CSV, which is a smaller failure than a run that cannot read its own input.
+    Everything absent returns `None` rather than raising, and one of those cases is relied on deliberately: `ObjectMetadataValue` keeps the instance only inside the process that built it, so a manager reading across a process boundary gets the label and no object. A CSV then reads back as an ordinary inferred CSV, which is a smaller failure than a run that cannot read its own input.
 
     Args:
         definition_metadata: An `OutputContext`'s, or an upstream output's on the read path.

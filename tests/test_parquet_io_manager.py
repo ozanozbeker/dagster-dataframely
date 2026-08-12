@@ -1,6 +1,6 @@
 """Tests for `DataframelyParquetIOManager`.
 
-The seam is `dg.materialize` in-process against `tmp_path`. What Dagster ends up holding is the whole external behaviour of an IO manager: the materialization metadata, and the bytes on disk.
+Everything here is asserted through `dg.materialize` in-process against `tmp_path`. What Dagster ends up holding is the whole external behaviour of an IO manager: the materialization metadata, and the bytes on disk.
 The manager is schema-agnostic, so every asset here is a plain `@dg.asset` returning a polars frame. That is the difference `test_csv_io_manager.py` exists to cover: everything both managers share is exercised here, on the format that needs no schema.
 """
 
@@ -172,7 +172,7 @@ def test_a_lazy_output_streams_to_storage_and_reports_what_landed(
 def test_the_plan_streams_to_a_file_that_is_not_the_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both halves of the write, pinned as calls because neither has an observable result.
+    """Both halves of the write, covered as calls because neither has an observable result.
 
     A manager that collected the plan and wrote the frame would leave the same bytes on disk and keep exactly the peak the sink exists to remove. And a manager that sank at the destination would leave the same bytes again, having truncated whatever was there before it knew the plan worked.
 
@@ -255,7 +255,7 @@ def test_an_eager_output_never_lands(
 
 
 def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
-    """`UPathIOManager.handle_output` resolves the partition path before it calls `dump_to_path`, so this manager's hooks are partition-blind by design and the layout falls out of the base class. Nothing here is the manager's own code, which is exactly why it is pinned: it works by inheritance and would otherwise break silently (#25)."""
+    """`UPathIOManager.handle_output` resolves the partition path before it calls `dump_to_path`, so this manager's hooks are partition-blind by design and the layout falls out of the base class. Nothing here is the manager's own code, which is exactly why it is covered: it works by inheritance and would otherwise break silently (#25)."""
     read_back: dict[str, pl.DataFrame] = {}
 
     @dg.asset(name="orders_copy", partitions_def=_DAYS)
@@ -276,9 +276,9 @@ def test_each_partition_round_trips_under_its_own_key(tmp_path: Path) -> None:
 
 
 def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
-    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed for a single file, which hides that `load_input` can return a dict, so the shape a user has to annotate is pinned here rather than left to be discovered at runtime.
+    """An unpartitioned asset depending on every partition of a partitioned one gets a frame per partition, because the base manager calls `load_from_path` once per key and assembles the results. `load_from_path` is typed for a single file, which hides that `load_input` can return a dict, so the shape a user has to annotate is covered here rather than left to be discovered at runtime.
 
-    Annotated with the exported alias rather than the literal shape, because the alias is what the README tells a user to write. That makes this the alias's behavioural pin as well: Dagster type-checks the input against it, as the test below shows, so an alias that drifted from what the manager assembles fails here rather than in someone's project (#35).
+    Annotated with the exported alias rather than the literal shape, because the alias is what the README tells a user to write. That makes this the alias's characterization test as well: Dagster type-checks the input against it, as the test below shows, so an alias that drifted from what the manager assembles fails here rather than in someone's project (#35).
     """
     read_back: dict[str, object] = {}
 
@@ -295,7 +295,7 @@ def test_a_fan_in_arrives_as_a_dict_keyed_by_partition(tmp_path: Path) -> None:
 
 
 def test_a_lazy_fan_in_arrives_as_a_dict_of_scans(tmp_path: Path) -> None:
-    """The fan-in shape has to be unwrapped to find the element type, because `dict[str, pl.LazyFrame]` is what a user annotates and `pl.LazyFrame` is what decides the read. `LazyFramePartitions` is the exported spelling, so this is its behavioural pin as well (#52)."""
+    """The fan-in shape has to be unwrapped to find the element type, because `dict[str, pl.LazyFrame]` is what a user annotates and `pl.LazyFrame` is what decides the read. `LazyFramePartitions` is the exported spelling, so this is its characterization test as well (#52)."""
     read_back: dict[str, object] = {}
 
     @dg.asset(name="rollup")
@@ -331,7 +331,7 @@ def test_a_missing_partition_is_still_skipped_on_the_lazy_path(tmp_path: Path) -
 
 
 def test_the_natural_fan_in_annotation_is_rejected(tmp_path: Path) -> None:
-    """The trap that makes the annotation above worth pinning: `pl.DataFrame` is the obvious spelling and it fails the Dagster type check, after the frames have already been read."""
+    """What makes the annotation above worth characterizing: `pl.DataFrame` is the obvious spelling and it fails the Dagster type check, after the frames have already been read."""
 
     @dg.asset(name="rollup")
     def rollup(orders_by_day: pl.DataFrame) -> None:
@@ -426,9 +426,8 @@ def test_a_cloud_uri_is_accepted_as_base_dir(base_dir: str) -> None:
         dg.build_init_resource_context()
     )
 
-    # `_get_path` is private upstream API, and the only seam that answers "where would
-    # this land" without reaching the network, which no test may do. Pin-and-assert
-    # suite lands with #16.
+    # `_get_path` is private upstream API, and the only route that answers "where would
+    # this land" without reaching the network, which no test may do.
     path = manager._get_path(dg.build_output_context(asset_key=dg.AssetKey(["orders"])))
 
     assert str(path) == f"{base_dir}/orders.parquet"

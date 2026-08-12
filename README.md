@@ -41,7 +41,7 @@ Requires Python 3.12+.
 
 > [!NOTE]
 > **Pre-1.0.**
-> The public surface is pinned by a test rather than held by convention, so it will not move quietly.
+> The public surface is covered by a characterization test rather than held by convention, so it will not move quietly.
 > It can still move: a `0.x` minor release is where a breaking change lands.
 > Pin `dagster-dataframely>=0.1,<0.2` if that matters to you.
 
@@ -152,7 +152,7 @@ Parquet is self-describing, keeps every dtype natively, and needs no schema to r
 
 `partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no setting here.
 Both outs carry it, which is what makes the quarantine unable to escape its asset's partitioning.
-The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
+Validation runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
 
 **The transform reaches its own partition key through the context.**
 The transform takes no `context` parameter, so a partitioned one fetches the context the same way the wrapper does:
@@ -168,7 +168,7 @@ def orders() -> pl.DataFrame:
     return raw.select("order_id", "amount")
 ```
 
-`dg.AssetExecutionContext.get()` is the decorator's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two traps below, where Dagster rejects an annotated one under postponed annotations.
+`dg.AssetExecutionContext.get()` is the decorator's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two below, where Dagster rejects an annotated one under postponed annotations.
 
 **A fan-in over every partition arrives as one frame per partition.**
 An unpartitioned asset depending on the whole of a partitioned one gets a dict keyed by partition key, because the IO manager reads each key and assembles the results:
@@ -234,7 +234,7 @@ The shape check runs before the staging, so a frame whose shape disagrees with t
 > `temp_dir` points it at a mounted volume instead.
 
 Storage stays eager past that point, and that is the difference from the section above.
-This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and the state machine cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
 A plain `@dg.asset` streams end to end because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
@@ -329,7 +329,7 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
 ```
 
 The argument tier is the decorator's alone.
-An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to the state machine, which has staged and validated the frame long before a manager sees one.
+An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to `process`, which has staged and validated the frame long before a manager sees one.
 
 A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
 Both are the same decision: this setting is set to move the staging file off the ephemeral disk, so a typo that quietly stages there anyway is the failure it exists to prevent.
@@ -363,7 +363,7 @@ Hand-wiring a Collection means reimplementing the hardest part of the package ra
 Declare one asset per member instead, each with the member's own schema.
 Passing a Collection to the decorator raises `CollectionNotSupportedError` at decoration time.
 
-## Two user-side traps
+## Two ways to get this wrong
 
 **A `from __future__ import annotations` in your own module breaks a `context` parameter.**
 Under PEP 563 every annotation reaches Dagster as a string, and its check on the `context` parameter compares against the real classes, so it rejects `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
@@ -375,7 +375,7 @@ DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.
 
 Only the last option in that message survives PEP 563: leave the parameter blank, or take no `context` at all and reach it with `dg.AssetExecutionContext.get()`.
 Decorator call sites avoid this structurally, because the wrapper fetches the context and your transform never takes one.
-Kit call sites are yours to write, so this one is yours to hit.
+Hand-wired call sites are yours to write, so this one is yours to hit.
 
 **A `@dy.rule()` body needs its class parameter.**
 Written without one, the class still builds and the asset still defines; the run then fails when this package reads the rule's expression for the check metadata:

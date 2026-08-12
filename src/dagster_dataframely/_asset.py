@@ -2,7 +2,7 @@
 
 The decorator coordinates four artifacts no single `@dg.asset` parameter accepts as a bundle: the out, the check specs, the definition metadata, and the wrapped runtime. First-party precedent for a decorator that does this is `@dbt_assets`.
 
-This module carries no `from __future__ import annotations`. At a 3.12 floor it would buy only unquoted forward references, while turning user-facing annotations into strings that Dagster's runtime introspection rejects. The counter-trap is that typing-only names such as `dg.CoercibleToAssetDep` are absent at runtime, so they are spelled here with runtime-real types.
+This module carries no `from __future__ import annotations`. At a 3.12 floor it would buy only unquoted forward references, while turning user-facing annotations into strings that Dagster's runtime introspection rejects. The cost is that typing-only names such as `dg.CoercibleToAssetDep` are absent at runtime, so they are spelled here with runtime-real types.
 """
 
 import functools
@@ -71,7 +71,7 @@ def _rebuild(out: dg.AssetOut, overrides: Mapping[str, Any]) -> dg.AssetOut:
 
     It is immutable with no `_replace`, so the only route is to read its attributes back out and build a new one. That works because every constructor parameter currently has a readable attribute of the same name, which is an undocumented upstream property asserted by its own test: a parameter Dagster adds whose attribute is named differently would drop the user's value silently.
 
-    `getattr` is deliberately unguarded for the same reason. A missing attribute is the failure the pin exists to catch, and swallowing it here would hide it.
+    `getattr` is deliberately unguarded for the same reason. A missing attribute is the failure the characterization test exists to catch, and swallowing it here would hide it.
 
     Args:
         out: The out to read settings off.
@@ -136,7 +136,7 @@ def _quarantine_out(
     return _rebuild(quarantine, overrides)
 
 
-def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
+def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
     *,
     # --- decorator-owned ---
     schema: type[dy.Schema],
@@ -189,7 +189,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
 
     With a quarantine, invalid rows are written to a sibling asset carrying the original columns plus a rule column for every rule, the checks fail at `WARN`, and the run stays green so downstream proceeds on the data that is fine. A clean run skips the quarantine rather than writing an empty table, and a run where *nothing* survived skips the valid output rather than emptying it.
 
-    Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `outs`, `check_specs` and `specs` are surfaces this decorator owns and are simply absent, so they cannot be contested. `can_subset` is absent too: a subset executes but saves nothing.
+    Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `outs`, `check_specs` and `specs` are parameters this decorator owns and are simply absent, so they cannot be contested. `can_subset` is absent too: a subset executes but saves nothing.
 
     `@dg.multi_asset` is the mechanism, but the vocabulary is `@dg.asset`'s, because this decorator is designed for a single table that happens to grow a quarantine sibling. Anything `@dg.asset` lets you say about one asset is sayable here under the same name, and a test asserts that in both directions.
 
@@ -217,7 +217,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
         description: Asset description. Defaults to the function's docstring.
         config_schema: Run configuration schema for the underlying op.
         required_resource_keys: Resources the transform reaches through the context.
-        partitions_def: Partitioning for the asset. The state machine then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning. The transform takes no `context` parameter, so a partitioned one reaches its own key with `dg.AssetExecutionContext.get().partition_key`.
+        partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning. The transform takes no `context` parameter, so a partitioned one reaches its own key with `dg.AssetExecutionContext.get().partition_key`.
         hooks: Hooks to attach to the underlying op.
         backfill_policy: How Dagster backfills this asset's partitions.
         op_tags: Tags on the underlying op, for run launcher and executor routing.
@@ -252,7 +252,7 @@ def dataframely_asset(  # noqa: PLR0913 - the forwarded surface is the point
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
 
-    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three reach no definition-time surface, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run happens to reach it first.
+    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three affect nothing built at definition time, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run happens to reach it first.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)

@@ -2,7 +2,7 @@
 
 Specs come off the schema, never off a run's `FailureInfo`. A rule that rejected nothing still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
 
-How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One grouping answers that question for both surfaces: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
+How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One grouping answers that question on both sides: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
 """
 
 from dataclasses import dataclass, field

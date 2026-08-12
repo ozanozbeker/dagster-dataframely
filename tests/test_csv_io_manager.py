@@ -1,6 +1,6 @@
 """Tests for `DataframelyCSVIOManager` and the codecs it writes through.
 
-The seam is `dg.materialize` in-process against `tmp_path`, as for parquet. The two managers share one implementation, so the behaviour that has no format in it is exercised once, on parquet. What is here is CSV's own: the five encodings, the schema the read needs, the refusals that keep polars from panicking, and the handful of shared assertions whose expected value is the format.
+Everything here is asserted through `dg.materialize` in-process against `tmp_path`, as for parquet. The two managers share one implementation, so the behaviour that has no format in it is exercised once, on parquet. What is here is CSV's own: the five encodings, the schema the read needs, the refusals that keep polars from panicking, and the handful of shared assertions whose expected value is the format.
 
 Most assets carry `schema_metadata` on a plain `@dg.asset`. The manager reads the carrier off definition metadata and does not care how it got there, so putting it there by hand keeps these tests about the manager. One test at the end runs the decorator instead, to prove the two halves meet.
 """
@@ -260,7 +260,7 @@ def test_a_lazy_output_still_names_the_columns_it_encoded(tmp_path: Path) -> Non
 def test_the_csv_sink_runs_the_streaming_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pinned per format rather than once on the base class, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
+    """Covered per format rather than once on the base class, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
 
     Counted as a set rather than a list, because polars reaches its own `sink_csv` again on the way through and the number of times it does is its business, not this package's.
     """
@@ -411,7 +411,7 @@ def test_a_cloud_uri_is_accepted_as_base_dir(base_dir: str) -> None:
         dg.build_init_resource_context()
     )
 
-    # `_get_path` is private upstream API, and the only seam that answers "where would
+    # `_get_path` is private upstream API, and the only route that answers "where would
     # this land" without reaching the network, which no test may do.
     path = manager._get_path(dg.build_output_context(asset_key=dg.AssetKey(["orders"])))
 
@@ -421,7 +421,7 @@ def test_a_cloud_uri_is_accepted_as_base_dir(base_dir: str) -> None:
 def test_the_schema_is_recovered_for_every_partition(tmp_path: Path) -> None:
     """The carrier hangs off the asset rather than off a partition, so each of the reads a fan-in assembles decodes against it.
 
-    Parquet pins the layout on the argument that its hooks are partition-blind. This manager's read hook is the one that stopped being blind, so what it recovers per key is pinned here rather than inherited.
+    Parquet covers the layout on the argument that its hooks are partition-blind. This manager's read hook is the one that stopped being blind, so what it recovers per key is covered here rather than inherited.
     """
     days = dg.StaticPartitionsDefinition(["2026-01-01", "2026-01-02"])
 

@@ -1,6 +1,6 @@
 """Three tiers for every setting: the package default, then a `DAGSTER_DATAFRAMELY_*` environment variable, then the argument on the asset.
 
-A platform engineer sets a house style once for a whole code location, and an asset overrides it where that style is wrong. The environment variables are named for the package because they are machine surface a deployment sets, and `DAGSTER_DATAFRAMELY_` is long enough that nothing else will claim it.
+A platform engineer sets a house style once for a whole code location, and an asset overrides it where that style is wrong. The environment variables are named for the package because they are machine configuration a deployment sets, and `DAGSTER_DATAFRAMELY_` is long enough that nothing else will claim it.
 
 The chain validates on resolve, at every tier including the package's own. Nothing here trusts a value because of where it came from, so a typo raises at the tier that wrote it instead of quietly becoming something else three modules later.
 

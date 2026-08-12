@@ -2,7 +2,7 @@
 
 Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the valid out's materialization's for the rows that survived.
 
-Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out setting that has to work.
+Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something covers is the off switch, which is the half of an opt-out setting that has to work.
 """
 
 import datetime as dt

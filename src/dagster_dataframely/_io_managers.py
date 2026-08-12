@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from dagster import InitResourceContext, InputContext, OutputContext
 
 # Exported because nothing in this module's signatures says a read can return a dict: `load_from_path` is typed for a single file, while the `load_input` above it calls that hook once per partition key and assembles the results. A fan-in over every partition therefore lands on the obvious annotation, `pl.DataFrame`, which fails Dagster's type check after every partition has already been read.
-# A plain assignment rather than a `type` statement, because Dagster resolves the annotation at runtime and rejects the `TypeAliasType` a PEP 695 alias produces. `tests/test_upstream_pins.py` pins that refusal.
+# A plain assignment rather than a `type` statement, because Dagster resolves the annotation at runtime and rejects the `TypeAliasType` a PEP 695 alias produces. `tests/test_upstream_characterization.py` covers that refusal.
 # The names are `dagster-polars`', so a user arriving from there writes what they already know. Which of the two to write is decided the same way a single-partition read is: by the frame the annotation asks for.
 DataFramePartitions = dict[str, pl.DataFrame]
 LazyFramePartitions = dict[str, pl.LazyFrame]
@@ -155,7 +155,7 @@ class _FrameIOManager(UPathIOManager):
 
         **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
 
-        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the decorator resolves it where the asset is declared and hands it to the state machine, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the decorator resolves it where the asset is declared and hands it to `process`, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
 
         Args:
             context: The executing output's context, forwarded to the format's own sink.

@@ -7,7 +7,7 @@ import inspect
 
 import dataframely as dy
 
-# Neither has a public equivalent. Pinned by their own tests (#16).
+# Neither has a public equivalent. Covered by characterization tests (#16).
 from dataframely._rule import Rule, RuleFactory
 
 from dagster_dataframely._errors import CheckNameCollisionError, ReservedColumnError

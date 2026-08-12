@@ -1,6 +1,6 @@
-"""Pin-and-assert tests for the upstream APIs this package takes a hard dependency on.
+"""Characterization tests for the upstream APIs this package takes a hard dependency on.
 
-These test upstream, not this package. Each one pins a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "dataframely changed" rather than "something broke".
+These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "dataframely changed" rather than "something broke".
 """
 
 import datetime as dt
@@ -57,7 +57,7 @@ def test_rules_are_keyed_by_pipe_delimited_rule_name():
 
 def test_rule_values_are_rule_instances_carrying_a_polars_expr():
     """The values of `_validation_rules` are still `dataframely._rule.Rule` objects with a `pl.Expr` on `expr`."""
-    # `naming.py` types against `Rule`, and every check's `dy_rule__expr` metadata is `str(rule.expr)`, so the value side of the dict is as load-bearing as the key side.
+    # `naming.py` types against `Rule`, and every check's `dy_rule__expr` metadata is `str(rule.expr)`, so the value side of the dict matters as much as the key side.
     rules = Orders._validation_rules(with_cast=False)
 
     assert all(isinstance(rule, Rule) for rule in rules.values())
@@ -84,7 +84,7 @@ def test_a_column_rule_is_not_reachable_by_name():
 
 def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it():
     """Every value-carrying constraint still generates a rule named after its column parameter, and still keeps the value on an attribute of the same name."""
-    # #20 renders the constraint from that value, so it reads the attribute by the rule's own name rather than carrying a second table mapping one to the other. The mixins holding these attributes are private, which is why the regularity is pinned rather than typed against.
+    # #20 renders the constraint from that value, so it reads the attribute by the rule's own name rather than carrying a second table mapping one to the other. The mixins holding these attributes are private, which is why the regularity is covered by a test rather than typed against.
     declared: dict[str, dy.Column] = {
         "min": dy.Int64(min=1),
         "max": dy.Int64(max=9),
@@ -171,7 +171,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
     )
 
     # #19 casts the rule columns to String because a raw Enum panics the Delta writer.
-    # This dtype is the whole reason that cast is mandatory rather than defensive, so it is pinned alongside the vocabulary it carries.
+    # This dtype is the whole reason that cast is mandatory rather than defensive, so it is covered alongside the vocabulary it carries.
     assert details.schema["amount|min"] == pl.Enum(["valid", "invalid", "unknown"])
     assert (
         details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item() == "invalid"
@@ -193,7 +193,7 @@ def test_the_failure_example_limit_does_not_truncate_the_filter_path():
 def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
     """`FailureInfo.cooccurrence_counts()` still returns counts keyed by the set of rules a row broke together."""
     # #19 emits this as the quarantine's `cooccurrence` metadata, which is what makes one broken upstream field tripping three rules at once visible as one row rather than as three unrelated counts.
-    # Documented upstream, but the key type is the load-bearing part: a `frozenset` is unordered, so the package sorts it before rendering and a tuple here would silently change that rendering.
+    # Documented upstream, but the key type is the part that matters: a `frozenset` is unordered, so the package sorts it before rendering and a tuple here would silently change that rendering.
     _, failure = Orders.filter(_MIXED_ORDERS)
     cooccurrence = failure.cooccurrence_counts()
 
@@ -205,7 +205,7 @@ def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
 def test_polars_renders_a_duration_in_its_own_friendly_style():
     """`dt.to_string("polars")` still renders a duration the way a polars frame repr does: `8d`, `1m 30s`, `2h 5m`, a sign on every part of a negative one, and a null left null."""
     # #23 renders every duration cell of the temporal statistics table through it. The ticket specifies polars' own style and calls it unreachable, which was true before polars 1.14 added `format="polars"`; the package's floor is well past that, so the rendering is upstream's rather than fifteen lines of this package's.
-    # Documented as "the same form seen in the frame repr", which is a repr and therefore restyleable without anybody upstream calling it a break. That is what makes it worth pinning: the four decisions below are the ones the tables state.
+    # Documented as "the same form seen in the frame repr", which is a repr and therefore restyleable without anybody upstream calling it a break. That is what makes it worth characterizing: the four decisions below are the ones the tables state.
     spans = pl.Series(
         "spans",
         [
@@ -228,7 +228,7 @@ def test_polars_renders_a_duration_in_its_own_friendly_style():
         None,
     ]
 
-    # The two routes the ticket ruled out, pinned so a change to either is visible: the default is ISO-8601, and the obvious cast raises rather than falling back to one.
+    # The two routes the ticket ruled out, covered so a change to either is visible: the default is ISO-8601, and the obvious cast raises rather than falling back to one.
     assert spans.dt.to_string().to_list()[0] == "P8D"
     with pytest.raises(pl.exceptions.InvalidOperationError):
         spans.cast(pl.String)
@@ -241,7 +241,7 @@ _PlainAssignment = dict[str, pl.DataFrame]
 
 def test_dagster_rejects_a_pep_695_type_alias_in_an_annotation():
     """A `type X = ...` statement is still unresolvable as a Dagster annotation, while the plain assignment of the same shape still resolves."""
-    # #35 exports `DataFramePartitions` as a plain assignment for this reason and no other. The alias exists to be written into an annotation, and at a 3.12 floor the `type` statement is the form a reader would expect, so what rules it out is pinned rather than left to a comment.
+    # #35 exports `DataFramePartitions` as a plain assignment for this reason and no other. The alias exists to be written into an annotation, and at a 3.12 floor the `type` statement is the form a reader would expect, so what rules it out is covered by a test rather than left to a comment.
     # Dagster resolves the annotation at runtime and has no unwrapping for the `TypeAliasType` the statement produces. If it grows one, this fails and the alias can be restated in the modern form.
     with pytest.raises(dg.DagsterInvalidDefinitionError, match="from type annotation"):
 
@@ -283,8 +283,8 @@ def test_object_metadata_value_carries_a_live_python_object():
 
 def test_definition_metadata_reaches_an_io_manager_on_both_paths(tmp_path: Path):
     """Definition metadata still arrives at `OutputContext.definition_metadata` on the write and at `InputContext.upstream_output.definition_metadata` on the read, with a live object still the same object at both ends."""
-    # #22's CSV read path recovers the schema from there and from nowhere else: not from a sidecar file, and not from the data. Both ends are pinned because the write is what a schema-shaped asset declares and the read is what makes the decode possible at all.
-    # `InputContext.definition_metadata` is the trap this pins the way around: it holds the `dg.AssetIn`'s own metadata, never the upstream asset's, so it is empty here.
+    # #22's CSV read path recovers the schema from there and from nowhere else: not from a sidecar file, and not from the data. Both ends are covered because the write is what a schema-shaped asset declares and the read is what makes the decode possible at all.
+    # `InputContext.definition_metadata` is what this test works around: it holds the `dg.AssetIn`'s own metadata, never the upstream asset's, so it is empty here.
     carriers: dict[str, ObjectMetadataValue] = {}
     on_the_input: dict[str, object] = {}
 
