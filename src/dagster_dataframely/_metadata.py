@@ -1,6 +1,6 @@
 """What the asset definition declares about its data, before it has ever run.
 
-The seam: the asset body owns what the data is, the IO manager owns where and how it landed. A schema is what the data is, so it lives here and the IO manager never emits it.
+The seam: the asset body owns what the data is, the IO manager owns where and how it was written. A schema is what the data is, so it lives here and the IO manager never emits it.
 """
 
 from collections.abc import Mapping
@@ -34,7 +34,7 @@ def _tags(column: dy.Column) -> dict[str, str] | None:
 def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects a schema onto Dagster's Columns tab.
 
-    Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as pills, and the primary key once at table level.
+    Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as constraints, and the primary key once at table level.
 
     `unique` is read from the column's own flag and never derived from `primary_key`. dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
 
@@ -46,7 +46,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     Returns:
         A table schema whose columns are in the schema's own order.
     """
-    pills: dict[str, list[str]] = column_constraints(schema)
+    constraints: dict[str, list[str]] = column_constraints(schema)
     return dg.TableSchema(
         columns=[
             dg.TableColumn(
@@ -56,7 +56,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                 constraints=dg.TableColumnConstraints(
                     nullable=column.nullable,
                     unique=column.unique,
-                    other=pills[name],
+                    other=constraints[name],
                 ),
                 tags=_tags(column),
             )
@@ -69,14 +69,14 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects the quarantine's shape onto its own Columns tab.
 
-    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` pill on a column full of nulls would state something false about every row in the table. The primary key above all, which is why it is stated table-level on the good table and nowhere here: the rejected rows are exactly where a duplicate key ends up.
+    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row in the table. The primary key above all, which is why it is stated table-level on the valid table and nowhere here: the invalid rows are exactly where a duplicate key ends up.
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 
     Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` dataframely produces, because the cast happens before the write.
 
     Args:
-        schema: The schema whose rejected rows this table holds.
+        schema: The schema whose invalid rows this table holds.
 
     Returns:
         A table schema: the schema's columns in their own order, then the rules in theirs.
@@ -175,12 +175,12 @@ def _quarantine_metadata(
 ) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
     """Builds the definition metadata the quarantine out declares.
 
-    Its own Columns tab, because every constraint the good table states is one these rows are here for breaking. Then the same carrier the good out gets, because the two entries answer different questions and only the first of them is about conformance.
+    Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking. Then the same carrier the valid out gets, because the two entries answer different questions and only the first of them is about conformance.
 
-    The carrier was withheld at first, on the reading that a table with an outcome column per rule is not schema-shaped. What reads it settles the question: the CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The outcome columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the good table, which is the parity a reader would expect and the earlier reading cost them.
+    The carrier was withheld at first, on the reading that a table with a rule column for every rule is not schema-shaped. What reads it settles the question: the CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The rule columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the valid table, which is the parity a reader would expect and the earlier reading cost them.
 
     Args:
-        schema: The schema whose rejected rows the out holds.
+        schema: The schema whose invalid rows the out holds.
 
     Returns:
         A mapping to hand to `dg.AssetOut(metadata=...)`.

@@ -1,6 +1,6 @@
 """The rows a run puts in front of a reader, bounded.
 
-Two surfaces want the same thing and want it for the same reason. A red check says `amount|min` rejected 43 rows, and the question that raises is what three of them held. A materialization says 90,000 rows landed, and the question that raises is what one of them looks like. Neither is answerable from a count, and both are answerable from a handful of rows.
+Two surfaces want the same thing and want it for the same reason. A red check says `amount|min` rejected 43 rows, and the question that raises is what three of them held. A materialization says 90,000 rows were written, and the question that raises is what one of them looks like. Neither is answerable from a count, and both are answerable from a handful of rows.
 
 **Bounded by construction.** There is no unbounded setting and no unbounded read: nothing leaves this module without a caller having said how many rows it wanted. These rows go into the Dagster event log, which is shared, exported and not redacted, so the amount that lands there is a number somebody chose.
 
@@ -12,7 +12,7 @@ Its own module rather than `_metadata`'s or `_statistics`', for the reason `_sta
 import dagster as dg
 import polars as pl
 
-#: The good output's materialization display key. Short and unprefixed, like `stats/*` and unlike the fully qualified schema carrier: the difference in length is what tells a reader which keys are for them.
+#: The valid output's materialization display key. Short and unprefixed, like `stats/*` and unlike the fully qualified schema carrier: the difference in length is what tells a reader which keys are for them.
 SAMPLE_KEY = "sample"
 
 #: What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's own field rather than exporting a name for it.

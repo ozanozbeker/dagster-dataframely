@@ -1,8 +1,8 @@
-"""The three-tier settings chain, asserted at the seam every knob resolves through.
+"""The three-tier settings chain, asserted at the seam every setting resolves through.
 
-`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The knobs the package ships are exercised through it, and a fake setting covers the one tier a shipped knob cannot reach: its own default is valid by construction.
+`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it, and a fake one covers the tier a shipped setting cannot reach: its own default is valid by construction.
 
-A two-valued knob is here for the tier a vocabulary knob cannot exercise: the environment arrives as a string whatever the setting holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed. A directory is here for the tier none of the three has: a package default of `None`, which is a value this knob means something by rather than the absence of one.
+A flag is here for the tier a choice cannot exercise: the environment arrives as a string whatever the shape holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed. A directory is here for the tier none of the three has: a package default of `None`, which is a value this shape means something by rather than the absence of one.
 """
 
 import importlib
@@ -21,10 +21,10 @@ from dagster_dataframely._settings import (
     ROW_SAMPLE,
     STATISTICS,
     TEMP_DIR,
+    _Choice,
     _Count,
     _Directory,
     _Flag,
-    _Setting,
 )
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
@@ -45,8 +45,8 @@ _WORD: Any = "false"
 # The same, for the shape that holds a path. A `Path` is what a user reaches for, and the shape holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own vocabulary. The shipped knobs cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
-_BROKEN = _Setting[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
+# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
+_BROKEN = _Choice[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
 
 # The same, one shape along: a count whose default is a number it does not accept.
 _BROKEN_COUNT = _Count(name="fake_count", default=-1)
@@ -58,7 +58,7 @@ _BROKEN_FLAG = _Flag(name="fake_flag", default=_WORD)
 _BROKEN_DIRECTORY = _Directory(name="fake_directory", default="")
 
 
-def test_a_knob_nobody_touched_is_the_package_default():
+def test_a_setting_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
     assert MULTI_COLUMN_RULES.resolve(None) == "schema"
     assert STATISTICS.resolve(None) is True
@@ -96,7 +96,7 @@ def test_every_setting_names_its_environment_variable_after_itself():
 def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The one tier where a two-valued knob differs from a vocabulary one, asserted in both directions and in the casing a deployment is as likely to write."""
+    """The one tier where a flag differs from a choice, asserted in both directions and in the casing a deployment is as likely to write."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
     assert STATISTICS.resolve(None) is False
 
@@ -107,7 +107,7 @@ def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
 def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The case a truthiness test would get wrong, which is the one that matters: with the tier below saying on, the knob would be impossible to turn off."""
+    """The case a truthiness test would get wrong, which is the one that matters: with the tier below saying on, the setting would be impossible to turn off."""
     monkeypatch.setenv(_STATISTICS_ENV, "true")
 
     assert STATISTICS.resolve(argument=False) is False
@@ -116,7 +116,7 @@ def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
 def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`1` is the plausible wrong word, and the error has to be the same one a vocabulary knob raises: same setting, same allowed values, same tier order."""
+    """`1` is the plausible wrong word, and the error has to be the same one a choice raises: same setting, same allowed values, same tier order."""
     monkeypatch.setenv(_STATISTICS_ENV, "1")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -156,7 +156,7 @@ def test_a_count_reads_the_environment_tier_as_a_number(
 def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Zero is what turns a sample off, so the tier test cannot be truthiness: with the tier below saying 5, the knob would be impossible to turn off."""
+    """Zero is what turns a sample off, so the tier test cannot be truthiness: with the tier below saying 5, the setting would be impossible to turn off."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "5")
 
     assert ROW_SAMPLE.resolve(0) == 0
@@ -210,7 +210,7 @@ def test_a_count_rejects_a_fraction():
 
 
 def test_a_count_rejects_a_bool():
-    """`True` is an `int` in Python, so a knob confused with `statistics` would otherwise resolve to one row and say nothing."""
+    """`True` is an `int` in Python, so a setting confused with `statistics` would otherwise resolve to one row and say nothing."""
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_YES)
 
@@ -220,10 +220,10 @@ def test_a_count_rejects_a_bool():
 def test_a_directory_reads_the_environment_tier_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The shape with nothing to parse and nothing to match: the environment tier already arrives as what the knob holds."""
-    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/landing")
+    """The shape with nothing to parse and nothing to match: the environment tier already arrives as what the setting holds."""
+    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/staging")
 
-    assert TEMP_DIR.resolve(None) == "/scratch/landing"
+    assert TEMP_DIR.resolve(None) == "/scratch/staging"
     assert TEMP_DIR.resolve("/mnt/volume") == "/mnt/volume"
 
 
@@ -232,7 +232,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 ):
     """`DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
 
-    Reading that as unset would land the frame on the ephemeral disk the knob was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
+    Reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
     """
     monkeypatch.setenv(_TEMP_DIR_ENV, "   ")
 
@@ -246,7 +246,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """A `Path` is the plausible wrong value here, and it is wrong for the same reason a word is wrong in a count: every tier of this knob spells a path as a string, because the environment tier can spell it no other way."""
+    """A `Path` is the plausible wrong value here, and it is wrong for the same reason a word is wrong in a count: every tier of this setting spells a path as a string, because the environment tier can spell it no other way."""
     with pytest.raises(InvalidSettingError) as raised:
         TEMP_DIR.resolve(_PATH_OBJECT)
 
@@ -297,7 +297,7 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
 
 
 def test_the_error_names_the_setting_the_value_and_the_tier_order():
-    """Everything needed to find the typo without opening the package source: which knob, what it got, and every place it could have come from."""
+    """Everything needed to find the typo without opening the package source: which setting, what it got, and every place it could have come from."""
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
     message = str(raised.value)

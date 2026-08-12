@@ -1,8 +1,8 @@
 """The two row samples, asserted through the metadata a run emits.
 
-Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the good materialization's for the rows that survived.
+Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the valid out's materialization's for the rows that survived.
 
-Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out knob that has to work.
+Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out setting that has to work.
 """
 
 import datetime as dt
@@ -87,7 +87,7 @@ def _check_metadata(
     )
 
 
-# --- the good output's row sample ---
+# --- the valid output's row sample ---
 @dataframely_asset(schema=Orders, name="orders")
 def _clean() -> pl.DataFrame:
     return clean_orders()
@@ -123,7 +123,7 @@ def test_the_row_sample_shows_every_column_the_row_holds(tmp_path: Path):
 
 
 def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: Path):
-    """Absent, not empty: an empty table in the UI reads as a run that wrote no rows, which is a different thing from a knob somebody turned off."""
+    """Absent, not empty: an empty table in the UI reads as a run that wrote no rows, which is a different thing from a setting somebody turned off."""
 
     @dataframely_asset(schema=Orders, name="orders", row_sample=0)
     def unsampled() -> pl.DataFrame:
@@ -136,7 +136,7 @@ def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: 
 
 
 def test_a_frame_with_no_rows_materializes_without_a_sample(tmp_path: Path):
-    """A valid frame with nothing in it is an ordinary outcome: a partition nothing landed in this time.
+    """A valid frame with nothing in it is an ordinary outcome: a partition nothing was written to this time.
 
     There is no row to show, so the key is absent for the same reason a passing check's is. Dagster enforces the same judgement from the other side, refusing a table value with no records and no schema, so an empty one here would take the run down.
     """
@@ -185,7 +185,7 @@ def test_a_cell_no_table_record_can_hold_is_rendered_as_the_value_it_is(tmp_path
 
 
 def test_the_quarantine_carries_no_row_sample(tmp_path: Path):
-    """The rejected rows reach the event log once, through the checks that rejected them and with the rule attached. A second unattributed copy here would say less and cost the same."""
+    """The invalid rows reach the event log once, through the checks that rejected them and with the rule attached. A second unattributed copy here would say less and cost the same."""
 
     @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
     def quarantined() -> pl.DataFrame:
@@ -214,8 +214,10 @@ def test_a_failing_check_carries_the_rows_it_rejected(tmp_path: Path):
     assert sampled[0]["amount"] == "-4.00"
 
 
-def test_a_sampled_row_holds_the_columns_of_the_data_and_no_outcomes(tmp_path: Path):
-    """The outcome columns are the quarantine's shape, not a sample's: the check already says which rule this is."""
+def test_a_sampled_row_holds_the_columns_of_the_data_and_no_rule_columns(
+    tmp_path: Path,
+):
+    """The rule columns are the quarantine's shape, not a sample's: the check already says which rule this is."""
     result = _materialize(tmp_path, _quarantined)
     sampled = _records(
         _check_metadata(result, "dy_rule__amount__min")["dy_failed_sample"]
@@ -294,7 +296,7 @@ def test_the_environment_tier_sets_the_house_failure_sample(
 
 
 def test_an_aborting_run_still_samples_what_it_rejected(tmp_path: Path):
-    """The run writes nothing, so the checks are the only place the rejected rows exist. That is the run where a sample is worth most."""
+    """The run writes nothing, so the checks are the only place the invalid rows exist. That is the run where a sample is worth most."""
 
     @dataframely_asset(schema=Orders, name="orders")
     def aborting() -> pl.DataFrame:
@@ -318,7 +320,7 @@ def _by_column() -> pl.DataFrame:
 
 
 def test_a_collapsed_check_says_which_rule_rejected_each_sampled_row(tmp_path: Path):
-    """A bucket stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace is what makes it a column name no schema can collide with."""
+    """A rule set stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace is what makes it a column name no schema can collide with."""
     result = _materialize(tmp_path, _by_column)
     sampled = _records(_check_metadata(result, "dy_col__amount")["dy_failed_sample"])
 
@@ -335,9 +337,9 @@ def test_a_collapsed_check_samples_every_rule_that_rejected_something(tmp_path: 
     assert [row["order_id"] for row in sampled] == ["ORD-6"]
 
 
-# --- the knobs are three, not one ---
+# --- the settings are three, not one ---
 def test_turning_the_statistics_off_leaves_both_samples_on(tmp_path: Path):
-    """Consenting to summary statistics is not consenting to raw values, and the converse holds too: they are separate knobs because they are separate consents."""
+    """Consenting to summary statistics is not consenting to raw values, and the converse holds too: they are separate settings because they are separate consents."""
 
     @dataframely_asset(
         schema=Orders, name="orders", quarantine=dg.AssetOut(), statistics=False
@@ -373,7 +375,7 @@ def test_turning_both_samples_off_leaves_the_statistics_on(tmp_path: Path):
 
 
 def test_a_sample_outside_the_vocabulary_raises_at_the_door():
-    """Definition time, like every other knob, so a misconfiguration never reaches a run."""
+    """Definition time, like every other setting, so a misconfiguration never reaches a run."""
     wrong: Any = -1
 
     with pytest.raises(InvalidSettingError) as raised:

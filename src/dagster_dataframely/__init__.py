@@ -8,7 +8,7 @@ from dagster_dataframely._errors import (
     NothingSurvivedError,
     QuarantineSettingError,
     ReservedColumnError,
-    SchemaGateError,
+    SchemaShapeError,
     UnwritableDtypeError,
     ValidationAbortError,
 )
@@ -41,7 +41,7 @@ __all__ = [
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",
-    "SchemaGateError",
+    "SchemaShapeError",
     "UnwritableDtypeError",
     "ValidationAbortError",
     "check_name",

@@ -2,7 +2,7 @@
 
 The seam is `dg.materialize` in-process against `tmp_path`, as for parquet. The two managers share one implementation, so the behaviour that has no format in it is exercised once, on parquet. What is here is CSV's own: the five encodings, the schema the read needs, the refusals that keep polars from panicking, and the handful of shared assertions whose expected value is the format.
 
-Most assets carry `schema_metadata` on a plain `@dg.asset`. The manager reads the carrier off definition metadata and does not care how it got there, so putting it there by hand keeps these tests about the manager. One test at the end runs the door instead, to prove the two halves meet.
+Most assets carry `schema_metadata` on a plain `@dg.asset`. The manager reads the carrier off definition metadata and does not care how it got there, so putting it there by hand keeps these tests about the manager. One test at the end runs the decorator instead, to prove the two halves meet.
 """
 
 import datetime as dt
@@ -260,7 +260,7 @@ def test_a_lazy_output_still_names_the_columns_it_encoded(tmp_path: Path) -> Non
 def test_the_csv_sink_runs_the_streaming_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Pinned per format rather than once on the spine, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
+    """Pinned per format rather than once on the base class, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
 
     Counted as a set rather than a list, because polars reaches its own `sink_csv` again on the way through and the number of times it does is its business, not this package's.
     """
@@ -374,7 +374,7 @@ def test_a_frame_its_schema_does_not_describe_is_refused_before_the_write(
     def nanoseconds() -> pl.DataFrame:
         return _SHAPES.with_columns(pl.col("took").cast(pl.Duration("ns")))
 
-    with pytest.raises(dd.SchemaGateError) as raised:
+    with pytest.raises(dd.SchemaShapeError) as raised:
         _materialize(tmp_path, nanoseconds)
 
     assert (
@@ -453,12 +453,12 @@ def test_the_door_puts_the_schema_where_the_manager_reads_it(tmp_path: Path) -> 
     assert_frame_equal(_round_trip(tmp_path, orders, "orders"), scenario.clean_orders())
 
 
-def test_a_quarantine_decodes_the_same_columns_the_good_table_does(
+def test_a_quarantine_decodes_the_same_columns_the_valid_table_does(
     tmp_path: Path,
 ) -> None:
     """The quarantine carries the same carrier, so the columns it inherits from the schema come back as themselves rather than as text.
 
-    The outcome columns beside them are the schema's own reserved namespace and no schema declares them, so they ride through the read on inference, which is what `String` wanted anyway.
+    The rule columns beside them are the schema's own reserved namespace and no schema declares them, so they ride through the read on inference, which is what `String` wanted anyway.
     """
 
     @dd.dataframely_asset(schema=scenario.Orders, quarantine=dg.AssetOut())

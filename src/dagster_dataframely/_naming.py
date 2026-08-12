@@ -1,6 +1,6 @@
 """The reserved namespace, the rule-name rewrite, and the two definition-time collision errors.
 
-`dy_` is hardcoded rather than configurable. A reserved namespace is not a preference; its whole value is being the same string in every project, so a knob would only let one project make its check names unrecognisable to the next.
+`dy_` is hardcoded rather than configurable. A reserved namespace is not a preference; its whole value is being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
 """
 
 import inspect
@@ -15,8 +15,8 @@ from dagster_dataframely._errors import CheckNameCollisionError, ReservedColumnE
 # Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
 RESERVED_PREFIX = "dy_"
 
-#: The gate check. Present at every granularity, always blocking.
-GATE_CHECK = "dy_schema__dtypes"
+#: The shape check. Present at every granularity, always blocking.
+SHAPE_CHECK = "dy_schema__dtypes"
 
 #: The check the rules no single column owns report through when they are collapsed.
 #: Deliberately not `dy_col__schema`, which a user column named `schema` would collide with, and `schema` is a column somebody has.
@@ -85,7 +85,7 @@ def split_rule(rule_name: str) -> tuple[str, str] | None:
 def validation_rules(schema: type[dy.Schema]) -> dict[str, Rule]:
     """Returns the schema's validation rules, keyed by rule name.
 
-    `with_cast=False` drops the `<column>|dtype` pseudo-rules, which would otherwise duplicate the gate at a different severity and without blocking.
+    `with_cast=False` drops the `<column>|dtype` pseudo-rules, which would otherwise duplicate the shape check at a different severity and without blocking.
 
     Args:
         schema: The schema to read rules from.

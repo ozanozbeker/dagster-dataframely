@@ -1,6 +1,6 @@
 """Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
 
-The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine outcomes are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
+The seam is what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five state-machine rule_columns are here; which two of them a frame reaches is decided by whether the asset declares a quarantine.
 """
 
 from collections.abc import Callable, Mapping
@@ -15,7 +15,7 @@ from polars.testing import assert_frame_equal
 from dagster_dataframely import (
     DataframelyParquetIOManager,
     NothingSurvivedError,
-    SchemaGateError,
+    SchemaShapeError,
     ValidationAbortError,
     dataframely_asset,
 )
@@ -75,7 +75,7 @@ def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
 
 
 def test_a_clean_run_emits_row_count(tmp_path: Path):
-    """The good count specifically, so `dg.build_metadata_bounds_checks` needs no knob from this package."""
+    """The valid count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package."""
     result = _materialize(tmp_path, _raw_orders, orders)
     metadata = _materialized(result)[dg.AssetKey(["orders"])]
 
@@ -88,7 +88,7 @@ def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
     rules = {name: e for name, e in evaluations.items() if name.startswith("dy_rule__")}
 
     assert len(evaluations) == len(list(orders.check_specs))
-    assert len(rules) == len(evaluations) - 1  # every check but the gate
+    assert len(rules) == len(evaluations) - 1  # every check but the shape check
     assert all(e.passed for e in evaluations.values())
     assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules.values())
 
@@ -105,7 +105,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
 
 
 def test_a_lazy_transform_lands_and_is_read_back_whole(tmp_path: Path):
-    """The round trip through the landed parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the gate has already run by the time the landing happens, so a changed dtype would surface as a filter failure rather than as a gate one."""
+    """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
@@ -155,7 +155,7 @@ def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
 
 
 def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
-    """The gate reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
     @dataframely_asset(schema=Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
@@ -179,7 +179,7 @@ def _wrong_dtype() -> pl.DataFrame:
 
 def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
     """A pipeline defect, not a data defect: the message has to be readable without opening a traceback."""
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, _wrong_dtype)
 
     message = str(raised.value)
@@ -194,13 +194,13 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
     def missing_column() -> pl.DataFrame:
         return clean_orders().drop("quantity")
 
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, missing_column)
 
     assert "'quantity' (expected Int32, got <missing>)" in str(raised.value)
 
 
-def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
+def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
     """The message is the only thing a user sees of this error, so it agrees in number."""
 
     @dataframely_asset(schema=Orders, name="orders")
@@ -209,7 +209,7 @@ def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
             clean_orders().drop("email").with_columns(pl.col("quantity").cast(pl.Int64))
         )
 
-    with pytest.raises(SchemaGateError) as raised:
+    with pytest.raises(SchemaShapeError) as raised:
         _materialize(tmp_path, several)
 
     assert "Columns 'email' (expected String, got <missing>), 'quantity' " in str(
@@ -218,25 +218,25 @@ def test_the_gate_error_reads_as_plural_for_several_columns(tmp_path: Path):
     assert "do not match Orders" in str(raised.value)
 
 
-def test_the_gate_writes_nothing(tmp_path: Path):
+def test_the_shape_check_writes_nothing(tmp_path: Path):
     _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
 
     assert not list(tmp_path.rglob("*.parquet"))
 
 
-def test_the_gate_runs_before_row_filtering(tmp_path: Path):
-    """Only the gate reports. No rule check evaluates, because no row was ever filtered."""
+def test_the_shape_check_runs_before_row_filtering(tmp_path: Path):
+    """Only the shape check reports. No rule check evaluates, because no row was ever filtered."""
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
     evaluations = _evaluations(result)
-    gate = evaluations["dy_schema__dtypes"]
+    shape = evaluations["dy_schema__dtypes"]
 
     assert not result.success
     assert set(evaluations) == {"dy_schema__dtypes"}
-    assert not gate.passed
-    assert gate.severity == dg.AssetCheckSeverity.ERROR
+    assert not shape.passed
+    assert shape.severity == dg.AssetCheckSeverity.ERROR
 
 
-def test_the_gate_check_tabulates_every_offending_column(tmp_path: Path):
+def test_the_shape_check_tabulates_every_offending_column(tmp_path: Path):
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
     metadata = dict(_evaluations(result)["dy_schema__dtypes"].metadata)
     errors = metadata["dy_schema__errors"]
@@ -247,14 +247,14 @@ def test_the_gate_check_tabulates_every_offending_column(tmp_path: Path):
     ]
 
 
-# --- rejected rows with no quarantine ---
+# --- invalid rows with no quarantine ---
 @dataframely_asset(schema=Orders, name="orders")
 def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
 
 def test_rejected_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
-    """A partial table must never silently replace a good one."""
+    """A partial table must never silently replace a complete one."""
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, _mixed)
 
@@ -310,7 +310,7 @@ def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
 
 
 def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
-    """Severity is the run's outcome, not the rule's: nothing landed, so nothing is a warning."""
+    """Severity is the run's outcome, not the rule's: nothing was written, so nothing is a warning."""
     evaluations = _evaluations(_materialize(tmp_path, _mixed, raise_on_error=False))
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
@@ -318,7 +318,7 @@ def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
     assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
 
 
-# --- rejected rows with a quarantine, some surviving ---
+# --- invalid rows with a quarantine, some surviving ---
 _GOOD_KEY = dg.AssetKey(["orders"])
 _QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
 
@@ -329,7 +329,7 @@ def _quarantined() -> pl.DataFrame:
 
 
 def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
-    """The middle case: 3 good rows land, 3 bad ones are inspectable, and downstream proceeds."""
+    """The middle case: 3 valid rows are written, 3 invalid ones are inspectable, and downstream proceeds."""
     result = _materialize(tmp_path, _quarantined)
 
     assert result.success
@@ -339,7 +339,7 @@ def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
-    """Consent to partial data was given by declaring the out, so a rejected row is a warning rather than a failure."""
+    """Consent to partial data was given by declaring the out, so a invalid row is a warning rather than a failure."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -378,32 +378,32 @@ def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
     assert seen == {"rows": 3}
 
 
-def test_the_quarantine_holds_the_original_columns_plus_one_outcome_per_rule(
+def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
     tmp_path: Path,
 ):
     """`invalid()` was rejected as the content: check-metadata samples are bounded, so without per-row attribution here it exists nowhere at volume."""
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
-    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+    rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
     checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__dtypes"}
 
     assert quarantine.columns[: len(Orders.columns())] == list(Orders.columns())
-    assert set(quarantine.columns) == set(Orders.columns()) | set(outcomes)
+    assert set(quarantine.columns) == set(Orders.columns()) | set(rule_columns)
     # Byte-identical to the check names, asserted against the written frame rather than
     # only the declaration, so the two surfaces cannot drift apart.
-    assert set(outcomes) == checks
+    assert set(rule_columns) == checks
 
 
-def test_the_outcome_columns_are_cast_from_enum_to_string(tmp_path: Path):
+def test_the_rule_columns_are_cast_from_enum_to_string(tmp_path: Path):
     """Mandatory, not defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`."""
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
-    outcomes = [name for name in quarantine.columns if name.startswith("dy_rule__")]
+    rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
 
-    assert all(quarantine.schema[name] == pl.String for name in outcomes)
+    assert all(quarantine.schema[name] == pl.String for name in rule_columns)
 
 
-def test_an_outcome_column_says_which_rule_rejected_which_row(tmp_path: Path):
+def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
         "order_id"
@@ -492,13 +492,13 @@ def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
     assert not (tmp_path / "orders_quarantine.parquet").exists()
 
 
-# --- rejected rows with a quarantine, none surviving ---
+# --- invalid rows with a quarantine, none surviving ---
 @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
 def _nothing_survived() -> pl.DataFrame:
     return hopeless_orders()
 
 
-def test_nothing_surviving_materializes_the_quarantine_and_skips_the_good_out(
+def test_nothing_surviving_materializes_the_quarantine_and_skips_the_valid_out(
     tmp_path: Path,
 ):
     """The load-bearing case: an empty table must never silently replace a last-known-good snapshot."""
@@ -533,7 +533,7 @@ def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
 
 
 def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
-    """Severity is the run's outcome, not the rule's: nothing landed in the good table, so nothing is a warning."""
+    """Severity is the run's outcome, not the rule's: nothing was written to the valid table, so nothing is a warning."""
     result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
     evaluations = _evaluations(result)
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -546,14 +546,14 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     )
 
 
-# --- the temp landing ---
+# --- the temp file ---
 # One entry per exit of the state machine, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
     pytest.param(clean_orders, None, id="everything survived"),
     pytest.param(mixed_orders, None, id="no quarantine"),
     pytest.param(mixed_orders, dg.AssetOut(), id="some survived"),
     pytest.param(hopeless_orders, dg.AssetOut(), id="nothing survived"),
-    pytest.param(wrong_dtype_orders, None, id="gate"),
+    pytest.param(wrong_dtype_orders, None, id="shape"),
 ]
 
 
@@ -611,7 +611,7 @@ def _written(root: Path) -> dict[str, pl.DataFrame]:
 def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
 ):
-    """The landing moves where the data is materialized, not what happens to it afterwards.
+    """The staging file moves where the data is materialized, not what happens to it afterwards.
 
     Asserted at every exit and over everything the package emits: the outs that materialized, the row counts, the statistics, the samples, the co-occurrence table, every check with its severity and metadata, and the bytes on disk.
     """
@@ -632,13 +632,13 @@ def test_the_landing_is_removed_whichever_exit_the_run_takes(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
 ):
     """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
-    landing = tmp_path / "landing"
-    landing.mkdir()
-    _, lazy = _both_ways(frame, quarantine, temp_dir=str(landing))
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _, lazy = _both_ways(frame, quarantine, temp_dir=str(staging))
 
     _materialize(tmp_path / "store", lazy, raise_on_error=False)
 
-    assert list(landing.iterdir()) == []
+    assert list(staging.iterdir()) == []
 
 
 def test_the_landing_sinks_with_the_streaming_engine(
@@ -646,7 +646,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
 ):
     """The one clause of this design with no observable consequence, and the one the whole argument rests on.
 
-    A landing that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the landing exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
+    A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is pinned rather than the output: `sink_parquet`, with the engine named.
 
     Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
     """
@@ -665,9 +665,9 @@ def test_the_landing_sinks_with_the_streaming_engine(
 
 
 def test_an_eager_return_never_lands(tmp_path: Path):
-    """A frame the user already materialized has nothing left to stream, so landing it would be pure cost.
+    """A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
-    Asserted by pointing the landing at a directory that does not exist: a run that would land there cannot succeed, and this one does.
+    Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
     """
     eager, _ = _both_ways(clean_orders, None, temp_dir=str(tmp_path / "absent"))
 
@@ -675,9 +675,9 @@ def test_an_eager_return_never_lands(tmp_path: Path):
 
 
 def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
-    """The other half of the same assertion, and the reason the knob exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
+    """The other half of the same assertion, and the reason the setting exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
 
-    A missing directory raises rather than being created, deliberately. The knob is set to move the landing off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
     _, lazy = _both_ways(clean_orders, None, temp_dir=str(absent))
@@ -691,7 +691,7 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
 def test_the_temp_dir_environment_variable_reaches_the_landing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier, asserted through a materialization rather than through `resolve`: the door reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the landing."""
+    """The house-style tier, asserted through a materialization rather than through `resolve`: the decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
     _, lazy = _both_ways(clean_orders, None)
@@ -702,14 +702,14 @@ def test_the_temp_dir_environment_variable_reaches_the_landing(
     assert str(absent) in str(raised.value)
 
 
-def test_the_gate_runs_before_the_landing(tmp_path: Path):
+def test_the_shape_check_runs_before_the_landing(tmp_path: Path):
     """Resolving a plan's columns and dtypes costs nothing, so a wrong-shaped frame is refused before a single row is streamed.
 
-    Asserted through a landing that cannot work: the gate error is what arrives, so nothing ever tried to write there.
+    Asserted through a staging file that cannot work: the shape error is what arrives, so nothing ever tried to write there.
     """
     _, lazy = _both_ways(wrong_dtype_orders, None, temp_dir=str(tmp_path / "absent"))
 
-    with pytest.raises(SchemaGateError):
+    with pytest.raises(SchemaShapeError):
         _materialize(tmp_path / "store", lazy)
 
 
@@ -751,7 +751,7 @@ def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: P
 def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
     tmp_path: Path,
 ):
-    """The count is what collapsing would otherwise cost, so a bucket carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
+    """The count is what collapsing would otherwise cost, so a rule set carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
     evaluations = _evaluations(_materialize(tmp_path, _by_column))
 
     assert _members(evaluations["dy_col__email"]) == {
@@ -789,7 +789,7 @@ def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path)
 
 
 def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
-    """A bucket reports 0 per member rather than going quiet, so a clean run is a row in its history."""
+    """A rule set reports 0 per member rather than going quiet, so a clean run is a row in its history."""
 
     @dataframely_asset(schema=Orders, name="orders", check_granularity="column")
     def spotless() -> pl.DataFrame:

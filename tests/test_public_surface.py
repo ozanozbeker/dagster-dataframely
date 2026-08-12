@@ -19,12 +19,12 @@ _ROOT = Path(__file__).parent.parent
 
 # The whole public surface, grouped as the spec groups it.
 _PUBLIC = {
-    # The door.
+    # The decorator.
     "dataframely_asset",
     # The IO managers.
     "DataframelyCSVIOManager",
     "DataframelyParquetIOManager",
-    # The kit: the door's own parts, for a wiring the door does not offer.
+    # The exported parts, for a wiring the decorator does not offer.
     "check_name",
     "check_specs",
     "process",
@@ -40,10 +40,10 @@ _PUBLIC = {
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",
-    "SchemaGateError",
+    "SchemaShapeError",
     "UnwritableDtypeError",
     "ValidationAbortError",
-    # The types, so a caller can annotate what it passes the door and what a fan-in hands back.
+    # The types, so a caller can annotate what it passes the decorator and what a fan-in hands back.
     "DataFramePartitions",
     "LazyFramePartitions",
     "Granularity",

@@ -55,7 +55,7 @@ def _evaluations(
 
 
 def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | None]:
-    """The partition each materialization landed under, keyed by asset."""
+    """The partition each materialization was written under, keyed by asset."""
     return {
         event.asset_key: event.step_materialization_data.materialization.partition
         for event in result.get_asset_materialization_events()
@@ -112,7 +112,7 @@ def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
     assert not (tmp_path / "orders_quarantine").exists()
 
 
-def test_row_count_is_the_partitions_good_count(tmp_path: Path):
+def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
     """The partition's own count, not the asset's: `dg.build_metadata_bounds_checks` then trends a partition against itself."""
     _materialize(tmp_path, "clean")
     counts = _row_counts(_materialize(tmp_path, "mixed"))
@@ -121,7 +121,7 @@ def test_row_count_is_the_partitions_good_count(tmp_path: Path):
 
 
 # --- a partition whose frame drifts ---
-def test_a_drifting_partition_aborts_at_the_gate_before_any_row_check_reports(
+def test_a_drifting_partition_aborts_at_the_shape_check_before_any_row_check_reports(
     tmp_path: Path,
 ):
     result = _materialize(tmp_path, "wrong", raise_on_error=False)
@@ -254,7 +254,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 
 # --- backfill policy ---
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
-    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the door leaves it alone rather than rejecting the policy it cannot know the manager for."""
+    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the decorator leaves it alone rather than rejecting the policy it cannot know the manager for."""
 
     @dataframely_asset(
         schema=Orders,

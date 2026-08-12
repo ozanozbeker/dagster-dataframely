@@ -26,12 +26,12 @@ class InvalidSettingError(DagsterDataframelyError):
         tier: str,
         env_var: str,
     ) -> None:
-        """Names the knob, what it got, where that came from, and every tier it could have come from.
+        """Names the setting, what it got, where that came from, and every tier it could have come from.
 
         Args:
             setting: The setting's name, which is also the argument's.
             value: The value that was rejected.
-            allowed: The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A knob over a range arrives as the phrase that describes it, because printing every value it accepts is not a thing that can be done.
+            allowed: The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because printing every value it accepts is not a thing that can be done.
             tier: Where this value came from, worded as a phrase.
             env_var: The setting's environment variable.
         """
@@ -105,7 +105,7 @@ class CollectionNotSupportedError(DagsterDataframelyError):
         )
 
 
-class SchemaGateError(DagsterDataframelyError):
+class SchemaShapeError(DagsterDataframelyError):
     """A frame arrived with wrong dtypes or missing columns.
 
     A pipeline defect rather than a data defect, so the whole asset aborts: no rows are filtered and nothing is written.
@@ -136,7 +136,7 @@ def _culprits(counts: Mapping[str, int]) -> str:
 class ValidationAbortError(DagsterDataframelyError):
     """Rows were rejected and no quarantine is declared, so the asset writes nothing.
 
-    Without somewhere to route rejected rows, every row has to be good. Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration: a drop is a line the engineer writes in the asset body, the way a cast is.
+    Without somewhere to route invalid rows, every row has to be valid. Landing the survivors and dropping the rest is the failure this package exists to make visible, so it is not reachable by configuration: a drop is a line the engineer writes in the asset body, the way a cast is.
     """
 
     def __init__(
@@ -144,7 +144,7 @@ class ValidationAbortError(DagsterDataframelyError):
     ) -> None:
         """States the damage per rule, and the three fixes.
 
-        Naming `quarantine=` is what makes this error the one place a user who has not read the README learns the option exists. It could only be named once the door accepted the keyword (#19); before that it would have sent the reader to a `TypeError`.
+        Naming `quarantine=` is what makes this error the one place a user who has not read the README learns the option exists. It could only be named once the decorator accepted the keyword (#19); before that it would have sent the reader to a `TypeError`.
 
         Args:
             schema_name: The schema that rejected the rows.
@@ -160,7 +160,7 @@ class ValidationAbortError(DagsterDataframelyError):
 class NothingSurvivedError(DagsterDataframelyError):
     """Every row was rejected, so only the quarantine was written.
 
-    The good output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
+    The valid output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
     """
 
     def __init__(
@@ -176,14 +176,14 @@ class NothingSurvivedError(DagsterDataframelyError):
         """
         plural = "" if rejected == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the good output was skipped rather than written empty, so the last-known-good table survives."
+            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the valid output was skipped rather than written empty, so the last-known-good table survives."
         )
 
 
 class QuarantineSettingError(DagsterDataframelyError):
     """The quarantine's `dg.AssetOut` sets something that cannot differ between the two outs.
 
-    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the door's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
+    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the decorator's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
     """
 
     def __init__(self, setting: str) -> None:

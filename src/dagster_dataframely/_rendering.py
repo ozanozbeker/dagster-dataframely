@@ -1,17 +1,17 @@
-"""One renderer for every surface that shows a rule, and the ladder each surface climbs.
+"""One renderer for every surface that shows a rule, and the fallback each surface follows.
 
 A schema's constraints reach a data consumer at three fidelities:
 
-| surface | ladder |
+| surface | fallback |
 | --- | --- |
-| constraint pill | rendered constraint → the rule's own name. Docstring excluded. |
+| column constraint | rendered constraint → the rule's own name. Docstring excluded. |
 | check name | always `dy_rule__<rule>`. Identity, never prose. |
 | check description | docstring → `<column> <rendered>` → rule name. |
-| collapsed check description | one column's members: every rendered constraint → that member's own kind. Docstring excluded, for the same reason a pill excludes it. The members no column owns are listed by name instead: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside a comma-separated list. |
+| collapsed check description | one column's members: every rendered constraint → that member's own kind. Docstring excluded, for the same reason a column constraint excludes it. The members no column owns are listed by name instead: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside a comma-separated list. |
 
-The register rule is what keeps the docstring out of a pill: two sibling rules must not read in different voices merely because one author wrote a docstring and the other did not, which from the UI is a change of register with no visible cause. So the rule name is the constant on the constraint surfaces, and the docstring reaches only the description.
+The register rule is what keeps the docstring out of a constraint: two sibling rules must not read in different voices merely because one author wrote a docstring and the other did not, which from the UI is a change of register with no visible cause. So the rule name is the constant on the constraint surfaces, and the docstring reaches only the description.
 
-Values are rendered but never named: a bound is a parameter, so it belongs in a pill and in the per-evaluation `dy_rule__expr` metadata, and never in a check name that renaming would orphan.
+Values are rendered but never named: a bound is a parameter, so it belongs in a constraint and in the per-evaluation `dy_rule__expr` metadata, and never in a check name that renaming would orphan.
 
 One rendering is deliberately unhelpful. A `check=` given a bare lambda has no name to recover, so it reads `custom check` wherever it appears: name your checks, `check={"lowercase": ...}`, and the key is what a data consumer sees.
 """
@@ -49,13 +49,13 @@ _PHRASES = {
     "check": _ANONYMOUS_CHECK,
 }
 
-# Rules Dagster already models first-class, as `TableColumnConstraints.nullable` and `.unique`. They still render on the check surfaces; a pill would only say the same thing a second time, in the same row.
+# Rules Dagster already models first-class, as `TableColumnConstraints.nullable` and `.unique`. They still render on the check surfaces; a constraint would only say the same thing a second time, in the same row.
 _FIRST_CLASS = frozenset({"nullability", "unique"})
 
-# Rules dataframely generates from a default rather than from something an author wrote. `allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. A pill for either says nothing about intent, and it can never say anything else, because allowing the value removes the rule instead of inverting it. That is the test for any future defaulted constraint: does the rule exist only while its flag sits at the default?
+# Rules dataframely generates from a default rather than from something an author wrote. `allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. A constraint for either says nothing about intent, and it can never say anything else, because allowing the value removes the rule instead of inverting it. That is the test for any future defaulted constraint: does the rule exist only while its flag sits at the default?
 _DEFAULTED = frozenset({"inf", "nan"})
 
-_NO_PILL = _FIRST_CLASS | _DEFAULTED
+_NO_CONSTRAINT = _FIRST_CLASS | _DEFAULTED
 
 
 def _value(column: dy.Column, kind: str) -> Any:  # noqa: ANN401 - the values are of every constraint's own type
@@ -168,9 +168,9 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
 
 
 def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
-    """Renders every column's constraint pills.
+    """Renders every column's constraints.
 
-    Read off the same rule dict the asset checks come from, so every pill has a check behind it and every check that says something about one column reaches that column's row.
+    Read off the same rule dict the asset checks come from, so every constraint has a check behind it and every check that says something about one column reaches that column's row.
 
     Args:
         schema: The schema to render.
@@ -178,17 +178,17 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
     Returns:
         One list per column, keyed by column name, in the schema's own column order and each column's own rule order. A column with nothing to show carries an empty list.
     """
-    pills: dict[str, list[str]] = {name: [] for name in schema.columns()}
+    constraints: dict[str, list[str]] = {name: [] for name in schema.columns()}
     for rule_name in validation_rules(schema):
         parts: tuple[str, str] | None = split_rule(rule_name)
         if parts is None:
             continue
         column_name, kind = parts
-        if kind in _NO_PILL:
+        if kind in _NO_CONSTRAINT:
             continue
         # The fallback is the rule's own half of the name: the row already carries the column's half, and dataframely's `|` is a spelling this package shows nowhere else.
-        pills[column_name].append(rule_text(schema, rule_name) or kind)
-    return pills
+        constraints[column_name].append(rule_text(schema, rule_name) or kind)
+    return constraints
 
 
 def table_constraints(schema: type[dy.Schema]) -> list[str]:
@@ -210,7 +210,7 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
 
 
 def check_description(schema: type[dy.Schema], rule_name: str) -> str:
-    """Describes a rule's asset check, climbing the ladder until a rung holds.
+    """Describes a rule's asset check, falling back until something holds.
 
     The docstring first, because an author who wrote one said something the schema cannot. Then the rendered constraint, prefixed with the column, because a check list reads flat and a bare `>= 0` names nothing. Then the rule's own name, which always exists, so no check is ever described as nothing.
 
@@ -237,7 +237,7 @@ def check_description(schema: type[dy.Schema], rule_name: str) -> str:
 def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> str:
     """Renders every constraint one column's rules state, for the check that reports them as one.
 
-    A collapsed check's description is the only place its members are visible before a run, so this renders all of them, including the two a pill skips. `not null` has to be said here: there is no column row beside this check saying it instead.
+    A collapsed check's description is the only place its members are visible before a run, so this renders all of them, including the two a constraint skips. `not null` has to be said here: there is no column row beside this check saying it instead.
 
     The column is named once by the check, so it is not repeated per constraint, and a rule with nothing structured to render falls back to its own half of its name.
 

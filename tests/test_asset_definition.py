@@ -71,7 +71,7 @@ def test_the_door_produces_a_multi_asset_with_one_out():
 
 
 def test_the_out_is_not_required():
-    """The gate and the abort paths both end the step without yielding the output."""
+    """The shape check and the abort paths both end the step without yielding the output."""
     (spec,) = orders.specs
     assert spec.skippable
 
@@ -183,7 +183,7 @@ def test_pool_reaches_the_underlying_op():
 
 
 def test_asset_level_parameters_reach_the_out():
-    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them; `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which is what leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the door is designed for one table."""
+    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them; `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which is what leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the decorator is designed for one table."""
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
@@ -248,7 +248,7 @@ def test_there_is_one_check_per_rule_plus_the_gate():
     assert set(_specs_by_name(orders)) == expected
 
 
-def test_only_the_gate_check_is_blocking():
+def test_only_the_shape_check_is_blocking():
     specs = _specs_by_name(orders)
 
     assert specs["dy_schema__dtypes"].blocking
@@ -292,11 +292,11 @@ def test_a_rule_with_neither_a_docstring_nor_a_constraint_falls_back_to_its_name
 
 
 def test_no_check_description_is_blank():
-    """The ladder's whole point: every rung is reachable and the last one always holds."""
+    """The fallback's whole point: every step is reachable and the last one always holds."""
     assert all(spec.description for spec in orders.check_specs)
 
 
-def test_the_gate_check_names_the_schema():
+def test_the_shape_check_names_the_schema():
     assert _specs_by_name(orders)["dy_schema__dtypes"].description == (
         "Columns and dtypes match Orders."
     )
@@ -367,7 +367,7 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
 
 
 def test_multi_column_rules_bucket_into_the_schema_check_by_default():
-    """They belong to no column, so at column granularity they have no bucket of their own to land in."""
+    """They belong to no column, so at column granularity they have no rule set of their own to land in."""
     specs = _specs_by_name(by_column)
 
     assert "dy_schema__rules" in specs
@@ -375,7 +375,7 @@ def test_multi_column_rules_bucket_into_the_schema_check_by_default():
 
 
 def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
-    """The knob is for a schema whose cross-column rules are the ones worth their own history."""
+    """The setting is for a schema whose cross-column rules are the ones worth their own history."""
 
     @dataframely_asset(
         schema=Orders,
@@ -415,8 +415,8 @@ def test_schema_granularity_leaves_one_rules_check_beside_the_gate():
 
 
 @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
-def test_a_schema_with_no_rules_gets_the_gate_and_nothing_else(granularity: Any):
-    """The gate still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
+def test_a_schema_with_no_rules_gets_the_shape_check_and_nothing_else(granularity: Any):
+    """The shape check still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
 
     class Blob(dy.Schema):
         payload = dy.String(nullable=True)
@@ -431,10 +431,10 @@ def test_a_schema_with_no_rules_gets_the_gate_and_nothing_else(granularity: Any)
 
 
 @pytest.mark.parametrize("asset", [orders, by_column, by_schema])
-def test_the_gate_is_present_and_blocking_at_every_granularity(
+def test_the_shape_check_is_present_and_blocking_at_every_granularity(
     asset: dg.AssetsDefinition,
 ):
-    """It is not a rule, so it never joins a bucket, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
+    """It is not a rule, so it never joins a rule set, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
     specs = _specs_by_name(asset)
 
     assert specs["dy_schema__dtypes"].blocking
@@ -542,11 +542,11 @@ def test_a_primary_key_column_never_claims_to_be_unique():
     assert not _columns()["line_no"].constraints.unique
 
 
-# --- constraint pills ---
+# --- column constraints ---
 class Measurements(dy.Schema):
     """The constraint shapes `Orders` has no natural column for.
 
-    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to pin one arm of the pill renderer.
+    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to pin one arm of the constraint renderer.
     """
 
     reading_at = dy.Datetime(resolution="1h")
@@ -615,13 +615,13 @@ def test_a_nested_columns_rules_render_as_constraints_on_its_elements():
 
 
 def test_a_constraint_dagster_models_first_class_is_not_repeated_as_a_pill():
-    """`nullable` and `unique` have their own fields on `TableColumnConstraints`, so a pill saying the same thing would double every column's constraint list."""
+    """`nullable` and `unique` have their own fields on `TableColumnConstraints`, so a constraint saying the same thing would double every column's constraint list."""
     assert _columns()["quantity"].constraints.other == [">= 1"]
     assert _columns()["tracking_id"].constraints.other == []
 
 
 def test_a_constraint_left_at_its_dataframely_default_renders_no_pill():
-    """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the pill could never say anything but the default and says nothing at all. The checks still exist and still report."""
+    """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the constraint could never say anything but the default and says nothing at all. The checks still exist and still report."""
     assert _measured()["ratio"].constraints.other == ["> 0.0", "< 1.0"]
     assert {"dy_rule__ratio__inf", "dy_rule__ratio__nan"} <= set(
         _specs_by_name(measurements)
@@ -643,9 +643,9 @@ def test_the_primary_key_is_stated_once_at_table_level():
 
     assert "PK: order_id, line_no" in table_schema.constraints.other
     assert not any(
-        "PK" in pill
+        "PK" in constraint
         for column in table_schema.columns
-        for pill in column.constraints.other
+        for constraint in column.constraints.other
     )
 
 
@@ -704,12 +704,12 @@ def test_declaring_a_quarantine_adds_a_second_out():
 
 
 def test_the_quarantine_out_is_not_required_either():
-    """The clean run skips it, and the nothing-survived path skips the good one."""
+    """The clean run skips it, and the nothing-survived path skips the valid one."""
     assert all(spec.skippable for spec in quarantined.specs)
 
 
 def test_the_quarantine_key_is_a_sibling_that_inherits_the_prefix():
-    """The two land next to each other with no configuration."""
+    """The two sit next to each other with no configuration."""
 
     @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=dg.AssetOut())
     def prefixed_quarantine() -> pl.DataFrame:
@@ -754,7 +754,7 @@ def test_an_explicit_key_overrides_the_sibling_completely():
 
 
 def test_the_quarantine_inherits_the_io_manager_key_when_it_names_none():
-    """One declaration stores both tables together, and routing the rejected rows elsewhere stays a one-word change."""
+    """One declaration stores both tables together, and routing the invalid rows elsewhere stays a one-word change."""
 
     @dataframely_asset(
         schema=Orders, io_manager_key="warehouse", quarantine=dg.AssetOut()
@@ -769,7 +769,7 @@ def test_the_quarantine_inherits_the_io_manager_key_when_it_names_none():
 
 
 def test_the_quarantine_inherits_the_group_when_it_names_none():
-    """Dagster refuses `group_name` on the `multi_asset` as soon as an out names one, so the door sets it per out and inherits it here explicitly."""
+    """Dagster refuses `group_name` on the `multi_asset` as soon as an out names one, so the decorator sets it per out and inherits it here explicitly."""
     assert quarantined.group_names_by_key == {
         dg.AssetKey(["quarantined"]): "sales",
         _QUARANTINE_KEY: "sales",
@@ -815,10 +815,10 @@ def test_a_setting_that_cannot_differ_between_the_outs_raises_at_definition_time
     assert "One step always produces both tables" in str(raised.value)
 
 
-def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_good_out():
-    """The `AssetOut` cannot contest these, but the door's own values do not reach the quarantine either.
+def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_valid_out():
+    """The `AssetOut` cannot contest these, but the decorator's own values do not reach the quarantine either.
 
-    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the good asset's condition already requests, since neither out can execute alone.
+    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the valid out's condition already requests, since neither out can execute alone.
     """
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
@@ -833,11 +833,11 @@ def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_good_out():
         return pl.DataFrame()
 
     specs = {spec.key: spec for spec in scheduled.specs}
-    good = specs[dg.AssetKey(["scheduled"])]
+    valid = specs[dg.AssetKey(["scheduled"])]
     bad = specs[dg.AssetKey(["scheduled_quarantine"])]
 
-    assert good.automation_condition == condition
-    assert good.freshness_policy == freshness
+    assert valid.automation_condition == condition
+    assert valid.freshness_policy == freshness
     assert bad.automation_condition is None
     assert bad.freshness_policy is None
 
@@ -868,7 +868,7 @@ def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
 
 
 def test_the_quarantine_mirror_carries_no_constraint():
-    """These rows are here precisely because they violate them. The primary key above all: the rejected rows are exactly where a duplicate key ends up."""
+    """These rows are here precisely because they violate them. The primary key above all: the invalid rows are exactly where a duplicate key ends up."""
     assert all(
         column.constraints == dg.TableColumnConstraints()
         for column in _quarantine_columns().values()
@@ -878,25 +878,27 @@ def test_the_quarantine_mirror_carries_no_constraint():
     )
 
 
-def test_the_quarantine_declares_one_string_outcome_column_per_rule():
+def test_the_quarantine_declares_a_string_rule_column_for_every_rule():
     """Named byte-identically to the asset checks, so an engineer carries the string across by eye."""
     columns = _quarantine_columns()
-    outcomes = {name: columns[name] for name in columns if name.startswith("dy_rule__")}
+    rule_columns = {
+        name: columns[name] for name in columns if name.startswith("dy_rule__")
+    }
     expected = {f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES}
 
-    assert set(outcomes) == expected
+    assert set(rule_columns) == expected
     assert expected <= set(_specs_by_name(quarantined))
-    assert all(column.type == "String" for column in outcomes.values())
+    assert all(column.type == "String" for column in rule_columns.values())
 
 
-def test_each_outcome_column_is_described_as_the_outcome_of_its_rule():
+def test_each_rule_column_is_described_as_the_outcome_of_its_rule():
     assert _quarantine_columns()["dy_rule__amount__min"].description == (
         "Outcome of rule 'amount|min': 'valid' / 'invalid' / 'unknown'."
     )
 
 
 def test_the_quarantine_carries_the_schema_carrier_too():
-    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the good one."""
+    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the valid one."""
     assert (
         quarantined.metadata_by_key[_QUARANTINE_KEY][_SCHEMA_CARRIER_KEY].instance
         is Orders
@@ -985,19 +987,19 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
     assert not isinstance(raised.value, DagsterDataframelyError)
 
 
-# --- the door's own contract with dagster ---
-# Parameters `dg.multi_asset` has that the door deliberately does not forward.
+# --- the decorator's own contract with dagster ---
+# Parameters `dg.multi_asset` has that the decorator deliberately does not forward.
 _NOT_FORWARDED = {
-    "outs",  # door-owned: the door builds both outs from the schema
-    "check_specs",  # door-owned: derived from the schema, never contested
-    "specs",  # door-owned: the alternative spelling of `outs`
+    "outs",  # decorator-owned: the decorator builds both outs from the schema
+    "check_specs",  # decorator-owned: derived from the schema, never contested
+    "specs",  # decorator-owned: the alternative spelling of `outs`
     "can_subset",  # deliberately absent (#4): a subset executes but saves nothing
     "internal_asset_deps",  # nothing to wire: neither out feeds the other
     # Refused by `multi_asset` outright when any out names one, so it lands on the
     # outs, which is what leaves the quarantine free to claim a group of its own.
     "group_name",
 }
-_DOOR_OWNED = {
+_DECORATOR_OWNED = {
     "schema",
     "key_prefix",
     "quarantine",
@@ -1009,8 +1011,8 @@ _DOOR_OWNED = {
     "temp_dir",
 }
 
-# The door-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
-# one of them: it is `dg.asset` vocabulary that the door happens to own the meaning of.
+# The decorator-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
+# one of them: it is `dg.asset` vocabulary that the decorator happens to own the meaning of.
 _NO_DG_ASSET_COUNTERPART = {
     "schema",
     "quarantine",
@@ -1022,7 +1024,7 @@ _NO_DG_ASSET_COUNTERPART = {
     "temp_dir",
 }
 
-# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the good `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
+# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the valid `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
 _ASSET_LEVEL = {
     "io_manager_key",
     "group_name",
@@ -1034,11 +1036,11 @@ _ASSET_LEVEL = {
     "freshness_policy",
 }
 
-# `@dg.multi_asset` is the mechanism, but `@dg.asset` is the vocabulary: this decorator is designed for a single table. Parameters `dg.asset` has that the door deliberately does not, each for a reason that is not "nobody thought about it".
-_NOT_ON_THE_DOOR = {
-    "check_specs",  # door-owned: derived from the schema, never contested
-    "key",  # door-owned: `key_prefix` plus `name` already say it, once
-    "output_required",  # door-owned: the gate and abort paths must be able to skip
+# `@dg.multi_asset` is the mechanism, but `@dg.asset` is the vocabulary: this decorator is designed for a single table. Parameters `dg.asset` has that the decorator deliberately does not, each for a reason that is not "nobody thought about it".
+_NOT_ON_THE_DECORATOR = {
+    "check_specs",  # decorator-owned: derived from the schema, never contested
+    "key",  # decorator-owned: `key_prefix` plus `name` already say it, once
+    "output_required",  # decorator-owned: the shape check and abort paths must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
     "is_virtual",  # a virtual asset has no compute, so there is no transform
     "io_manager_def",  # not settable per out; the forwarded `resource_defs` covers it
@@ -1048,16 +1050,16 @@ _NOT_ON_THE_DOOR = {
 def test_the_door_speaks_dg_assets_vocabulary():
     """The interface is designed for one table, so anything `@dg.asset` can say about an asset should be sayable here under the same name.
 
-    Asserted in both directions, like the `multi_asset` pin: nothing the door offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
+    Asserted in both directions, like the `multi_asset` pin: nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
     """
-    door = (
+    decorator = (
         set(inspect.signature(dataframely_asset).parameters) - _NO_DG_ASSET_COUNTERPART
     )
     upstream = set(inspect.signature(dg.asset).parameters) - {"compute_fn", "kwargs"}
 
-    assert door <= upstream, f"no longer on dg.asset: {door - upstream}"
-    assert upstream - door == _NOT_ON_THE_DOOR, (
-        f"new on dg.asset, unconsidered here: {upstream - door - _NOT_ON_THE_DOOR}"
+    assert decorator <= upstream, f"no longer on dg.asset: {decorator - upstream}"
+    assert upstream - decorator == _NOT_ON_THE_DECORATOR, (
+        f"new on dg.asset, unconsidered here: {upstream - decorator - _NOT_ON_THE_DECORATOR}"
     )
 
 
@@ -1065,7 +1067,7 @@ def test_the_forwarded_parameter_list_matches_multi_assets_signature():
     """Asserted in both directions, so the curated list neither breaks silently nor silently lags a new Dagster feature (#15, pin-and-assert obligation 4)."""
     forwarded = (
         set(inspect.signature(dataframely_asset).parameters)
-        - _DOOR_OWNED
+        - _DECORATOR_OWNED
         - _ASSET_LEVEL
     )
     # `kwargs` is `multi_asset`'s varargs catch-all, not a parameter to forward.
