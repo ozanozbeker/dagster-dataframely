@@ -12,15 +12,14 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import (
+from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely.errors import (
     DagsterDataframelyError,
-    DataframelyParquetIOManager,
     NothingSurvivedError,
     SchemaShapeError,
     ValidationAbortError,
-    dataframely_asset,
-    process,
 )
+from dagster_dataframely.wiring import process
 from tests.scenario import (
     Orders,
     clean_orders,

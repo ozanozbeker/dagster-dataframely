@@ -9,6 +9,7 @@ import functools
 import inspect
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from functools import cache
 from typing import Any
 
 import dagster as dg
@@ -16,11 +17,7 @@ import dataframely as dy
 import polars as pl
 
 from dagster_dataframely._checks import check_specs
-from dagster_dataframely._errors import (
-    CollectionNotSupportedError,
-    QuarantineSettingError,
-)
-from dagster_dataframely._metadata import _quarantine_metadata, schema_metadata
+from dagster_dataframely._metadata import quarantine_metadata, schema_metadata
 from dagster_dataframely._runtime import AssetYield, process
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
@@ -31,6 +28,10 @@ from dagster_dataframely._settings import (
     TEMP_DIR,
     Granularity,
     MultiColumnRules,
+)
+from dagster_dataframely.errors import (
+    CollectionNotSupportedError,
+    QuarantineSettingError,
 )
 
 TransformFn = Callable[..., pl.DataFrame | pl.LazyFrame]
@@ -52,18 +53,25 @@ AssetDep = (
     | dg.AssetDep
 )
 
-# Every `dg.AssetOut` setting, read off its constructor rather than transcribed, so a new Dagster parameter is carried through the rebuild without this file being touched.
-# `kwargs` is the constructor's own catch-all, not a setting.
-_ASSET_OUT_SETTINGS = frozenset(inspect.signature(dg.AssetOut.__init__).parameters) - {
-    "self",
-    "kwargs",
-}
-
 # Decorator-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The shape check and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a transform is not a virtual asset.
 _DECORATOR_OWNED_SETTINGS = frozenset({"is_required", "dagster_type", "is_virtual"})
 
 # Settings one step cannot hold two of. `partitions_def` and `backfill_policy` need no entry: they live on the `multi_asset`, so both outs carry them identically by construction. That is the property these three lack.
 _CONTESTED_SETTINGS = ("automation_condition", "freshness_policy", "code_version")
+
+
+@cache
+def _asset_out_settings() -> frozenset[str]:
+    """Every `dg.AssetOut` setting, read off its constructor rather than transcribed.
+
+    A new Dagster parameter is then carried through the rebuild without this file being touched. `kwargs` is the constructor's own catch-all, not a setting.
+
+    Deferred rather than computed at import, so introspecting an upstream class is not something `import dagster_dataframely` does. A Dagster release that made the signature unreadable would otherwise fail at import, where nothing names what was being attempted.
+    """
+    return frozenset(inspect.signature(dg.AssetOut.__init__).parameters) - {
+        "self",
+        "kwargs",
+    }
 
 
 def _rebuild(out: dg.AssetOut, overrides: Mapping[str, Any]) -> dg.AssetOut:
@@ -82,7 +90,7 @@ def _rebuild(out: dg.AssetOut, overrides: Mapping[str, Any]) -> dg.AssetOut:
     """
     settings = {
         name: getattr(out, name)
-        for name in _ASSET_OUT_SETTINGS - _DECORATOR_OWNED_SETTINGS
+        for name in _asset_out_settings() - _DECORATOR_OWNED_SETTINGS
     }
     return dg.AssetOut(**settings | dict(overrides))
 
@@ -126,7 +134,7 @@ def _quarantine_out(
     overrides: dict[str, Any] = {
         "is_required": False,
         # The package's key is applied last, as on the valid out.
-        "metadata": {**(quarantine.metadata or {}), **_quarantine_metadata(schema)},
+        "metadata": {**(quarantine.metadata or {}), **quarantine_metadata(schema)},
         "io_manager_key": quarantine.io_manager_key or io_manager_key,
         "group_name": quarantine.group_name or group_name,
     }

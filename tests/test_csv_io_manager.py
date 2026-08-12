@@ -71,7 +71,7 @@ _SHAPES = pl.DataFrame(
 )
 
 
-@dg.asset(name="shapes", metadata=dd.schema_metadata(Shapes))
+@dg.asset(name="shapes", metadata=dd.wiring.schema_metadata(Shapes))
 def _shapes() -> pl.DataFrame:
     return _SHAPES
 
@@ -227,7 +227,7 @@ def test_the_decoded_columns_are_named_at_read_time(run_log: list[str]) -> None:
     assert all(f"'{column}'" in decoded for column in _CODEC_COLUMNS)
 
 
-@dg.asset(name="shapes", metadata=dd.schema_metadata(Shapes))
+@dg.asset(name="shapes", metadata=dd.wiring.schema_metadata(Shapes))
 def _lazy_shapes() -> pl.LazyFrame:
     """`_SHAPES` handed over as a plan, for the writes that stream it."""
     return _SHAPES.lazy()
@@ -305,7 +305,7 @@ def test_encoding_with_no_schema_at_all_warns(tmp_path: Path) -> None:
 def test_encoding_a_column_the_schema_leaves_out_warns(tmp_path: Path) -> None:
     """Carrying a schema is not the same as being covered by it. The read decodes what the schema declares, so a column beside it is encoded and never decoded, and the warning names that column rather than the asset."""
 
-    @dg.asset(name="extra", metadata=dd.schema_metadata(Shapes))
+    @dg.asset(name="extra", metadata=dd.wiring.schema_metadata(Shapes))
     def extra() -> pl.DataFrame:
         return _SHAPES.with_columns(
             pl.Series("aside", [["x"], [], None], dtype=pl.List(pl.String))
@@ -353,7 +353,7 @@ def test_a_dtype_with_no_codec_is_refused_before_the_write(
     def unwritable() -> pl.DataFrame:
         return pl.DataFrame({"key": ["a"], column: pl.Series(values, dtype=dtype)})
 
-    with pytest.raises(dd.UnwritableDtypeError) as raised:
+    with pytest.raises(dd.errors.UnwritableDtypeError) as raised:
         _materialize(tmp_path, unwritable)
 
     assert f"'{column}'" in str(raised.value)
@@ -370,11 +370,11 @@ def test_a_frame_its_schema_does_not_describe_is_refused_before_the_write(
     A `Duration('ns')` under a declared `Duration('us')` is the case that would otherwise land quietly: the file holds a tick count, the unit is nowhere in it, and the frame read back is a thousand times too long with nothing failing.
     """
 
-    @dg.asset(name="shapes", metadata=dd.schema_metadata(Shapes))
+    @dg.asset(name="shapes", metadata=dd.wiring.schema_metadata(Shapes))
     def nanoseconds() -> pl.DataFrame:
         return _SHAPES.with_columns(pl.col("took").cast(pl.Duration("ns")))
 
-    with pytest.raises(dd.SchemaShapeError) as raised:
+    with pytest.raises(dd.errors.SchemaShapeError) as raised:
         _materialize(tmp_path, nanoseconds)
 
     assert (
@@ -425,7 +425,9 @@ def test_the_schema_is_recovered_for_every_partition(tmp_path: Path) -> None:
     """
     days = dg.StaticPartitionsDefinition(["2026-01-01", "2026-01-02"])
 
-    @dg.asset(name="by_day", partitions_def=days, metadata=dd.schema_metadata(Shapes))
+    @dg.asset(
+        name="by_day", partitions_def=days, metadata=dd.wiring.schema_metadata(Shapes)
+    )
     def by_day() -> pl.DataFrame:
         return _SHAPES
 

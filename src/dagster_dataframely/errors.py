@@ -1,11 +1,28 @@
 """The package's exception family, all subclassing `DagsterDataframelyError` so they can be caught together.
 
+**The one module in this package with a public name.** Every other module is underscore-private so that the file tree stays free to change, and ten error names in the root would be ten of its twenty-four: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move; dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
+
+`errors` rather than `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
+
 Every message names the schema, the culprit and the fix, because the message is the whole of what a user sees. It carries no colon: Python already prints `ModuleError: ` ahead of it, and a second colon in the first clause reads as a stutter. Each error takes its culprits as data and builds its own message; none of them knows how the culprits were found.
 """
 
 from collections.abc import Mapping, Sequence
 
 import polars as pl
+
+__all__ = [
+    "CheckNameCollisionError",
+    "CollectionNotSupportedError",
+    "DagsterDataframelyError",
+    "InvalidSettingError",
+    "NothingSurvivedError",
+    "QuarantineSettingError",
+    "ReservedColumnError",
+    "SchemaShapeError",
+    "UnwritableDtypeError",
+    "ValidationAbortError",
+]
 
 
 class DagsterDataframelyError(Exception):

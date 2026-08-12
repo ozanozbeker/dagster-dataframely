@@ -16,10 +16,10 @@ import polars as pl
 SAMPLE_KEY = "sample"
 
 #: What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's own field rather than exporting a name for it.
-Cell = str | int | float | bool | None
+type Cell = str | int | float | bool | None
 
 #: One row, rendered.
-Row = dict[str, Cell]
+type Row = dict[str, Cell]
 
 
 def _cell(value: object) -> Cell:
