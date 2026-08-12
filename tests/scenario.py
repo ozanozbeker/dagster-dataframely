@@ -1,6 +1,6 @@
 """The one `Orders` schema and the frames the whole effort runs against.
 
-Widened from the front-door probe's original scenario to the cases the rest of the effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description ladders have to distinguish.
+Widened from the decorator probe's original scenario to the cases the rest of the effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description fallbacks have to distinguish.
 
 Nothing here is a fixture. A schema is a class and a frame is a value, so both are cheaper to read as module constants than as fixture indirection, and `Orders` has to be importable at class-definition time to decorate an asset.
 
@@ -23,9 +23,9 @@ class Orders(dy.Schema):
     - `Duration` has no readable polars string form (#23) and no naive CSV encoding (#22).
     - `Binary` and `List` have no CSV encoding at all (#22).
     - The composite primary key is the case where a per-column `unique` constraint would be false, and `tracking_id` is the case where it is true. dataframely keeps `primary_key` and `unique` independent, so both have to be exercised.
-    - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, which is the description ladder's fork (#17).
+    - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, which is the description fallback's fork (#17).
     - `email` names its check and `note` leaves it anonymous, which is the check-name renderer's fork (#20).
-    - `email` and `tags` spell `max_length` identically and mean different things by it, bytes against elements, which is the pill renderer's unit fork (#20).
+    - `email` and `tags` spell `max_length` identically and mean different things by it, bytes against elements, which is the constraint renderer's unit fork (#20).
     - `amount` carries free-form `metadata=` with a non-string value, which is the only dataframely attribute that reaches Dagster's column tags.
     """
 

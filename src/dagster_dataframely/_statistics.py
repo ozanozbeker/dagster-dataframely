@@ -1,4 +1,4 @@
-"""The profile a materialization carries: four tables, one per dtype family.
+"""The statistics a materialization carries: four tables, one per dtype family.
 
 A data consumer gets a `skimr`-style distribution read off the asset itself rather than reaching for a separate tool, on every materialization unless the `statistics` setting turns the pass off.
 
@@ -111,7 +111,7 @@ def _temporal(name: str, dtype: pl.DataType) -> pl.Expr:
 def _string(name: str, dtype: pl.DataType) -> pl.Expr:
     """Aggregates one `String`, `Categorical`, `Enum` or `Binary` column.
 
-    Lengths are bytes throughout: `Binary` has no other unit, and bytes is what dataframely's own `max_length` bounds on a `String`, so a pill and this table agree.
+    Lengths are bytes throughout: `Binary` has no other unit, and bytes is what dataframely's own `max_length` bounds on a `String`, so a constraint and this table agree.
 
     The cast is what lets one expression measure all four. It reads a label as the string it already is, and nothing it produces reaches the data; `Binary` is exempt because it has no string form to read.
     """
@@ -205,13 +205,13 @@ def _family_table(
 def statistics_metadata(
     frame: pl.DataFrame, *, enabled: bool
 ) -> dict[str, dg.TableMetadataValue]:
-    """Profiles a frame as one table per dtype family present in it.
+    """Summarizes a frame as one table per dtype family present in it.
 
     Table values rather than markdown: a table value renders as a full-featured HTML table in the UI, while the same rows as markdown render as printed text. Judged in the running UI.
 
     Args:
         frame: The frame that materialized. Eager, because the caller already collected it.
-        enabled: Whether to profile at all. `False` returns before the frame is touched, so a setting turned off costs nothing rather than costing a pass whose result is discarded.
+        enabled: Whether to compute them at all. `False` returns before the frame is touched, so a setting turned off costs nothing rather than costing a pass whose result is discarded.
 
     Returns:
         One entry per family present, keyed `stats/<family>`, each holding a row per column in the frame's own column order. Empty when the setting is off, and empty of any family the frame has no column of.

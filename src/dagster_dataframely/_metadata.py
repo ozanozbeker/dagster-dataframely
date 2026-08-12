@@ -34,7 +34,7 @@ def _tags(column: dy.Column) -> dict[str, str] | None:
 def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects a schema onto Dagster's Columns tab.
 
-    Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as pills, and the primary key once at table level.
+    Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as constraints, and the primary key once at table level.
 
     `unique` is read from the column's own flag and never derived from `primary_key`. dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
 
@@ -46,7 +46,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     Returns:
         A table schema whose columns are in the schema's own order.
     """
-    pills: dict[str, list[str]] = column_constraints(schema)
+    constraints: dict[str, list[str]] = column_constraints(schema)
     return dg.TableSchema(
         columns=[
             dg.TableColumn(
@@ -56,7 +56,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                 constraints=dg.TableColumnConstraints(
                     nullable=column.nullable,
                     unique=column.unique,
-                    other=pills[name],
+                    other=constraints[name],
                 ),
                 tags=_tags(column),
             )
@@ -69,7 +69,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Projects the quarantine's shape onto its own Columns tab.
 
-    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` pill on a column full of nulls would state something false about every row in the table. The primary key above all, which is why it is stated table-level on the valid table and nowhere here: the invalid rows are exactly where a duplicate key ends up.
+    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**: these rows are here precisely because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row in the table. The primary key above all, which is why it is stated table-level on the valid table and nowhere here: the invalid rows are exactly where a duplicate key ends up.
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 

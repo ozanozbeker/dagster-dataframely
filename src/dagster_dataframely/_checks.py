@@ -277,7 +277,7 @@ def _rule_results(  # noqa: PLR0913 - every setting the specs were derived with 
         failure: What `Schema.filter` reported.
         asset_key: The asset the results hang off. Stated explicitly because the abort path yields results on their own, with no materialization to infer it from.
         severity: Severity for every failing result in this run.
-        check_granularity: How far the rules collapse. Pass what the specs were derived with; the door does, so a run cannot report against a check list it did not declare.
+        check_granularity: How far the rules collapse. Pass what the specs were derived with; the decorator does, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity.
         max_failure_samples: How many invalid rows each rule shows. Unset resolves through the settings chain.
 

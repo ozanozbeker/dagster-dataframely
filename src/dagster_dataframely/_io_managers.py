@@ -4,7 +4,7 @@ The asset body owns what the data is; the manager owns where and how it is writt
 
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
-    - Both managers share one spine, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into polars.
+    - Both managers share one base class, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into polars.
     - **A lazy output sinks to a local temp file and is promoted, rather than sinking at the destination.** See `_FrameIOManager._sink_and_promote` for why the two steps are not one.
     - **A scan is built on the open handle, not on the path.** Handed a file object, polars reads its bytes there and then, which is why the plan still collects after the handle closes. That gives up the transfer a scan of an `s3://` path would have pruned with range requests, and it buys two things worth more here: credentials stay one mechanism, fsspec's, rather than the second one polars' own object-store would need, and a missing file raises `FileNotFoundError` from the open, where `UPathIOManager` can still catch it and honour `allow_missing_partitions`. A scan of a path raises nothing until the caller collects, long after the manager has returned. So laziness buys decoding and materialization here, not transfer: the same bytes an eager read moves, and only the rows and columns a query keeps.
 """
@@ -155,7 +155,7 @@ class _FrameIOManager(UPathIOManager):
 
         **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
 
-        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the decorator resolves it where the asset is declared and hands it to the state machine, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
 
         Args:
             context: The executing output's context, forwarded to the format's own sink.
@@ -260,7 +260,7 @@ class _CSVIOManager(_FrameIOManager):
 
         The decode reads a column back into the dtype the schema declares, so a schema the frame disagrees with is not an inverse: a `Duration('ns')` written under a declared `Duration('us')` reads back a thousand times too long, with nothing in the file to catch it. That makes the declaration part of what gets written, and a false one a pipeline defect rather than a data one.
 
-        `dataframely_asset` runs the same comparison at the door, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.shape_problems`, which is what stops one shape check from admitting what the other refuses.
+        `dataframely_asset` runs the same comparison at the decorator, so this only ever fires for an asset that attached a schema by hand. Both call `_runtime.shape_problems`, which is what stops one shape check from admitting what the other refuses.
         """
         schema = carried_schema(context.definition_metadata)
         if schema is None:

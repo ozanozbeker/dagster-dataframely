@@ -144,7 +144,7 @@ class ValidationAbortError(DagsterDataframelyError):
     ) -> None:
         """States the damage per rule, and the three fixes.
 
-        Naming `quarantine=` is what makes this error the one place a user who has not read the README learns the option exists. It could only be named once the door accepted the keyword (#19); before that it would have sent the reader to a `TypeError`.
+        Naming `quarantine=` is what makes this error the one place a user who has not read the README learns the option exists. It could only be named once the decorator accepted the keyword (#19); before that it would have sent the reader to a `TypeError`.
 
         Args:
             schema_name: The schema that rejected the rows.
@@ -183,7 +183,7 @@ class NothingSurvivedError(DagsterDataframelyError):
 class QuarantineSettingError(DagsterDataframelyError):
     """The quarantine's `dg.AssetOut` sets something that cannot differ between the two outs.
 
-    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the door's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
+    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the decorator's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
     """
 
     def __init__(self, setting: str) -> None:

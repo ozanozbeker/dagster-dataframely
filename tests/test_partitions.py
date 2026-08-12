@@ -254,7 +254,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 
 # --- backfill policy ---
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
-    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the door leaves it alone rather than rejecting the policy it cannot know the manager for."""
+    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the decorator leaves it alone rather than rejecting the policy it cannot know the manager for."""
 
     @dataframely_asset(
         schema=Orders,

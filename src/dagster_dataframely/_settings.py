@@ -51,7 +51,7 @@ class _Setting[T](ABC):
         """Resolves the setting through the three tiers, validating the one that supplied the value.
 
         Args:
-            argument: What the caller passed, or `None` for a caller that passed nothing. `None` is the whole test for "unset": it is why every setting on the door defaults to `None` rather than to the value the package ships, and why a flag a caller turned off reads as off rather than as unset.
+            argument: What the caller passed, or `None` for a caller that passed nothing. `None` is the whole test for "unset": it is why every setting on the decorator defaults to `None` rather than to the value the package ships, and why a flag a caller turned off reads as off rather than as unset.
 
         Returns:
             The resolved value.
@@ -212,7 +212,7 @@ class _Directory(_Setting[str | None]):
 
     Its own shape rather than a `_Choice`, because a path has no vocabulary: the whole point is that nothing here knows which directories a deployment has. It is also the shape with the least to do, since the environment tier already arrives as what the setting holds.
 
-    It is the one setting whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate: the door resolves every setting where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames are staged on a worker.
+    It is the one setting whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate: the decorator resolves every setting where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames are staged on a worker.
     """
 
     @override

@@ -22,7 +22,7 @@ from tests.scenario import Orders, clean_orders, mixed_orders
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 
-class Profile(dy.Schema):
+class Shipment(dy.Schema):
     """The dtypes `Orders` does not carry, one per gap it leaves.
 
     `Orders` already exercises `Int32`, `Decimal`, `String`, `Enum`, `Binary`, `Datetime`, `Duration` and a `List`. What it has no column of is `Float64`, `Date`, `Time`, `Categorical`, `Bool` and `Struct`, which is exactly this schema. Between the two, every dtype the four tables claim reaches a table, and both shapes that claim none reach nothing.
@@ -39,7 +39,7 @@ class Profile(dy.Schema):
     address = dy.Struct({"city": dy.String()}, nullable=True)
 
 
-_PROFILE_SCHEMA: dict[str, pl.DataType] = {
+_SHIPMENT_SCHEMA: dict[str, pl.DataType] = {
     "weight": pl.Float64(),
     "ordered_on": pl.Date(),
     "opens_at": pl.Time(),
@@ -58,7 +58,7 @@ _DURATIONS: list[dt.timedelta | None] = [
 ]
 
 
-def profile_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
+def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
     """Four rows: three carrying values and one entirely null.
 
     `weight` is deliberately awkward: its mean and standard deviation both run past four decimal places while its minimum is a value someone stored, so one frame shows both halves of the rounding rule.
@@ -79,7 +79,7 @@ def profile_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
             "is_gift": [True, False, False, None],
             "address": [{"city": "NY"}, {"city": "LA"}, {"city": "SF"}, None],
         },
-        schema=_PROFILE_SCHEMA,
+        schema=_SHIPMENT_SCHEMA,
     )
 
 
@@ -88,9 +88,9 @@ def _orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dataframely_asset(schema=Profile, name="profile")
-def _profile() -> pl.DataFrame:
-    return profile_frame(_DURATIONS)
+@dataframely_asset(schema=Shipment, name="shipment")
+def _shipment() -> pl.DataFrame:
+    return shipment_frame(_DURATIONS)
 
 
 def _materialized(
@@ -131,7 +131,7 @@ def _families(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
     return {key for key in metadata if key.startswith("stats/")}
 
 
-def _profiled_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
+def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
     """Every column that reached a table, whichever family it landed in."""
     return {
         column
@@ -142,8 +142,8 @@ def _profiled_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]
 
 # --- which families are emitted ---
 def test_a_materialization_carries_one_table_per_family_present(tmp_path: Path):
-    """A `skimr`-style profile: four tables grouped by dtype family, so a distribution read needs no separate tool."""
-    metadata = _metadata(tmp_path, _profile, key="profile")
+    """`skimr`-style statistics: four tables grouped by dtype family, so a distribution read needs no separate tool."""
+    metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _families(metadata) == {
         "stats/numeric",
@@ -170,18 +170,18 @@ def test_a_family_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
     """`List` and `Struct` have nothing to say beyond their counts, and a fifth table holding two columns is not worth the row it takes."""
-    profiled = _metadata(tmp_path, _profile, key="profile")
+    stats = _metadata(tmp_path, _shipment, key="shipment")
     ordered = _metadata(tmp_path, _orders)
 
-    assert "address" not in _profiled_columns(profiled)
-    assert "tags" not in _profiled_columns(ordered)
+    assert "address" not in _stat_columns(stats)
+    assert "tags" not in _stat_columns(ordered)
     # `Orders` carries no `Bool`, so the fourth table is absent for a second reason.
     assert _families(ordered) == {"stats/numeric", "stats/temporal", "stats/string"}
 
 
 def test_the_families_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
     """A table value renders as a full-featured HTML table in the UI; markdown renders as printed text. Judged in the running UI."""
-    metadata = _metadata(tmp_path, _profile, key="profile")
+    metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert all(
         isinstance(metadata[family], dg.TableMetadataValue)
@@ -191,7 +191,7 @@ def test_the_families_are_emitted_as_tables_rather_than_markdown(tmp_path: Path)
 
 # --- the numeric family ---
 def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
-    metadata = _metadata(tmp_path, _profile, key="profile")
+    metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _table(metadata, "numeric")["weight"] == {
         "column": "weight",
@@ -207,7 +207,7 @@ def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
 
 def test_a_computed_cell_is_rounded_and_an_observed_one_is_exact(tmp_path: Path):
     """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough of them."""
-    weight = _table(_metadata(tmp_path, _profile, key="profile"), "numeric")["weight"]
+    weight = _table(_metadata(tmp_path, _shipment, key="shipment"), "numeric")["weight"]
 
     assert weight["min"] == 1.23456789
     assert weight["mean"] == round(2.41152263, 4)
@@ -230,7 +230,7 @@ def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
 # --- the temporal family ---
 def test_a_date_column_renders_as_a_date_rather_than_a_datetime(tmp_path: Path):
     """What routing through `describe()` costs: it stringifies with per-source-dtype formatting, and a `Date` comes back as a datetime nobody stored."""
-    ordered_on = _table(_metadata(tmp_path, _profile, key="profile"), "temporal")[
+    ordered_on = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "ordered_on"
     ]
 
@@ -239,7 +239,7 @@ def test_a_date_column_renders_as_a_date_rather_than_a_datetime(tmp_path: Path):
 
 
 def test_a_temporal_column_reports_the_span_between_its_bounds(tmp_path: Path):
-    temporal = _table(_metadata(tmp_path, _profile, key="profile"), "temporal")
+    temporal = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")
 
     assert temporal["ordered_on"]["span"] == "8d"
     assert temporal["opens_at"] == {
@@ -254,7 +254,7 @@ def test_a_temporal_column_reports_the_span_between_its_bounds(tmp_path: Path):
 
 def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
     """`8d`, `1m 30s`, `2h 5m`. ISO-8601 is what a reader gets from the obvious call, and a span is the one cell nobody can read that way."""
-    fulfilled_in = _table(_metadata(tmp_path, _profile, key="profile"), "temporal")[
+    fulfilled_in = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
 
@@ -264,11 +264,11 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
 
 
 def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
-    """A duration is a difference, so it is signed. A profile that dropped the sign would read as its own opposite."""
+    """A duration is a difference, so it is signed. Statistics that dropped the sign would read as their own opposite."""
 
-    @dataframely_asset(schema=Profile, name="profile")
+    @dataframely_asset(schema=Shipment, name="shipment")
     def refunds() -> pl.DataFrame:
-        return profile_frame(
+        return shipment_frame(
             [
                 dt.timedelta(seconds=-90),
                 dt.timedelta(seconds=-30),
@@ -277,7 +277,7 @@ def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
             ]
         )
 
-    fulfilled_in = _table(_metadata(tmp_path, refunds, key="profile"), "temporal")[
+    fulfilled_in = _table(_metadata(tmp_path, refunds, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
 
@@ -288,11 +288,11 @@ def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
     """A column nobody filled in has no bounds and no span. Zero would claim it did."""
 
-    @dataframely_asset(schema=Profile, name="profile")
+    @dataframely_asset(schema=Shipment, name="shipment")
     def unfulfilled() -> pl.DataFrame:
-        return profile_frame([None, None, None, None])
+        return shipment_frame([None, None, None, None])
 
-    fulfilled_in = _table(_metadata(tmp_path, unfulfilled, key="profile"), "temporal")[
+    fulfilled_in = _table(_metadata(tmp_path, unfulfilled, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
 
@@ -326,14 +326,14 @@ def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
 def test_the_string_family_covers_every_dtype_it_claims(tmp_path: Path):
     """`String`, `Categorical`, `Enum` and `Binary`: four dtypes whose useful statistics are all lengths and counts, so they read as one table rather than four."""
     ordered = _table(_metadata(tmp_path, _orders), "string")
-    profiled = _table(_metadata(tmp_path, _profile, key="profile"), "string")
+    stats = _table(_metadata(tmp_path, _shipment, key="shipment"), "string")
 
     # `status` is an `Enum` and `payload` is `Binary`.
     assert {"order_id", "email", "tracking_id", "status", "payload", "note"} <= set(
         ordered
     )
     assert ordered["payload"]["min_len"] == 2
-    assert profiled["region"] == {
+    assert stats["region"] == {
         "column": "region",
         "count": 4,
         "null_count": 1,
@@ -347,7 +347,9 @@ def test_the_string_family_covers_every_dtype_it_claims(tmp_path: Path):
 # --- the boolean family ---
 def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
     """The rate is the computed one of the three, so it rounds where the counts do not."""
-    is_gift = _table(_metadata(tmp_path, _profile, key="profile"), "boolean")["is_gift"]
+    is_gift = _table(_metadata(tmp_path, _shipment, key="shipment"), "boolean")[
+        "is_gift"
+    ]
 
     assert is_gift == {
         "column": "is_gift",
@@ -360,7 +362,9 @@ def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
 
 
 # --- the setting ---
-def test_a_materialization_is_profiled_unless_someone_says_otherwise(tmp_path: Path):
+def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
+    tmp_path: Path,
+):
     """Opt-out, on by default: the asset declares nothing and the tables are there."""
     assert _families(_metadata(tmp_path, _orders))
 
@@ -371,10 +375,10 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass_on_both_outs(tmp_path:
     @dataframely_asset(
         schema=Orders, name="orders", quarantine=dg.AssetOut(), statistics=False
     )
-    def unprofiled() -> pl.DataFrame:
+    def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
-    materialized = _materialized(tmp_path, unprofiled)
+    materialized = _materialized(tmp_path, without_statistics)
 
     assert set(materialized) == {"orders", "orders_quarantine"}
     assert not [family for m in materialized.values() for family in _families(m)]
@@ -394,7 +398,7 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
     assert not _families(_metadata(tmp_path, house_style))
 
 
-def test_the_quarantine_is_profiled_too(tmp_path: Path):
+def test_the_quarantine_carries_statistics_too(tmp_path: Path):
     """The invalid rows are a table a consumer reads, and what the values in them look like is the question the checks do not answer."""
 
     @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())

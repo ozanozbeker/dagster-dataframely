@@ -24,7 +24,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 That is the whole integration.
 
-Before the asset has ever run, `Orders` fills the catalog's Columns tab: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and one pill per remaining constraint.
+Before the asset has ever run, `Orders` fills the catalog's Columns tab: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and every remaining constraint listed beside it.
 Every run reports one asset check per dataframely rule, each with its own pass/fail history, behind a blocking shape check that compares the frame's columns and dtypes against the schema before a single row is filtered.
 Add `quarantine=dg.AssetOut()` and the rows the schema rejects are written to a sibling asset instead of failing the run, as long as something survives.
 
@@ -115,7 +115,7 @@ They record `path`, `bytes_written` and `dagster/storage_kind` on each materiali
 No column schema, in particular: the asset definition owns what the data is, and leaving the materialization's own metadata empty is what keeps the Columns tab showing the schema as declared.
 
 What degrades on someone else's manager is one surface.
-A stock polars IO manager writes its own `dagster/column_schema` onto the materialization, and with both metadata surfaces populated Dagster merges them in the catalog Columns tab: column names come out lowercased and the constraint pills disappear, because the materialization's constraint-free schema becomes the base.
+A stock polars IO manager writes its own `dagster/column_schema` onto the materialization, and with both metadata surfaces populated Dagster merges them in the catalog Columns tab: column names come out lowercased and the constraints disappear, because the materialization's constraint-free schema becomes the base.
 Dtypes, descriptions and column tags survive, and the Lineage Metadata accordion is definition-only and never merged, so full fidelity is still one click away.
 This is documented, not designed around.
 Parity is a preference, never a constraint.
@@ -168,7 +168,7 @@ def orders() -> pl.DataFrame:
     return raw.select("order_id", "amount")
 ```
 
-`dg.AssetExecutionContext.get()` is the door's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two traps below, where Dagster rejects an annotated one under postponed annotations.
+`dg.AssetExecutionContext.get()` is the decorator's own shape rather than a workaround: it is how the wrapper reaches the context, and a transform with no `context` parameter cannot hit the first of the two traps below, where Dagster rejects an annotated one under postponed annotations.
 
 **A fan-in over every partition arrives as one frame per partition.**
 An unpartitioned asset depending on the whole of a partitioned one gets a dict keyed by partition key, because the IO manager reads each key and assembles the results:
@@ -234,7 +234,7 @@ The shape check runs before the staging, so a frame whose shape disagrees with t
 > `temp_dir` points it at a mounted volume instead.
 
 Storage stays eager past that point, and that is the difference from the section above.
-This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and the state machine cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+This package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and the state machine cannot choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
 A plain `@dg.asset` streams end to end because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
@@ -251,7 +251,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | --- | --- | --- |
 | `check_granularity` | how far the schema's rules collapse into checks: `rule`, `column` or `schema` | `rule` |
 | `multi_column_rules` | where the rules no single column owns land at `column` granularity: `schema` or `per_rule` | `schema` |
-| `statistics` | whether each materialization carries a profile of what it wrote | `true` |
+| `statistics` | whether each materialization carries statistics for what it wrote | `true` |
 | `max_failure_samples` | how many of the rows a rule rejected reach that rule's check | `5` |
 | `row_sample` | how many of the valid table's rows reach its materialization | `5` |
 | `temp_dir` | which disk a `LazyFrame` is staged on, before it is validated or promoted to storage | the system temp directory |
@@ -270,7 +270,7 @@ Nothing migrates them, so choose it before the asset ships rather than after.
 
 ### Statistics and both samples are on by default
 
-Each materialization carries a `skimr`-style profile of what it wrote: one table per dtype family present, under `stats/numeric`, `stats/temporal`, `stats/string` and `stats/boolean`, on the quarantine as well as the valid table.
+Each materialization carries `skimr`-style statistics for what it wrote: one table per dtype family present, under `stats/numeric`, `stats/temporal`, `stats/string` and `stats/boolean`, on the quarantine as well as the valid table.
 
 > [!IMPORTANT]
 > Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
@@ -334,10 +334,10 @@ An IO manager reads the variable and the package default, because the decorator 
 A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
 Both are the same decision: this setting is set to move the staging file off the ephemeral disk, so a typo that quietly stages there anyway is the failure it exists to prevent.
 
-## The kit
+## Hand-wiring
 
 The decorator is one arrangement of parts the package also exports on their own: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_table_schema`, `quarantine_frame`, `process` and `check_name`.
-Reach for them when the decorator's shape is not the shape you need: a schema attached to an asset you did not declare, or an out arrangement the door does not offer.
+Reach for them when the decorator's shape is not the shape you need: a schema attached to an asset you did not declare, or an out arrangement the decorator does not offer.
 Then the `@dg.multi_asset` is yours to wire, out of the same parts.
 
 ```python

@@ -691,7 +691,7 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
 def test_the_temp_dir_environment_variable_reaches_the_landing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier, asserted through a materialization rather than through `resolve`: the door reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
+    """The house-style tier, asserted through a materialization rather than through `resolve`: the decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
     _, lazy = _both_ways(clean_orders, None)

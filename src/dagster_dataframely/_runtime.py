@@ -2,7 +2,7 @@
 
 The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three rule_columns into five: it is the consent to partial data, and its absence is the refusal.
 
-The middle stage is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics profile runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
+The middle stage is the only one a transform can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
 import tempfile
@@ -55,9 +55,9 @@ def shape_problems(
 ) -> list[dict[str, str]]:
     """Compares the frame's shape against the schema, naming every mismatch.
 
-    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The door promises either return type works, so the shape check cannot be built on a difference between them.
+    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The decorator promises either return type works, so the shape check cannot be built on a difference between them.
 
-    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without a door. Sharing the comparison is what stops two shape checks from drawing the line differently.
+    Package-internal rather than private, because the CSV IO manager asks the same question of an asset that reached it without the decorator. Sharing the comparison is what stops two shape checks from drawing the line differently.
 
     Only public API, and none of it executes: `collect_schema()` resolves a `LazyFrame`'s shape without running it.
 
@@ -91,7 +91,7 @@ def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
 
     Args:
         frame: The plan to stage.
-        temp_dir: Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
+        temp_dir: Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the decorator resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
 
     Returns:
         The frame the plan produced, read back whole.
@@ -205,7 +205,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     )
 
 
-def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door decides has to be passable by hand
+def process(  # noqa: PLR0913 - the escape hatch for hand-wiring: everything the decorator decides has to be passable by hand
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
@@ -231,10 +231,10 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         context: The executing asset's context, for resolving each out to its key.
         valid_out: The output name the validated frame materializes under.
         quarantine_out: The output name the invalid rows materialize under, or `None` when the asset declares no quarantine.
-        check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the door resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
+        check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
-        statistics: Whether each materialization carries a profile of what it wrote. Unset resolves through the settings chain, which ships it on.
+        statistics: Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
         row_sample: How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
         temp_dir: Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
@@ -293,7 +293,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
     def valid_result() -> dg.MaterializeResult[pl.DataFrame]:
         """Builds the valid out's materialization, where it is yielded rather than ahead of every exit.
 
-        Two of the five discard it, and since the profile is a pass over the whole frame, building it early would charge an aborting run for a table nobody will see.
+        Two of the five discard it, and since the statistics are a pass over the whole frame, building it early would charge an aborting run for a table nobody will see.
         """
         return dg.MaterializeResult(
             asset_key=valid_key,
@@ -318,7 +318,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         raise ValidationAbortError(schema.__name__, rejected, failure.counts())
 
     quarantine_key = context.asset_key_for_output(quarantine_out)
-    # Bound once: the frame is written and profiled, and `quarantine_frame` rebuilds it out of `details()` on every call.
+    # Bound once: the frame is written and summarized, and `quarantine_frame` rebuilds it out of `details()` on every call.
     invalid: pl.DataFrame = quarantine_frame(schema, failure)
     quarantine_result = dg.MaterializeResult(
         asset_key=quarantine_key,
@@ -326,7 +326,7 @@ def process(  # noqa: PLR0913 - the kit's escape hatch: everything the door deci
         metadata={
             "dagster/row_count": rejected,
             "cooccurrence": _cooccurrence(failure.cooccurrence_counts()),
-            # Profiled like any other table, because it is one somebody reads. What the rejected values look like in aggregate is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
+            # Summarized like any other table, because it is one somebody reads. What the rejected values look like in aggregate is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
             **statistics_metadata(invalid, enabled=emit_statistics),
             # No row sample, deliberately. These rows already reach the event log once, through the check that rejected each of them and with the rule attached. A second copy here would carry less and cost the same.
         },
