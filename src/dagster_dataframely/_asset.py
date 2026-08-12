@@ -313,7 +313,8 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
             )
 
         @dg.multi_asset(
-            name=asset_name,
+            # The op's name, not the asset's. `@dg.asset` derives it from the whole key and this decorator matches that, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would build two ops called the same thing, and Dagster tolerates that only where the two definitions compare equal. Two of these never compare equal, since every check output name embeds its own asset key (#70).
+            name=key.to_python_identifier(),
             outs=outs,
             check_specs=check_specs(
                 schema,
