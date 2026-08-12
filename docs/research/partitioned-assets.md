@@ -176,6 +176,19 @@ and this package pins `dagster>=1.13.16` with no upper bound.
 Adopting it would key every check's history off a surface that can change in a patch release, and a change in how those rows are keyed is exactly the kind that orphans the history it was adopted to fix.
 The spec's own instruction is to observe rather than design around, so this is written down and left alone.
 
+> **Sharpened by [#31](https://github.com/ozanozbeker/dagster-dataframely/issues/31).**
+> The re-key above was assumed rather than measured.
+> Measured, it is small **[RAN]**: adoption deletes nothing, the history a check key returns stays continuous across the switch, the per-partition view starts empty and refills as each partition next runs, and the residue is a single `partition_key=None` entry that does not grow with how long adoption is deferred.
+> That measurement is scratch-only, deliberately: it describes what adopting would cost, and a test of a path this package does not take would pin a hypothetical.
+> What survives is a different risk.
+> This package's floor has no upper bound, so a preview parameter that changes in a patch release breaks a user's asset through no action of their own.
+> The trigger is therefore GA rather than the end of preview: beta still permits "behavior changes in patch releases", which is the same risk under a quieter name.
+> Two mechanics of the parameter itself were checked alongside it, and those do get tests, because they are properties of the surface rather than of adopting it.
+> A blocking check takes a `partitions_def`, stamps its partition, and still ends the run when it fails, so the shape check needs no carve-out.
+> And upstream does not enforce its own documented constraint that a spec's partitioning match its asset's, at construction, attach, definition load or run; a mismatch is inert in storage and wrong only in the resolved asset graph.
+> Both are in `tests/test_upstream_characterization.py`, beside the warning itself.
+> Scratch scripts lived in `/tmp/dd31/`.
+
 ---
 
 ## 6. The two decisions banked from #18
@@ -210,9 +223,10 @@ That is exactly what makes it worth a test: nothing in this repo would notice if
 
 Recorded, not fixed here.
 
-1. **Partition-scoped check history, once `AssetCheckSpec(partitions_def=)` leaves preview.**
+1. **Per-partition check history, once `AssetCheckSpec(partitions_def=)` reaches GA.**
    Findings 2 and 3 both close.
-   The blocker is the preview warning, not the mechanics, so the trigger is an upstream release note rather than more research.
+   The blocker is the preview warning, not the mechanics, so what was missing was a way to notice it going away.
+   `tests/test_upstream_characterization.py::test_a_partitioned_asset_check_spec_is_still_in_preview` now asserts the exact warning category, so the suite fails when upstream promotes the parameter, and the failure message tells beta from GA.
    *Tracked as [#31](https://github.com/ozanozbeker/dagster-dataframely/issues/31).*
 2. **Decide whether the orphaned planned row is worth an upstream issue.**
    It is Dagster's, it reproduces on a stock `@dg.asset` carrying one check spec, and its effect is a per-partition check view that reads never-executed on an asset whose checks all ran.

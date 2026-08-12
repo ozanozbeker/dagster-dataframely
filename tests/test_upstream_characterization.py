@@ -5,6 +5,7 @@ These test upstream, not this package. Each one covers a shape that is private, 
 
 import datetime as dt
 import inspect
+import warnings
 from pathlib import Path
 from typing import override
 
@@ -14,6 +15,7 @@ import polars as pl
 import pytest
 from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
 from dagster._serdes import deserialize_value, serialize_value
+from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
@@ -269,6 +271,83 @@ def test_every_asset_out_parameter_has_a_readable_attribute_of_the_same_name():
 
     assert parameters
     assert {name for name in parameters if not hasattr(out, name)} == set()
+
+
+def test_a_partitioned_asset_check_spec_is_still_in_preview():
+    """`AssetCheckSpec(partitions_def=)` still warns `PreviewWarning`, and still warns nothing else."""
+    # #31 waits on this warning disappearing entirely. It is the ticket's only trigger: `tests/test_partitions.py` pins the symptoms of not using the parameter, and those hold whether it is preview or GA, so nothing else in the suite notices upstream promoting it.
+    # The category is asserted exactly rather than through `pytest.warns`, because the three outcomes have to be told apart and `pytest.warns` reports two of them identically as "DID NOT WARN". An empty list is GA and the parameter can be adopted; a `BetaWarning` is the stage in between and cannot, because beta still permits "behavior changes in patch releases", which is the risk the deferral rests on.
+    # `dagster_shared` is Dagster's own vendored utilities rather than public API, so the category has no exported spelling.
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        dg.AssetCheckSpec(
+            "row_count",
+            asset=dg.AssetKey(["orders"]),
+            partitions_def=dg.StaticPartitionsDefinition(["a"]),
+        )
+
+    assert [warning.category for warning in recorded] == [PreviewWarning]
+
+
+def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
+    """A spec whose `partitions_def` differs from its asset's is still accepted, through a resolved asset graph and through a run."""
+    # Upstream states the constraint in the parameter's own docstring: "Must be either None or the same as the PartitionsDefinition of the asset specified by `asset`." Nothing checks it, at construction, at attach, at definition load, or at run.
+    # #31 would forward a caller's `partitions_def` through `check_specs` without validating it, because that function takes an asset key and a key carries no partitioning. That is only safe while this holds: a release that starts enforcing the constraint would raise on hand-wired call sites written against it.
+    days = dg.StaticPartitionsDefinition(["mon", "tue"])
+    elsewhere = dg.StaticPartitionsDefinition(["x", "y"])
+    key = dg.AssetKey(["orders"])
+
+    with warnings.catch_warnings():
+        # The warning is the subject of the test above, not of this one, and letting it through would put a line in every run's warnings summary.
+        warnings.simplefilter("ignore", PreviewWarning)
+        spec = dg.AssetCheckSpec("row_count", asset=key, partitions_def=elsewhere)
+
+    # No return annotation, unlike the assets above: one carrying `check_specs` infers its outputs from the annotation, so `-> None` fails with `Expected Tuple annotation for multiple outputs`.
+    @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
+    def orders():
+        return dg.MaterializeResult(
+            check_results=[dg.AssetCheckResult(check_name="row_count", passed=True)]
+        )
+
+    graph = dg.Definitions(assets=[orders]).resolve_asset_graph()
+
+    assert graph.get(dg.AssetCheckKey(key, "row_count")).partitions_def == elsewhere
+    assert graph.get(key).partitions_def == days
+
+    evaluation = dg.materialize(
+        [orders], partition_key="mon"
+    ).get_asset_check_evaluations()[0]
+
+    # The stamp is the step's partition key and never the spec's own definition, which is what makes a mismatch inert in storage: `mon` is not a member of `elsewhere`.
+    assert evaluation.partition == "mon"
+
+
+def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run():
+    """A blocking check carrying a `partitions_def` still stamps its partition, and a failing one still ends the run."""
+    # #31 passes the partitions_def to every spec `check_specs` builds, the shape check included. That one is worth proving rather than assuming: it is the only spec this package marks `blocking=True`, and a preview parameter that quietly disarmed the gate would let a wrong-shaped frame reach the table.
+    days = dg.StaticPartitionsDefinition(["mon", "tue"])
+    key = dg.AssetKey(["orders"])
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", PreviewWarning)
+        spec = dg.AssetCheckSpec(
+            "dy_schema__dtypes", asset=key, blocking=True, partitions_def=days
+        )
+
+    @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
+    def orders():
+        return dg.MaterializeResult(
+            check_results=[
+                dg.AssetCheckResult(check_name="dy_schema__dtypes", passed=False)
+            ]
+        )
+
+    result = dg.materialize([orders], partition_key="mon", raise_on_error=False)
+    evaluation = result.get_asset_check_evaluations()[0]
+
+    assert not result.success
+    assert not evaluation.passed
+    assert evaluation.partition == "mon"
 
 
 def test_object_metadata_value_carries_a_live_python_object():
