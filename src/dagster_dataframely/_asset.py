@@ -136,6 +136,27 @@ def _quarantine_out(
     return _rebuild(quarantine, overrides)
 
 
+def _description(schema: type[dy.Schema], description: str | None) -> str | None:
+    """Resolves the asset's description, most specific source first.
+
+    What the decorator was passed wins, then the schema's own docstring. Returning `None` is what leaves Dagster's fallback to the transform's docstring standing, so the package fills the gap rather than closing it.
+
+    The schema outranks the transform because the schema is what describes the table, whereas the transform's docstring describes the function that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's: those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
+
+    Empty is absent on both sources, and neither can express "no description at all", because Dagster's own fallback takes over as soon as this returns nothing.
+
+    Args:
+        schema: The schema the asset validates against.
+        description: What the decorator was given, or `None`.
+
+    Returns:
+        The description to forward, or `None` to leave Dagster's own fallback in place.
+    """
+    # Read through `__doc__` rather than `inspect.getdoc`, which walks the MRO: a schema declaring no docstring would inherit `dy.Schema`'s and describe itself as a base class for schema definitions.
+    # `cleandoc` because a raw docstring keeps its source indentation, which the catalog renders as a code block.
+    return description or inspect.cleandoc(schema.__doc__ or "") or None
+
+
 def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
     *,
     # --- decorator-owned ---
@@ -157,7 +178,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
     kinds: AbstractSet[str] | None = None,
     automation_condition: AutomationCondition | None = None,
     freshness_policy: dg.FreshnessPolicy | None = None,
-    # --- forwarded to @dg.multi_asset, verbatim ---
+    # --- forwarded to @dg.multi_asset, verbatim, except `description`, which resolves against the schema first ---
     name: str | None = None,
     ins: Mapping[str, dg.AssetIn] | None = None,
     deps: Iterable[AssetDep] | None = None,
@@ -214,7 +235,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         name: Asset name. Defaults to the function name.
         ins: Explicit input mapping, for the cases a parameter name cannot express.
         deps: Upstream assets this one depends on without loading.
-        description: Asset description. Defaults to the function's docstring.
+        description: Asset description. Unset, the schema's own docstring fills it, and the transform's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
         config_schema: Run configuration schema for the underlying op.
         required_resource_keys: Resources the transform reaches through the context.
         partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning. The transform takes no `context` parameter, so a partitioned one reaches its own key with `dg.AssetExecutionContext.get().partition_key`.
@@ -263,7 +284,8 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
     forwarded: dict[str, Any] = {
         "ins": ins,
         "deps": deps,
-        "description": description,
+        # On the `multi_asset` rather than on either out, so it becomes the op's description and both outs fall back to it. An out that names its own still wins, which is how a quarantine describes itself.
+        "description": _description(schema, description),
         "config_schema": config_schema,
         "required_resource_keys": required_resource_keys,
         "partitions_def": partitions_def,

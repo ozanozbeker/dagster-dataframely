@@ -409,6 +409,33 @@ The materialization keys are deliberately outside it, because `sample`, `cooccur
 A schema with a column of its own inside the namespace raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
 The prefix is hardcoded rather than configurable: its whole value is being the same string in every project.
 
+## The description comes from the schema
+
+`@dataframely_asset` resolves the asset's description in order, most specific first: `description=` on the decorator, then the schema's own docstring, then Dagster's own fallback to the transform's docstring.
+
+```python
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+
+@dd.dataframely_asset(schema=Orders)
+def orders() -> pl.DataFrame:
+    """Joins the two extracts and drops the test accounts."""
+    ...
+```
+
+`Customer orders, one row per order line.` is what the catalog reads.
+The schema outranks the transform because the schema describes the table, whereas the transform's docstring describes the function that fills it, and the two are rarely the same sentence.
+Passing `description=` still wins over both, and a schema with no docstring leaves the transform's standing exactly as it did before.
+
+The description lands on the op, so the quarantine sibling inherits it.
+`dg.AssetOut(description=...)` is how the quarantine says something different.
+
+> [!WARNING]
+> **This moved.**
+> An asset carrying both a schema docstring and a transform docstring, passing no `description=`, used to render the transform's and now renders the schema's.
+> If the transform's was the one you wanted, pass it as `description=` at the call site.
+
 ## The op is named after the whole asset key
 
 `@dataframely_asset(key_prefix="sales", name="orders")` builds an op called `sales__orders`, which is how `@dg.asset` names its own.
