@@ -375,7 +375,7 @@ def test_multi_column_rules_bucket_into_the_schema_check_by_default():
 
 
 def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
-    """The knob is for a schema whose cross-column rules are the ones worth their own history."""
+    """The setting is for a schema whose cross-column rules are the ones worth their own history."""
 
     @dataframely_asset(
         schema=Orders,

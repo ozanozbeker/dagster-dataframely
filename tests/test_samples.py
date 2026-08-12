@@ -2,7 +2,7 @@
 
 Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the good materialization's for the rows that survived.
 
-Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out knob that has to work.
+Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something is pinning is the off switch, which is the half of an opt-out setting that has to work.
 """
 
 import datetime as dt
@@ -123,7 +123,7 @@ def test_the_row_sample_shows_every_column_the_row_holds(tmp_path: Path):
 
 
 def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: Path):
-    """Absent, not empty: an empty table in the UI reads as a run that wrote no rows, which is a different thing from a knob somebody turned off."""
+    """Absent, not empty: an empty table in the UI reads as a run that wrote no rows, which is a different thing from a setting somebody turned off."""
 
     @dataframely_asset(schema=Orders, name="orders", row_sample=0)
     def unsampled() -> pl.DataFrame:
@@ -335,9 +335,9 @@ def test_a_collapsed_check_samples_every_rule_that_rejected_something(tmp_path: 
     assert [row["order_id"] for row in sampled] == ["ORD-6"]
 
 
-# --- the knobs are three, not one ---
+# --- the settings are three, not one ---
 def test_turning_the_statistics_off_leaves_both_samples_on(tmp_path: Path):
-    """Consenting to summary statistics is not consenting to raw values, and the converse holds too: they are separate knobs because they are separate consents."""
+    """Consenting to summary statistics is not consenting to raw values, and the converse holds too: they are separate settings because they are separate consents."""
 
     @dataframely_asset(
         schema=Orders, name="orders", quarantine=dg.AssetOut(), statistics=False
@@ -373,7 +373,7 @@ def test_turning_both_samples_off_leaves_the_statistics_on(tmp_path: Path):
 
 
 def test_a_sample_outside_the_vocabulary_raises_at_the_door():
-    """Definition time, like every other knob, so a misconfiguration never reaches a run."""
+    """Definition time, like every other setting, so a misconfiguration never reaches a run."""
     wrong: Any = -1
 
     with pytest.raises(InvalidSettingError) as raised:

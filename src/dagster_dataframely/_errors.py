@@ -26,12 +26,12 @@ class InvalidSettingError(DagsterDataframelyError):
         tier: str,
         env_var: str,
     ) -> None:
-        """Names the knob, what it got, where that came from, and every tier it could have come from.
+        """Names the setting, what it got, where that came from, and every tier it could have come from.
 
         Args:
             setting: The setting's name, which is also the argument's.
             value: The value that was rejected.
-            allowed: The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A knob over a range arrives as the phrase that describes it, because printing every value it accepts is not a thing that can be done.
+            allowed: The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because printing every value it accepts is not a thing that can be done.
             tier: Where this value came from, worded as a phrase.
             env_var: The setting's environment variable.
         """

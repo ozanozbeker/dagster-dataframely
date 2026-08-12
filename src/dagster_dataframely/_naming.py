@@ -1,6 +1,6 @@
 """The reserved namespace, the rule-name rewrite, and the two definition-time collision errors.
 
-`dy_` is hardcoded rather than configurable. A reserved namespace is not a preference; its whole value is being the same string in every project, so a knob would only let one project make its check names unrecognisable to the next.
+`dy_` is hardcoded rather than configurable. A reserved namespace is not a preference; its whole value is being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
 """
 
 import inspect

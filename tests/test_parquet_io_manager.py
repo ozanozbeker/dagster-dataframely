@@ -227,9 +227,9 @@ def test_a_failing_plan_leaves_the_file_already_there_untouched(tmp_path: Path) 
 def test_the_sink_lands_where_the_temp_dir_variable_says(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same knob `dataframely_asset` lands its own transform through, read here from the environment because a manager has no asset argument to take it from.
+    """The same setting `dataframely_asset` lands its own transform through, read here from the environment because a manager has no asset argument to take it from.
 
-    A missing directory raises rather than being created, deliberately. The knob is set to move the landing off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    A missing directory raises rather than being created, deliberately. The setting is set to move the landing off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))

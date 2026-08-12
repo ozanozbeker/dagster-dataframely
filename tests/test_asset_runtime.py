@@ -75,7 +75,7 @@ def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
 
 
 def test_a_clean_run_emits_row_count(tmp_path: Path):
-    """The good count specifically, so `dg.build_metadata_bounds_checks` needs no knob from this package."""
+    """The good count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package."""
     result = _materialize(tmp_path, _raw_orders, orders)
     metadata = _materialized(result)[dg.AssetKey(["orders"])]
 
@@ -675,9 +675,9 @@ def test_an_eager_return_never_lands(tmp_path: Path):
 
 
 def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
-    """The other half of the same assertion, and the reason the knob exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
+    """The other half of the same assertion, and the reason the setting exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
 
-    A missing directory raises rather than being created, deliberately. The knob is set to move the landing off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
+    A missing directory raises rather than being created, deliberately. The setting is set to move the landing off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
     _, lazy = _both_ways(clean_orders, None, temp_dir=str(absent))

@@ -150,7 +150,7 @@ Parquet is self-describing, keeps every dtype natively, and needs no schema to r
 
 ## Partitioning
 
-`partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no knob here.
+`partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code and has no setting here.
 Both outs carry it, which is what makes the quarantine unable to escape its asset's partitioning.
 The state machine runs per partition on that partition's frame, `dagster/row_count` is that partition's good count, and a partition whose frame drifts aborts at the gate without touching any other partition's file.
 
@@ -243,7 +243,7 @@ Ingestion-scale and larger-than-memory work belongs to other tools.
 
 ## Settings
 
-Every knob resolves through three tiers, each overriding the one before: the package default, then an environment variable, then the argument on the asset.
+Every setting resolves through three tiers, each overriding the one before: the package default, then an environment variable, then the argument on the asset.
 A platform engineer sets a house style once for a whole code location, and an asset overrides it where that style is wrong.
 Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 
@@ -332,7 +332,7 @@ The argument tier is the decorator's alone.
 An IO manager reads the variable and the package default, because the decorator resolves its argument where the asset is declared and hands it to the state machine, which has landed and validated the frame long before a manager sees one.
 
 A directory that does not exist raises rather than being created, and an empty value raises rather than reading as unset.
-Both are the same decision: this knob is set to move the landing off the ephemeral disk, so a typo that quietly lands there anyway is the failure it exists to prevent.
+Both are the same decision: this setting is set to move the landing off the ephemeral disk, so a typo that quietly lands there anyway is the failure it exists to prevent.
 
 ## The kit
 

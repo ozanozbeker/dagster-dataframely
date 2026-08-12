@@ -1,12 +1,12 @@
 """The profile a materialization carries: four tables, one per dtype family.
 
-A data consumer gets a `skimr`-style distribution read off the asset itself rather than reaching for a separate tool, on every materialization unless the `statistics` knob turns the pass off.
+A data consumer gets a `skimr`-style distribution read off the asset itself rather than reaching for a separate tool, on every materialization unless the `statistics` setting turns the pass off.
 
 **Never through `describe()`.** It stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in a single column. Everything here is computed with typed polars expressions and stringified once, deliberately, at the display step.
 
 Two rules divide the cells. `mean`, `std`, `p50` and `true_rate` are derived, so they round to four places. `min` and `max` are values that exist in the data, so they are shown exactly: the UI must never display a number nobody stored.
 
-**The string family carries no value-bearing statistic, deliberately.** A `min` or `max` on an email column would print real addresses permanently into a shared, exported event log, and lengths and cardinality catch what you would actually catch. The knob does not cover this: consenting to summary statistics is not consenting to raw values.
+**The string family carries no value-bearing statistic, deliberately.** A `min` or `max` on an email column would print real addresses permanently into a shared, exported event log, and lengths and cardinality catch what you would actually catch. The setting does not cover this: consenting to summary statistics is not consenting to raw values.
 
 A column whose dtype belongs to no family reaches no table at all. A `List`, a `Struct` or an `Array` has nothing to say past a count and a null count, and two numbers do not earn a fifth table.
 
@@ -211,10 +211,10 @@ def statistics_metadata(
 
     Args:
         frame: The frame that materialized. Eager, because the caller already collected it.
-        enabled: Whether to profile at all. `False` returns before the frame is touched, so a knob turned off costs nothing rather than costing a pass whose result is discarded.
+        enabled: Whether to profile at all. `False` returns before the frame is touched, so a setting turned off costs nothing rather than costing a pass whose result is discarded.
 
     Returns:
-        One entry per family present, keyed `stats/<family>`, each holding a row per column in the frame's own column order. Empty when the knob is off, and empty of any family the frame has no column of.
+        One entry per family present, keyed `stats/<family>`, each holding a row per column in the frame's own column order. Empty when the setting is off, and empty of any family the frame has no column of.
     """
     if not enabled:
         return {}

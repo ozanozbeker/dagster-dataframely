@@ -87,11 +87,11 @@ def _landed_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
 
     The file is gone before this returns, so no exit of the state machine can leave one behind, including the two whose whole purpose is that nothing is written.
 
-    A configured directory is not created. The knob exists to move the landing off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
+    A configured directory is not created. The setting exists to move the landing off a container's ephemeral disk, so a mistyped path silently created there is exactly the failure somebody set it to avoid.
 
     Args:
         frame: The plan to land.
-        temp_dir: Where the landing goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every knob where the asset is *declared*, so an unset knob has to mean the temp directory of whichever process lands the frame.
+        temp_dir: Where the landing goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the door resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process lands the frame.
 
     Returns:
         The frame the plan produced, read back whole.
@@ -123,7 +123,7 @@ def _gate_failure(
     )
 
 
-def _check_results(  # noqa: PLR0913 - every knob the specs were derived with has to reach the results, or the two disagree
+def _check_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,

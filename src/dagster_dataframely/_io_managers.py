@@ -155,7 +155,7 @@ class _FrameIOManager(UPathIOManager):
 
         **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
 
-        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has landed and validated its transform long before a manager sees a frame. The knob names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the door resolves it where the asset is declared and hands it to the state machine, which has landed and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
 
         Args:
             context: The executing output's context, forwarded to the format's own sink.
@@ -163,7 +163,7 @@ class _FrameIOManager(UPathIOManager):
             path: The destination the sunk file is promoted to.
 
         Raises:
-            FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the knob exists to move the landing off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
+            FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the setting exists to move the landing off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
         """
         with tempfile.TemporaryDirectory(
             dir=TEMP_DIR.resolve(None), prefix=LANDING_PREFIX

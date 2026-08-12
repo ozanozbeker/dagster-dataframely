@@ -308,7 +308,7 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
 
 # --- the string family ---
 def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
-    """The one rule the knob does not cover, so the whole row is asserted rather than the absence of one cell: a `min` here would print a real address permanently into a shared, exported event log."""
+    """The one rule the setting does not cover, so the whole row is asserted rather than the absence of one cell: a `min` here would print a real address permanently into a shared, exported event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert string["email"] == {
@@ -359,13 +359,13 @@ def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
     }
 
 
-# --- the knob ---
+# --- the setting ---
 def test_a_materialization_is_profiled_unless_someone_says_otherwise(tmp_path: Path):
     """Opt-out, on by default: the asset declares nothing and the tables are there."""
     assert _families(_metadata(tmp_path, _orders))
 
 
-def test_the_knob_off_at_the_asset_suppresses_the_pass_on_both_outs(tmp_path: Path):
+def test_the_setting_off_at_the_asset_suppresses_the_pass_on_both_outs(tmp_path: Path):
     """Off is off for the whole run, not for the table the reader happened to be thinking of."""
 
     @dataframely_asset(
@@ -381,7 +381,7 @@ def test_the_knob_off_at_the_asset_suppresses_the_pass_on_both_outs(tmp_path: Pa
     assert materialized["orders"]["dagster/row_count"].value == 3
 
 
-def test_the_knob_off_in_the_environment_suppresses_the_pass(
+def test_the_setting_off_in_the_environment_suppresses_the_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The house-style tier: a platform engineer turns the pass off for a whole code location without touching an asset."""
