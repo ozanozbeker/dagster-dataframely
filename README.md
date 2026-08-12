@@ -409,6 +409,27 @@ The materialization keys are deliberately outside it, because `sample`, `cooccur
 A schema with a column of its own inside the namespace raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
 The prefix is hardcoded rather than configurable: its whole value is being the same string in every project.
 
+## The op is named after the whole asset key
+
+`@dataframely_asset(key_prefix="sales", name="orders")` builds an op called `sales__orders`, which is how `@dg.asset` names its own.
+The asset name alone will not do, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would be two ops called the same thing.
+Dagster allows a repeated op name only where the two definitions compare equal, and two of these never are, since every check output name embeds its own asset key.
+
+The op name is the step key and the address run config resolves against, so both spell the whole key:
+
+```yaml
+ops:
+  sales__orders:
+    config:
+      threshold: 4
+```
+
+> [!WARNING]
+> **This moved.**
+> The op used to be named after the asset alone, so run config, re-execution from a step key and step-level concurrency all addressed `orders` where they now address `sales__orders`.
+> An asset that declares no `key_prefix` is unaffected, because its key is its name.
+> Asset keys, check names and quarantine rule columns are unchanged, so check history survives.
+
 ## License
 
 [Apache-2.0](LICENSE)

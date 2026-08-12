@@ -173,6 +173,28 @@ def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
     assert not list(tmp_path.rglob("*.parquet"))
 
 
+# --- two assets sharing a name ---
+def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path: Path):
+    """The op name is the step key, so the two steps have to be distinguishable for the run to execute at all (#70). Both tables land, under the prefixes their keys spell."""
+
+    def shipments(prefix: str) -> dg.AssetsDefinition:
+        @dataframely_asset(schema=Orders, key_prefix=prefix, name="shipments")
+        def _shipments() -> pl.DataFrame:
+            return clean_orders()
+
+        return _shipments
+
+    result = _materialize(tmp_path, shipments("alpha"), shipments("beta"))
+
+    assert result.success
+    assert_frame_equal(
+        pl.read_parquet(tmp_path / "alpha" / "shipments.parquet"), clean_orders()
+    )
+    assert_frame_equal(
+        pl.read_parquet(tmp_path / "beta" / "shipments.parquet"), clean_orders()
+    )
+
+
 # --- a wrong-shaped frame ---
 @dataframely_asset(schema=Orders, name="orders")
 def _wrong_dtype() -> pl.DataFrame:

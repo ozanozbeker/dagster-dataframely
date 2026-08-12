@@ -987,6 +987,83 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
     assert not isinstance(raised.value, DagsterDataframelyError)
 
 
+# --- the underlying op ---
+def _shipments(
+    prefix: str, *, quarantine: dg.AssetOut | None = None
+) -> dg.AssetsDefinition:
+    """Builds the asset that used to collide with itself under a second prefix (#70)."""
+
+    @dataframely_asset(
+        schema=Orders, key_prefix=prefix, name="shipments", quarantine=quarantine
+    )
+    def shipments() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    return shipments
+
+
+def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
+    """An op name has to be unique across a code location, and the asset name alone is not: the prefix is the whole of what distinguishes two assets that share one.
+
+    Asserted against a live `@dg.asset` rather than a spelled-out string, so the parity holds through an upstream change to how the identifier is built.
+    """
+
+    @dataframely_asset(
+        schema=Orders, key_prefix=["warehouse", "sales"], name="shipments"
+    )
+    def attached() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    @dg.asset(key_prefix=["warehouse", "sales"], name="shipments")
+    def plain() -> None: ...
+
+    assert attached.op.name == plain.op.name
+
+
+@pytest.mark.parametrize(
+    "quarantine", [None, dg.AssetOut()], ids=["one_out", "two_outs"]
+)
+def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
+    quarantine: dg.AssetOut | None,
+):
+    """Dagster tolerates a repeated op name only where the two definitions compare equal. Two of these never do, because every check output name embeds its own asset key, so the collision was always fatal rather than sometimes."""
+    definitions = dg.Definitions(
+        assets=[
+            _shipments("alpha", quarantine=quarantine),
+            _shipments("beta", quarantine=quarantine),
+        ]
+    )
+
+    job = definitions.resolve_implicit_global_asset_job_def()
+
+    assert {"alpha__shipments", "beta__shipments"} <= {
+        node.name for node in job.graph.nodes
+    }
+
+
+def test_a_downstream_asset_binds_to_the_node_that_owns_its_key():
+    """The collision's second face, and the expensive one: in a graph of any size it surfaces later than the name clash and reads as a dependency wired to the wrong node.
+
+    `dependency_structure` is undocumented but not private, and it is the only place the resolved edge is readable as a node name. `graph.dependencies` holds the same edge wrapped in a `BlockingAssetChecksDependencyDefinition`, which the shape check puts there and which says nothing extra here.
+    """
+
+    @dg.asset(ins={"upstream": dg.AssetIn(key=dg.AssetKey(["beta", "shipments"]))})
+    def consumer(upstream: pl.DataFrame) -> None: ...
+
+    definitions = dg.Definitions(
+        assets=[_shipments("alpha"), _shipments("beta"), consumer]
+    )
+
+    job = definitions.resolve_implicit_global_asset_job_def()
+    upstream_outputs = (
+        job.graph.dependency_structure.input_to_upstream_outputs_for_node("consumer")
+    )
+
+    assert {
+        handle.node_name for handles in upstream_outputs.values() for handle in handles
+    } == {"beta__shipments"}
+
+
 # --- the decorator's own contract with dagster ---
 # Parameters `dg.multi_asset` has that the decorator deliberately does not forward.
 _NOT_FORWARDED = {
