@@ -191,7 +191,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     Args:
         schema: The schema the frame must satisfy.
         frame: Whatever the transform returned.
-        valid_key: The asset key the validated frame materializes under. Resolve it with `context.asset_key_for_output(...)` rather than building it by hand: an out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`.
+        valid_key: The asset key the validated frame materializes under. Read it off the `AssetsDefinition` or resolve it with `context.asset_key_for_output(...)` rather than building it by hand: an out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`. The decorator takes the first route, which is what leaves it callable outside a run (ADR-0002); the second needs one.
         quarantine_key: The asset key the invalid rows materialize under, or `None` when the asset declares no quarantine.
         check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
         multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
@@ -201,7 +201,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         temp_dir: Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields:
-        A `MaterializeResult` per out that survived its outcome, and every check result: bundled onto the valid out's materialization where there is one, standalone where the valid out is skipped.
+        A `MaterializeResult` per out that survived its outcome, then every check result standalone. Nothing is bundled onto a materialization, deliberately: direct invocation satisfies a check output only from a standalone `AssetCheckResult`, which is what makes an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed.
 
     Raises:
         InvalidSettingError: A setting resolved to a value outside its vocabulary.
@@ -264,12 +264,12 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
                 **statistics_metadata(valid, enabled=emit_statistics),
                 **sample_metadata(SAMPLE_KEY, sample_rows(valid, sampled_rows)),
             },
-            check_results=checks,
         )
 
     if not rejected:
         # Exit: everything survived. The quarantine out is skipped rather than written empty, so an empty quarantine partition means something.
         yield valid_result()
+        yield from checks
         return
 
     if quarantine_key is None:
@@ -294,7 +294,6 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
 
     if not len(valid):
         # Exit: nothing survived. The rows are all inspectable next door, but the valid out is skipped so an empty table cannot replace a last-known-good snapshot.
-        # The checks are yielded standalone: there is no valid materialization to bundle them onto.
         yield quarantine_result
         yield from checks
         raise NothingSurvivedError(
@@ -304,3 +303,4 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     # Exit: the middle case. The survivors are written, the rest are inspectable next door, and downstream proceeds on the data that is fine.
     yield valid_result()
     yield quarantine_result
+    yield from checks

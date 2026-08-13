@@ -172,6 +172,73 @@ def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
     assert not list(tmp_path.rglob("*.parquet"))
 
 
+# --- a transform that takes the context ---
+# Nothing in the package enables this: `functools.wraps` puts the transform's signature in
+# front of Dagster, so the parameter binds exactly as it does on a bare `@dg.multi_asset`.
+# It was never covered, and it is now the supported way a partitioned transform reaches its
+# own key, so a wrapper change that shadowed the signature has to fail a test here.
+_DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
+
+
+def _materialize_partition(
+    tmp_path: Path, asset: dg.AssetsDefinition
+) -> dg.ExecuteInProcessResult:
+    """`_materialize` with a partition key, which it takes no parameter for."""
+    return dg.materialize(
+        [asset],
+        partition_key="2026-01-02",
+        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+    )
+
+
+def test_a_transform_can_take_a_bare_context(tmp_path: Path):
+    """Blank rather than annotated, which is the one spelling that survives a user-side `from __future__ import annotations`."""
+    seen: dict[str, str] = {}
+
+    @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
+    # Left unannotated deliberately: that is the shape under test.
+    def orders(context) -> pl.DataFrame:  # pyrefly: ignore[implicit-any-parameter]
+        seen["partition"] = context.partition_key
+        return clean_orders()
+
+    result = _materialize_partition(tmp_path, orders)
+
+    assert result.success
+    assert seen == {"partition": "2026-01-02"}
+
+
+def test_a_transform_can_take_an_annotated_context(tmp_path: Path):
+    seen: dict[str, str] = {}
+
+    @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
+    def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+        seen["partition"] = context.partition_key
+        return clean_orders()
+
+    result = _materialize_partition(tmp_path, orders)
+
+    assert result.success
+    assert seen == {"partition": "2026-01-02"}
+
+
+def test_a_transform_can_take_the_context_alongside_an_upstream_frame(tmp_path: Path):
+    """The context binds first and the frames follow, so taking one does not cost the ordinary parameter binding."""
+    seen: dict[str, object] = {}
+
+    @dataframely_asset(schema=Orders, name="orders")
+    def orders(
+        context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
+    ) -> pl.DataFrame:
+        seen["asset"] = context.asset_key_for_output("orders").to_user_string()
+        seen["rows"] = len(raw_orders)
+        return raw_orders
+
+    result = _materialize(tmp_path, _raw_orders, orders)
+
+    assert result.success
+    assert seen == {"asset": "orders", "rows": 3}
+
+
 # --- two assets sharing a name ---
 def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path: Path):
     """The op name is the step key, so the two steps have to be distinguishable for the run to execute at all (#70). Both tables land, under the prefixes their keys spell."""
@@ -844,7 +911,7 @@ class TestExitSelection:
 
     The helpers are scoped to this class rather than module-level, because the file already has a `_written` and a `_reported` that answer the same questions of a run.
 
-    The keys are built by hand here because nothing declares an out for them to belong to, which is safe only because nothing consumes them. A real caller resolves them with `context.asset_key_for_output`, since an out that declares `key_prefix` has an asset key its output name does not spell.
+    The keys are built by hand here because nothing declares an out for them to belong to, which is safe only because nothing consumes them. The decorator reads its own off the finished `AssetsDefinition` (ADR-0002), since an out that declares `key_prefix` has an asset key its output name does not spell.
     """
 
     VALID = dg.AssetKey(["orders"])
@@ -886,16 +953,8 @@ class TestExitSelection:
 
     @staticmethod
     def _checks(yielded: _Yielded) -> list[dg.AssetCheckResult]:
-        """Every check result, from whichever of the two places the exit put it.
-
-        They are bundled onto the valid materialization where there is one and yielded standalone where the valid out is skipped, so reading only one of the two would make an exit's checks appear to vanish.
-        """
-        return [
-            check
-            for result in yielded
-            if isinstance(result, dg.MaterializeResult)
-            for check in (result.check_results or [])
-        ] + [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
+        """Every check result. All of them are standalone, at every exit (ADR-0002)."""
+        return [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
 
     @classmethod
     def _rules(cls, yielded: _Yielded) -> list[dg.AssetCheckResult]:
@@ -952,13 +1011,22 @@ class TestExitSelection:
         assert isinstance(error, ValidationAbortError)
         assert self._tables(yielded) == []
 
-    def test_the_checks_ride_the_valid_materialization_where_there_is_one(self):
-        """Bundled where a valid table is written, standalone where it is skipped. Nothing above states this directly, because a run flattens the two into one event stream."""
-        middle, _ = self._drained(mixed_orders(), quarantine=True)
-        nothing, _ = self._drained(hopeless_orders(), quarantine=True)
+    @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
+    def test_no_check_ever_rides_a_materialization(
+        self, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+    ):
+        """Every exit yields its checks standalone, including the three that write a table to bundle them onto.
 
-        assert [r for r in middle if isinstance(r, dg.AssetCheckResult)] == []
-        assert [r for r in nothing if isinstance(r, dg.AssetCheckResult)] != []
+        Nothing above states this, because a run flattens the two forms into one event stream. It is what makes an asset built on `process` callable in a unit test: direct invocation satisfies a check output only from a standalone result (ADR-0002).
+        """
+        yielded, _ = self._drained(frame(), quarantine=quarantine is not None)
+
+        assert not [
+            result
+            for result in yielded
+            if isinstance(result, dg.MaterializeResult) and result.check_results
+        ]
+        assert self._checks(yielded)
 
     def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
         """The same rejected rows warn when they have somewhere to go and error when they do not."""
