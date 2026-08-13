@@ -459,6 +459,61 @@ def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
     assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 3
 
 
+def test_an_upstream_and_a_quarantine_still_execute_as_one_step(tmp_path: Path):
+    """The quarantine depends on an asset produced by its own op, which is the shape `internal_asset_deps` exists for and the one that could plausibly have been read as a cycle (ADR-0003)."""
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return mixed_orders()
+
+    result = _materialize(tmp_path, _raw_orders, downstream)
+
+    assert result.success
+    assert set(_materialized(result)) == {
+        dg.AssetKey(["raw_orders"]),
+        _GOOD_KEY,
+        _QUARANTINE_KEY,
+    }
+    assert len(result.get_step_success_events()) == 2
+
+
+def test_an_eager_asset_on_the_quarantine_key_fires_only_when_rows_landed(
+    tmp_path: Path,
+):
+    """Automating on invalid rows is the user's own asset pointed at the quarantine's key, and this package wires nothing for it. A clean run skips the quarantine rather than writing an empty table, which is what keeps that asset quiet instead of firing it on nothing."""
+    returns: dict[str, Callable[[], pl.DataFrame]] = {"next": mixed_orders}
+
+    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    def quarantining() -> pl.DataFrame:
+        return returns["next"]()
+
+    @dg.asset(
+        ins={"bad_rows": dg.AssetIn(key=_QUARANTINE_KEY)},
+        automation_condition=dg.AutomationCondition.eager(),
+    )
+    def triage(bad_rows: pl.DataFrame) -> None: ...
+
+    resources = {"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))}
+    definitions = dg.Definitions(assets=[quarantining, triage], resources=resources)
+
+    def tick(cursor: Any) -> Any:
+        dg.materialize([quarantining], resources=resources, instance=instance)
+        return dg.evaluate_automation_conditions(
+            defs=definitions, instance=instance, cursor=cursor
+        )
+
+    with dg.DagsterInstance.ephemeral() as instance:
+        # `eager` fires on what changed since the last cursor, so the first tick has nothing to have changed and only establishes one.
+        baseline = tick(None)
+        returns["next"] = clean_orders
+        clean = tick(baseline.cursor)
+        returns["next"] = mixed_orders
+        quarantined = tick(clean.cursor)
+
+    assert clean.get_num_requested(dg.AssetKey(["triage"])) == 0
+    assert quarantined.get_num_requested(dg.AssetKey(["triage"])) == 1
+
+
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
     """Consent to partial data was given by declaring the out, so a invalid row is a warning rather than a failure."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
