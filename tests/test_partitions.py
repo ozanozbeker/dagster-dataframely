@@ -28,7 +28,7 @@ _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
     schema=Orders, name="orders", quarantine=dg.AssetOut(), partitions_def=_PARTITIONS
 )
 def _orders() -> pl.DataFrame:
-    # The transform takes no `context` parameter, so a partitioned one reaches its key the way the wrapper reaches the context.
+    # Reached through `.get()` rather than through a `context` parameter, which this transform is free to declare (ADR-0002). Both work inside a run, and covering the accessor here is what keeps a Dagster release that broke it visible.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
 
 

@@ -207,7 +207,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
-    The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`. It takes no `context` parameter; the wrapper reaches the context itself.
+    The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`.
 
     **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
@@ -246,7 +246,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         description: Asset description. Unset, the schema's own docstring fills it, and the transform's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
         config_schema: Run configuration schema for the underlying op.
         required_resource_keys: Resources the transform reaches through the context.
-        partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning. The transform takes no `context` parameter, so a partitioned one reaches its own key with `dg.AssetExecutionContext.get().partition_key`.
+        partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning.
         hooks: Hooks to attach to the underlying op.
         backfill_policy: How Dagster backfills this asset's partitions.
         op_tags: Tags on the underlying op, for run launcher and executor routing.
@@ -342,7 +342,25 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
                 group_name=group_name,
             )
 
-        @dg.multi_asset(
+        # Closed over rather than passed, because the two needs are circular: `dg.multi_asset` cannot build the definition without the wrapper, and the wrapper's quarantine key is only knowable from the finished definition. Assigned below, before `decorate` returns, so no call can read it early. `None` is also the final value for an asset that declared no quarantine.
+        quarantine_key: dg.AssetKey | None = None
+
+        @functools.wraps(fn)
+        def compute(*args: object, **kwargs: object) -> AssetYield:
+            yield from process(
+                schema,
+                fn(*args, **kwargs),
+                valid_key=key,
+                quarantine_key=quarantine_key,
+                check_granularity=granularity,
+                multi_column_rules=multi_column,
+                max_failure_samples=failure_samples,
+                statistics=emit_statistics,
+                row_sample=sampled_rows,
+                temp_dir=staging_dir,
+            )
+
+        definition: dg.AssetsDefinition = dg.multi_asset(
             # The op's name, not the asset's. `@dg.asset` derives it from the whole key and this decorator matches that, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would build two ops called the same thing, and Dagster tolerates that only where the two definitions compare equal. Two of these never compare equal, since every check output name embeds its own asset key (#70).
             name=key.to_python_identifier(),
             outs=outs,
@@ -353,29 +371,12 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
                 multi_column_rules=multi_column,
             ),
             **forwarded,
-        )
-        @functools.wraps(fn)
-        def compute(*args: object, **kwargs: object) -> AssetYield:
-            # No `context` parameter, deliberately: a user-side postponed-annotations import makes Dagster reject a qualified annotation for one.
-            context = dg.AssetExecutionContext.get()
-            yield from process(
-                schema,
-                fn(*args, **kwargs),
-                # Both keys come from the one accessor rather than the valid one being closed over. `key` above is what the valid out was built with and could be reused, but a quarantine that named its own `key_prefix` has a key only Dagster derives, and two mechanisms for one question would need explaining every time it is read.
-                valid_key=context.asset_key_for_output(asset_name),
-                quarantine_key=(
-                    None
-                    if quarantine_name is None
-                    else context.asset_key_for_output(quarantine_name)
-                ),
-                check_granularity=granularity,
-                multi_column_rules=multi_column,
-                max_failure_samples=failure_samples,
-                statistics=emit_statistics,
-                row_sample=sampled_rows,
-                temp_dir=staging_dir,
-            )
+        )(compute)
 
-        return compute
+        if quarantine_name is not None:
+            # Dagster's answer, not a second derivation of it: a quarantine that named its own `key_prefix` has a key only Dagster builds. Read off `keys` rather than `keys_by_output_name`, which spells it directly but carries no `@public`. Set subtraction works because there are at most two outs, so removing the valid key leaves exactly the quarantine (ADR-0002).
+            (quarantine_key,) = definition.keys - {key}
+
+        return definition
 
     return decorate

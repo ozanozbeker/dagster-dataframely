@@ -13,6 +13,7 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 import pytest
+from dagster._annotations import is_public
 from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
 from dagster._serdes import deserialize_value, serialize_value
 from dagster_shared.utils.warnings import PreviewWarning
@@ -325,6 +326,66 @@ def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run()
     assert not result.success
     assert not evaluation.passed
     assert evaluation.partition == "mon"
+
+
+def _invoked(asset: dg.AssetsDefinition) -> list[object]:
+    """Calls an asset directly and drains what comes back.
+
+    `AssetsDefinition.__call__` is annotated `-> object`, because a direct call hands back whatever the body returns. Both assets below are generators, which is what the ignore asserts.
+    """
+    return list(asset())  # pyrefly: ignore[bad-argument-type]
+
+
+def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
+    """Calling a `multi_asset` directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
+    # #72 unbundles every check result for exactly this reason (ADR-0002). A run flattens the two forms into one event stream, so nothing else in the suite can tell them apart, and the bundled form is what made a decorated asset untestable by calling it.
+    # Undocumented: direct invocation is Dagster's own documented unit-testing path, but nothing says a bundled check leaves its output unsatisfied. The error names an output name no user wrote.
+    key = dg.AssetKey(["orders"])
+    spec = dg.AssetCheckSpec("dy_schema__dtypes", asset=key)
+    passed = dg.AssetCheckResult(check_name=spec.name, asset_key=key, passed=True)
+    outs = {"orders": dg.AssetOut(key=key, is_required=False)}
+
+    @dg.multi_asset(outs=outs, check_specs=[spec])
+    def bundled():
+        yield dg.MaterializeResult(asset_key=key, check_results=[passed])
+
+    @dg.multi_asset(outs=outs, check_specs=[spec], name="standalone_orders")
+    def standalone():
+        yield dg.MaterializeResult(asset_key=key)
+        yield passed
+
+    with pytest.raises(dg.DagsterInvariantViolationError) as raised:
+        _invoked(bundled)
+
+    assert "did not return an output" in str(raised.value)
+    assert [type(event) for event in _invoked(standalone)] == [
+        dg.MaterializeResult,
+        dg.AssetCheckResult,
+    ]
+
+
+def test_assets_definition_keys_still_holds_the_keys_dagster_derived():
+    """`AssetsDefinition.keys` still reports the key Dagster derived for an out that declared only a `key_prefix`, and still agrees with `keys_by_output_name`."""
+    # #72 resolves both of the decorator's keys off the finished definition rather than off the execution context (ADR-0002). It reads `keys` because it is `@public` and `keys_by_output_name` is not, which costs a set subtraction: with at most two outs, removing the valid key leaves exactly the quarantine.
+    # The `@public` split is the whole reason for the roundabout accessor, so it is asserted rather than left in a comment.
+    valid = dg.AssetKey(["sales", "orders"])
+
+    @dg.multi_asset(
+        outs={
+            "orders": dg.AssetOut(key=valid, is_required=False),
+            "orders_quarantine": dg.AssetOut(key_prefix="vault", is_required=False),
+        }
+    )
+    def orders():
+        yield dg.MaterializeResult(asset_key=valid)
+
+    derived = dg.AssetKey(["vault", "orders_quarantine"])
+
+    assert orders.keys == {valid, derived}
+    assert orders.keys - {valid} == {derived}
+    assert orders.keys_by_output_name["orders_quarantine"] == derived
+    assert is_public(dg.AssetsDefinition.keys)
+    assert not is_public(dg.AssetsDefinition.keys_by_output_name)
 
 
 def test_object_metadata_value_carries_a_live_python_object():
