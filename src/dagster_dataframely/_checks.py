@@ -65,7 +65,7 @@ def _rule_sets(
 
     The one place the settings are read, so the specs and the results cannot resolve them differently.
 
-    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one rule set.
+    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: Dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one rule set.
 
     Args:
         schema: The schema to read rules from.

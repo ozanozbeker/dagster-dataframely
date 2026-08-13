@@ -1,16 +1,21 @@
-# dagster-dataframely
+# `dagster-dataframely`
 
-Attaches a dataframely schema to a Dagster asset, so one declaration fills the Columns tab, reports every rule as an asset check, and decides what a failing row costs.
+Attaches a Dataframely schema to a Dagster asset, so one declaration fills the Columns tab, reports every rule as an asset check, and decides what a failing row costs.
 
-Where a word exists in Dagster or dataframely already, that word wins.
+Where a word exists in Dagster or Dataframely already, that word wins.
 The terms below are the ones this package had to add, plus the few it kept getting wrong.
 
 ## Language
 
 ### The asset
 
-**Decorator**: `@dataframely_asset`, which turns a polars transform into an asset validated against a schema.
+**Decorator**: `@dataframely_asset`, which turns the function it decorates into an asset validated against a schema.
 _Avoid_: door, front door
+
+**Decorated function**: The function the decorator wraps.
+Upstream assets bind into it as parameters, it may declare `context`, and it returns the frame to validate or a returned result carrying one.
+Dagster's own phrase, and the whole of what makes it explicit: it names the function by its relation to the decorator rather than by what it happens to do inside.
+_Avoid_: transform, compute function (Dagster's, but there it names the wrapper this decorator builds)
 
 **Valid rows**: The rows `Schema.filter` kept.
 They materialize as the asset's main output.
@@ -23,10 +28,11 @@ _Avoid_: rejected rows, bad rows, failed rows
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
 _Avoid_: reject table, dead-letter asset
 
-**Rule column**: A column of the quarantine carrying one rule's outcome per row, reading `valid`, `invalid` or `unknown`. dataframely's own term, from `FailureInfo.details()`.
+**Rule column**: A column of the quarantine carrying one rule's outcome per row, reading `valid`, `invalid` or `unknown`.
+Dataframely's own term, from `FailureInfo.details()`.
 _Avoid_: outcome column
 
-**Returned result**: A `dg.MaterializeResult` a transform returns in place of a bare frame.
+**Returned result**: A `dg.MaterializeResult` a decorated function returns in place of a bare frame.
 Its `value` is the frame to validate; the rest folds into the valid out's materialization.
 _Avoid_: wrapped frame, enriched result
 
@@ -44,7 +50,7 @@ _Avoid_: the kit
 A mismatch is a pipeline defect, so it stops the run before any row is filtered and reports through a blocking check.
 _Avoid_: gate, schema gate
 
-**Rule**: One dataframely validation rule, under the name dataframely gives it.
+**Rule**: One Dataframely validation rule, under the name Dataframely gives it.
 
 **Rule set**: The rules one asset check reports for.
 One rule at `rule` granularity, one column's rules at `column`, every rule at `schema`.

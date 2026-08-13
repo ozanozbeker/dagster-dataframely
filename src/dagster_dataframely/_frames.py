@@ -1,6 +1,6 @@
 """What the validation path and the write path both do to a frame on its way to disk.
 
-Two callers, and the whole point of one module is that they cannot disagree. `dataframely_asset` compares a frame against its schema before filtering; the CSV manager runs the same comparison for an asset that attached a schema by hand, and sharing it is what stops two shape checks from drawing the line differently. `process` stages a lazy transform before validating it and the manager stages a lazy output before promoting it, so one prefix is what lets an operator sweeping a filled disk find every staging file this package makes with one glob.
+Two callers, and the whole point of one module is that they cannot disagree. `dataframely_asset` compares a frame against its schema before filtering; the CSV manager runs the same comparison for an asset that attached a schema by hand, and sharing it is what stops two shape checks from drawing the line differently. `process` stages a lazy decorated function before validating it and the manager stages a lazy output before promoting it, so one prefix is what lets an operator sweeping a filled disk find every staging file this package makes with one glob.
 
 Nothing belongs here that only one of the two callers needs.
 """
@@ -22,7 +22,7 @@ def shape_problems(
 ) -> list[dict[str, str]]:
     """Compares the frame's shape against the schema, naming every mismatch.
 
-    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the transform returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The decorator promises either return type works, so the shape check cannot be built on a difference between them.
+    An explicit pre-check rather than a `try`/`except` around `filter`, which would behave differently depending on what the decorated function returned: `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The decorator promises either return type works, so the shape check cannot be built on a difference between them.
 
     Only public API, and none of it executes: `collect_schema()` resolves a `LazyFrame`'s shape without running it.
 

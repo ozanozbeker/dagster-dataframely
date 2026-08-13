@@ -30,7 +30,7 @@ from dagster_dataframely._naming import (
 #: What an unnamed `check=` renders as. There is nothing else to recover from a lambda.
 _ANONYMOUS_CHECK = "custom check"
 
-# The comparison each bound states. dataframely names a column rule after the parameter that declared it and keeps that parameter's value on an attribute of the same name, so the rule's own name is enough to render the whole constraint. Covered by a characterization test (#16).
+# The comparison each bound states. Dataframely names a column rule after the parameter that declared it and keeps that parameter's value on an attribute of the same name, so the rule's own name is enough to render the whole constraint. Covered by a characterization test (#16).
 _OPERATORS = {
     "min": ">=",
     "max": "<=",
@@ -52,7 +52,7 @@ _PHRASES = {
 # Rules Dagster already models first-class, as `TableColumnConstraints.nullable` and `.unique`. They still render on the check surfaces; a constraint would only say the same thing a second time, in the same row.
 _FIRST_CLASS = frozenset({"nullability", "unique"})
 
-# Rules dataframely generates from a default rather than from something an author wrote. `allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. A constraint for either says nothing about intent, and it can never say anything else, because allowing the value removes the rule instead of inverting it. That is the test for any future defaulted constraint: does the rule exist only while its flag sits at the default?
+# Rules Dataframely generates from a default rather than from something an author wrote. `allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. A constraint for either says nothing about intent, and it can never say anything else, because allowing the value removes the rule instead of inverting it. That is the test for any future defaulted constraint: does the rule exist only while its flag sits at the default?
 _DEFAULTED = frozenset({"inf", "nan"})
 
 _NO_CONSTRAINT = _FIRST_CLASS | _DEFAULTED
@@ -61,7 +61,7 @@ _NO_CONSTRAINT = _FIRST_CLASS | _DEFAULTED
 def _value(column: dy.Column, kind: str) -> Any:  # noqa: ANN401 - the values are of every constraint's own type
     """Reads the value of the constraint that generated a rule.
 
-    By name rather than by attribute access, because these values live on dataframely mixins that are private (`OrdinalMixin`, `IsInMixin`). Importing them to satisfy a type checker would take a dependency on private structure for no runtime gain, so the regularity they provide is covered by a characterization test instead.
+    By name rather than by attribute access, because these values live on Dataframely mixins that are private (`OrdinalMixin`, `IsInMixin`). Importing them to satisfy a type checker would take a dependency on private structure for no runtime gain, so the regularity they provide is covered by a characterization test instead.
 
     Args:
         column: The column that declared the constraint.
@@ -89,7 +89,7 @@ def _named_check(kind: str) -> str:
     A `check={"lowercase": ...}` reaches the reader as `lowercase`, which is the nudge to name a check rather than passing a bare lambda.
     """
     key: str = kind.removeprefix("check__")
-    # `check__0`, `check__1`: dataframely's counter for several anonymous lambdas on one column. A position is not a name anybody wrote.
+    # `check__0`, `check__1`: Dataframely's counter for several anonymous lambdas on one column. A position is not a name anybody wrote.
     return _ANONYMOUS_CHECK if key.isdigit() else key
 
 
@@ -140,7 +140,7 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
 
     Args:
         schema: The schema the rule belongs to.
-        rule_name: The rule name dataframely reports, `|`-delimited for column rules.
+        rule_name: The rule name Dataframely reports, `|`-delimited for column rules.
 
     Returns:
         The constraint, worded as an operator. `None` for a rule whose expression is arbitrary: a `@dy.rule()` body, or a column rule this package has not met.
@@ -186,7 +186,7 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
         column_name, kind = parts
         if kind in _NO_CONSTRAINT:
             continue
-        # The fallback is the rule's own half of the name: the row already carries the column's half, and dataframely's `|` is a spelling this package shows nowhere else.
+        # The fallback is the rule's own half of the name: the row already carries the column's half, and Dataframely's `|` is a spelling this package shows nowhere else.
         constraints[column_name].append(rule_text(schema, rule_name) or kind)
     return constraints
 
@@ -194,7 +194,7 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
 def table_constraints(schema: type[dy.Schema]) -> list[str]:
     """Renders the constraints that belong to no single column.
 
-    The primary key above all. dataframely models it as one rule over a struct of every key column, so stating it once, here, is what distinguishes a composite key from two independent single-column ones. A `@dy.rule()` joins it under its own name, because its expression is arbitrary and its docstring is the description's to use.
+    The primary key above all. Dataframely models it as one rule over a struct of every key column, so stating it once, here, is what distinguishes a composite key from two independent single-column ones. A `@dy.rule()` joins it under its own name, because its expression is arbitrary and its docstring is the description's to use.
 
     Args:
         schema: The schema to render.
@@ -216,7 +216,7 @@ def check_description(schema: type[dy.Schema], rule_name: str) -> str:
 
     Args:
         schema: The schema the rule belongs to.
-        rule_name: The rule name dataframely reports.
+        rule_name: The rule name Dataframely reports.
 
     Returns:
         The check's description, never empty.

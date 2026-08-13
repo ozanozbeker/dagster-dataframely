@@ -2,7 +2,7 @@
 
 A data consumer gets a `skimr`-style distribution read off the asset itself rather than reaching for a separate tool, on every materialization unless the `statistics` setting turns the pass off.
 
-**Never through `describe()`.** It stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in a single column. Everything here is computed with typed polars expressions and stringified once, deliberately, at the display step.
+**Never through `describe()`.** It stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in a single column. Everything here is computed with typed Polars expressions and stringified once, deliberately, at the display step.
 
 Two rules divide the cells. `mean`, `std`, `p50` and `true_rate` are derived, so they round to four places. `min` and `max` are values that exist in the data, so they are shown exactly: the UI must never display a number nobody stored.
 
@@ -25,7 +25,7 @@ _DERIVED = frozenset({"mean", "std", "p50", "true_rate"})
 
 _PLACES = 4
 
-#: polars' own duration rendering, `8d` / `1m 30s` / `2h 5m`, which is the form its own frame repr uses. The default gives ISO-8601 and a plain cast to `String` raises, so this format string is the only route to a span a human reads. Covered by a characterization test (#23).
+#: Polars' own duration rendering, `8d` / `1m 30s` / `2h 5m`, which is the form its own frame repr uses. The default gives ISO-8601 and a plain cast to `String` raises, so this format string is the only route to a span a human reads. Covered by a characterization test (#23).
 _DURATION_STYLE = "polars"
 
 #: The dtypes whose useful statistics are all lengths and counts, which is what makes them one table rather than four.
@@ -92,7 +92,7 @@ def _numeric(name: str, _dtype: pl.DataType) -> pl.Expr:
 def _temporal(name: str, dtype: pl.DataType) -> pl.Expr:
     """Aggregates one `Date`, `Datetime`, `Time` or `Duration` column.
 
-    The span is a duration whatever the column is: subtracting two dates, two times or two durations gives one, and it is rendered in polars' friendly form because ISO-8601 is not a thing anybody reads a range off. A `Duration` column's own bounds are rendered the same way, since they are the same kind of value as the span between them.
+    The span is a duration whatever the column is: subtracting two dates, two times or two durations gives one, and it is rendered in Polars' friendly form because ISO-8601 is not a thing anybody reads a range off. A `Duration` column's own bounds are rendered the same way, since they are the same kind of value as the span between them.
 
     The other three dtypes keep their values through the aggregate and become strings at the display step, which is what makes a `Date` render as a date.
     """
@@ -111,7 +111,7 @@ def _temporal(name: str, dtype: pl.DataType) -> pl.Expr:
 def _string(name: str, dtype: pl.DataType) -> pl.Expr:
     """Aggregates one `String`, `Categorical`, `Enum` or `Binary` column.
 
-    Lengths are bytes throughout: `Binary` has no other unit, and bytes is what dataframely's own `max_length` bounds on a `String`, so a constraint and this table agree.
+    Lengths are bytes throughout: `Binary` has no other unit, and bytes is what Dataframely's own `max_length` bounds on a `String`, so a constraint and this table agree.
 
     The cast is what lets one expression measure all four. It reads a label as the string it already is, and nothing it produces reaches the data; `Binary` is exempt because it has no string form to read.
     """
@@ -159,7 +159,7 @@ _AGGREGATES: dict[str, Callable[[str, pl.DataType], pl.Expr]] = {
 def _family(dtype: pl.DataType) -> str | None:
     """Names the family a dtype belongs to.
 
-    polars' own predicates rather than a transcribed dtype list, so a new integer width lands in the numeric family without this file being touched.
+    Polars' own predicates rather than a transcribed dtype list, so a new integer width lands in the numeric family without this file being touched.
 
     Args:
         dtype: The column's dtype.

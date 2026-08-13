@@ -55,9 +55,9 @@ def carried_schema(
 
 
 def schema_dtypes(schema: type[dy.Schema]) -> dict[str, pl.DataType]:
-    """Reads a schema as the polars dtypes it declares, one per column.
+    """Reads a schema as the Polars dtypes it declares, one per column.
 
-    What a reader that is not dataframely needs from a schema: the CSV manager decodes and reads against these, and nothing else on it. Here rather than with the Columns tab because the carrier is what delivers the schema it reads.
+    What a reader that is not Dataframely needs from a schema: the CSV manager decodes and reads against these, and nothing else on it. Here rather than with the Columns tab because the carrier is what delivers the schema it reads.
 
     Args:
         schema: The schema to read.

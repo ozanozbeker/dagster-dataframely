@@ -1,7 +1,7 @@
 """Tests for `DataframelyParquetIOManager`.
 
 Everything here is asserted through `dg.materialize` in-process against `tmp_path`. What Dagster ends up holding is the whole external behaviour of an IO manager: the materialization metadata, and the bytes on disk.
-The manager is schema-agnostic, so every asset here is a plain `@dg.asset` returning a polars frame. That is the difference `test_csv_io_manager.py` exists to cover: everything both managers share is exercised here, on the format that needs no schema.
+The manager is schema-agnostic, so every asset here is a plain `@dg.asset` returning a Polars frame. That is the difference `test_csv_io_manager.py` exists to cover: everything both managers share is exercised here, on the format that needs no schema.
 """
 
 import datetime as dt
@@ -172,7 +172,7 @@ def test_the_plan_streams_to_a_file_that_is_not_the_destination(
 
     A manager that collected the plan and wrote the frame would leave the same bytes on disk and keep exactly the peak the sink exists to remove. And a manager that sank at the destination would leave the same bytes again, having truncated whatever was there before it knew the plan worked.
 
-    Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
+    Counted as a set rather than a list, because Polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
     """
     sunk: list[tuple[str, object]] = []
     sink = pl.LazyFrame.sink_parquet
@@ -223,7 +223,7 @@ def test_a_failing_plan_leaves_the_file_already_there_untouched(tmp_path: Path) 
 def test_the_sink_lands_where_the_temp_dir_variable_says(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The same setting `dataframely_asset` stages its own transform through, read here from the environment because a manager has no asset argument to take it from.
+    """The same setting `dataframely_asset` stages its own decorated function through, read here from the environment because a manager has no asset argument to take it from.
 
     A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off a container's ephemeral disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
@@ -366,7 +366,7 @@ def test_the_manager_writes_no_sample_and_runs_no_statistics_pass(
 
 
 def test_an_unwritable_dtype_raises_before_the_write(tmp_path: Path) -> None:
-    """Left to polars, `pl.Object` fails as a `ComputeError` from inside the writer. The manager gets there first, names the column, and leaves nothing behind."""
+    """Left to Polars, `pl.Object` fails as a `ComputeError` from inside the writer. The manager gets there first, names the column, and leaves nothing behind."""
 
     @dg.asset(name="orders")
     def unwritable() -> pl.DataFrame:
@@ -409,7 +409,7 @@ def test_an_output_that_is_not_a_frame_says_so(tmp_path: Path) -> None:
     def not_a_frame():
         return None
 
-    with pytest.raises(dg.DagsterInvariantViolationError, match="polars frames"):
+    with pytest.raises(dg.DagsterInvariantViolationError, match="Polars frames"):
         _materialize(tmp_path, not_a_frame)
 
 

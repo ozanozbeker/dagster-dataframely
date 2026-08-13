@@ -1,6 +1,6 @@
 """The package's exception family, all subclassing `DagsterDataframelyError` so they can be caught together.
 
-**The one module in this package with a public name.** Every other module is underscore-private so that the file tree stays free to change, and ten error names in the root would be ten of its twenty-four: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move; dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
+**The one module in this package with a public name.** Every other module is underscore-private so that the file tree stays free to change, and ten error names in the root would be ten of its twenty-four: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move; Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
 
 `errors` rather than `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
 
@@ -110,7 +110,7 @@ class CheckNameCollisionError(DagsterDataframelyError):
 class CollectionNotSupportedError(DagsterDataframelyError):
     """`schema=` received a `dy.Collection`.
 
-    Raised at decoration time. The guard exists because a Collection is real, adjacent, and the most plausible wrong thing a dataframely user reaches for; it is deliberately not generalised into a type check on `schema=`.
+    Raised at decoration time. The guard exists because a Collection is real, adjacent, and the most plausible wrong thing a Dataframely user reaches for; it is deliberately not generalised into a type check on `schema=`.
     """
 
     def __init__(self, collection_name: str) -> None:
@@ -120,7 +120,7 @@ class CollectionNotSupportedError(DagsterDataframelyError):
             collection_name: The collection class that was passed.
         """
         super().__init__(
-            f"{collection_name} is a dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema."
+            f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema."
         )
 
 
@@ -135,25 +135,27 @@ class MaterializeResultValueError(DagsterDataframelyError):
 
         Two readers write this, and `value=` answers neither on its own. One wanted metadata on a table this package does write, and the `context` route is what they were reaching for: sending them to build a returned result around a frame they were not returning anyway would answer a question they did not ask. The other manages their own storage and has no frame at any point, which is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
 
+        The `context` route carries `asset_key=` here rather than being named bare. A reader meets this message having already got the returned result wrong, so a second call that raises on any asset with a quarantine would be the worse of the two failures.
+
         Args:
-            asset: The asset key, rendered, whose transform returned the result.
+            asset: The asset key, rendered, whose decorated function returned the result.
         """
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
+            f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the Polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}}, asset_key=context.asset_key_for_output(<this asset's name>))` from a `context` parameter, since the bare call raises as soon as the asset declares a quarantine. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
         )
 
 
 class MaterializeResultFieldError(DagsterDataframelyError):
     """A returned `dg.MaterializeResult` sets a field the decorator owns.
 
-    Raised before the shape check. Both fields are decided by the declaration rather than by the transform, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
+    Raised before the shape check. Both fields are decided by the declaration rather than by the decorated function, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
     """
 
     def __init__(self, asset: str, field: str) -> None:
         """Names the field, why the decorator owns it, and the four that fold in instead.
 
         Args:
-            asset: The asset key, rendered, whose transform returned the result.
+            asset: The asset key, rendered, whose decorated function returned the result.
             field: The `dg.MaterializeResult` field that was set.
         """
         super().__init__(
@@ -180,7 +182,7 @@ class SchemaShapeError(DagsterDataframelyError):
         )
         plural, verb = ("", "does") if len(problems) == 1 else ("s", "do")
         super().__init__(
-            f"Column{plural} {culprits} {verb} not match {schema_name}. Fix the transform, or cast deliberately with `{schema_name}.cast(frame)` in the asset body. This package never casts on your behalf."
+            f"Column{plural} {culprits} {verb} not match {schema_name}. Fix the function that produced it, or cast deliberately with `{schema_name}.cast(frame)` in the asset body. This package never casts on your behalf."
         )
 
 
@@ -256,7 +258,7 @@ class QuarantineSettingError(DagsterDataframelyError):
 class UnwritableDtypeError(DagsterDataframelyError):
     """A column holds a dtype the bound IO manager cannot write.
 
-    Raised from `handle_output` before the write. Left to polars, the same frame fails with a `ComputeError` from inside the writer, or with a Rust panic.
+    Raised from `handle_output` before the write. Left to Polars, the same frame fails with a `ComputeError` from inside the writer, or with a Rust panic.
     """
 
     def __init__(self, extension: str, columns: Mapping[str, pl.DataType]) -> None:

@@ -68,7 +68,7 @@ def _materialized(
 
 
 # --- a clean frame ---
-def test_a_clean_frame_materializes_the_transforms_output(tmp_path: Path):
+def test_a_clean_frame_materializes_what_was_returned(tmp_path: Path):
     result = _materialize(tmp_path, _raw_orders, orders)
 
     assert result.success
@@ -105,7 +105,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
     assert 'col("amount")' in str(metadata["dy_rule__expr"].value)
 
 
-def test_a_lazy_transform_lands_and_is_read_back_whole(tmp_path: Path):
+def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
     """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
@@ -155,7 +155,7 @@ def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
     )
 
 
-def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
+def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
     """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
@@ -164,7 +164,7 @@ def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
         return None
 
     with pytest.raises(
-        dg.DagsterInvariantViolationError, match="polars DataFrame or LazyFrame"
+        dg.DagsterInvariantViolationError, match="Polars DataFrame or LazyFrame"
     ) as raised:
         _materialize(tmp_path, forgot_the_frame)
 
@@ -174,9 +174,9 @@ def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
 
 # --- the object returned decides, never the annotation ---
 # `@dg.asset` infers the output's `dagster_type` from the return annotation and fails the run
-# on a mismatch. This decorator cannot: the annotation describes what the transform handed
+# on a mismatch. This decorator cannot: the annotation describes what the decorated function handed
 # over, `dagster_type` describes what the out stores, and validation is eager, so the out holds
-# a `DataFrame` however the transform arrived at it. Both mismatches below therefore run green,
+# a `DataFrame` however the decorated function arrived at it. Both mismatches below therefore run green,
 # and `tests/test_upstream_characterization.py` pins the plain-asset half of the contrast.
 @pytest.mark.parametrize(
     ("lazy", "annotation"),
@@ -190,21 +190,21 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
 ):
     """Both write the same table. A type checker is what holds an annotation here, and it does: pyrefly reports `bad-return` on either pairing when it is spelled out literally, which is why neither can be written as an ordinary decorated function."""
 
-    def transform():
+    def fn():
         return clean_orders().lazy() if lazy else clean_orders()
 
     # Set by hand so one body can carry an annotation that contradicts it, and on a function declared here rather than on an imported one, which would leave the annotation on a module-level object every other test shares.
-    transform.__annotations__ = {"return": annotation}
-    asset = dataframely_asset(schema=Orders, name="orders")(transform)
+    fn.__annotations__ = {"return": annotation}
+    asset = dataframely_asset(schema=Orders, name="orders")(fn)
 
     assert _materialize(tmp_path, asset).success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
 
-# --- a transform that takes the context ---
-# Nothing in the package enables this: `functools.wraps` puts the transform's signature in
+# --- a decorated function that takes the context ---
+# Nothing in the package enables this: `functools.wraps` puts the decorated function's signature in
 # front of Dagster, so the parameter binds exactly as it does on a bare `@dg.multi_asset`.
-# It was never covered, and it is now the supported way a partitioned transform reaches its
+# It was never covered, and it is now the supported way a partitioned asset reaches its
 # own key, so a wrapper change that shadowed the signature has to fail a test here.
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 
@@ -220,7 +220,7 @@ def _materialize_partition(
     )
 
 
-def test_a_transform_can_take_a_bare_context(tmp_path: Path):
+def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
     """Blank rather than annotated, which is the one spelling that survives a user-side `from __future__ import annotations`."""
     seen: dict[str, str] = {}
 
@@ -236,7 +236,7 @@ def test_a_transform_can_take_a_bare_context(tmp_path: Path):
     assert seen == {"partition": "2026-01-02"}
 
 
-def test_a_transform_can_take_an_annotated_context(tmp_path: Path):
+def test_a_decorated_function_can_take_an_annotated_context(tmp_path: Path):
     seen: dict[str, str] = {}
 
     @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
@@ -250,7 +250,9 @@ def test_a_transform_can_take_an_annotated_context(tmp_path: Path):
     assert seen == {"partition": "2026-01-02"}
 
 
-def test_a_transform_can_take_the_context_alongside_an_upstream_frame(tmp_path: Path):
+def test_a_decorated_function_can_take_the_context_alongside_an_upstream_frame(
+    tmp_path: Path,
+):
     """The context binds first and the frames follow, so taking one does not cost the ordinary parameter binding."""
     seen: dict[str, object] = {}
 
@@ -682,7 +684,7 @@ def _both_ways(
     *,
     temp_dir: str | None = None,
 ) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
-    """The same transform declared twice, handing back the same frame eagerly and lazily.
+    """The same decorated function declared twice, handing back the same frame eagerly and lazily.
 
     Same name, same schema, same rows: the two runs differ in the return type and in nothing else, which is what makes their events comparable.
     """
@@ -767,7 +769,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
 
     A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is covered rather than the output: `sink_parquet`, with the engine named.
 
-    Counted as a set rather than a list, because polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
+    Counted as a set rather than a list, because Polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
     """
     engines: list[object] = []
     sink = pl.LazyFrame.sink_parquet

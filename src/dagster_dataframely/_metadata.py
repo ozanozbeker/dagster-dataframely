@@ -21,7 +21,7 @@ _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 def _tags(column: dy.Column) -> dict[str, str] | None:
     """Renders a column's free-form metadata as Dagster tags.
 
-    Values are stringified because `TableColumn.tags` is `Mapping[str, str]` and Dagster rejects anything else at definition time. That is a display rendering, not a cast: no data is touched, and refusing instead would mean a `metadata={"pii": False}` dataframely explicitly permits could not be attached to an asset at all.
+    Values are stringified because `TableColumn.tags` is `Mapping[str, str]` and Dagster rejects anything else at definition time. That is a display rendering, not a cast: no data is touched, and refusing instead would mean a `metadata={"pii": False}` Dataframely explicitly permits could not be attached to an asset at all.
     """
     if not column.metadata:
         return None
@@ -33,9 +33,9 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
     Dtype, description, tags, and every constraint the schema declares: nullability and uniqueness in Dagster's own two fields, the rest as constraints, and the primary key once at table level.
 
-    `unique` is read from the column's own flag and never derived from `primary_key`. dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
+    `unique` is read from the column's own flag and never derived from `primary_key`. Dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
 
-    Tags come from `Column.metadata`, which dataframely stores and never reads. It is the one dataframely attribute with no other home here, and free-form key/value annotation is exactly what Dagster's column tags are for.
+    Tags come from `Column.metadata`, which Dataframely stores and never reads. It is the one Dataframely attribute with no other home here, and free-form key/value annotation is exactly what Dagster's column tags are for.
 
     Args:
         schema: The schema to project.
@@ -70,7 +70,7 @@ def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 
-    Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` dataframely produces, because the cast happens before the write.
+    Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
 
     Args:
         schema: The schema whose invalid rows this table holds.

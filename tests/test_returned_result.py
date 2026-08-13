@@ -1,4 +1,4 @@
-"""A transform that returns a `dg.MaterializeResult` instead of a bare frame.
+"""A decorated function that returns a `dg.MaterializeResult` instead of a bare frame.
 
 `@dg.asset` accepts one, and it is what Dagster's own docs teach for attaching metadata, so refusing it cost parity with the decorator this one is modelled on (#77). The result's `value` is the frame to validate; its metadata, data version and tags fold into the materialization the package yields for the valid out.
 
@@ -103,7 +103,7 @@ def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: P
 
 
 def test_the_packages_own_key_wins_a_collision(tmp_path: Path):
-    """The precedence the decorator already uses for definition metadata, applied to the returned result. `dagster/row_count` specifically: Dagster reads it, and a transform that overwrote it would make the catalog state a count nothing counted."""
+    """The precedence the decorator already uses for definition metadata, applied to the returned result. `dagster/row_count` specifically: Dagster reads it, and a decorated function that overwrote it would make the catalog state a count nothing counted."""
 
     @dataframely_asset(schema=Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -264,31 +264,31 @@ _REFUSALS = [
 ]
 
 
-def _refusing(transform: Callable[[], object]) -> dg.AssetsDefinition:
+def _refusing(fn: Callable[[], object]) -> dg.AssetsDefinition:
     """Declares the asset under the one name every message above expects.
 
-    The transforms are annotated nowhere, because there is nothing to annotate them as: every one of them returns what the decorator's own type says it cannot.
+    The decorated functions are annotated nowhere, because there is nothing to annotate them as: every one of them returns what the decorator's own type says it cannot.
     """
-    return dataframely_asset(schema=Orders, name="orders")(transform)  # pyrefly: ignore[bad-argument-type]
+    return dataframely_asset(schema=Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
 
-@pytest.mark.parametrize(("transform", "error", "says"), _REFUSALS)
+@pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
 def test_a_refused_return_names_what_is_wrong(
-    transform: Callable[[], object], error: type[Exception], says: str
+    fn: Callable[[], object], error: type[Exception], says: str
 ):
     with pytest.raises(error, match=re.escape(says)):
-        _call(_refusing(transform))
+        _call(_refusing(fn))
 
 
-@pytest.mark.parametrize(("transform", "error", "says"), _REFUSALS)
+@pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
 def test_a_refused_return_fails_the_run_and_writes_nothing(
     tmp_path: Path,
-    transform: Callable[[], object],
+    fn: Callable[[], object],
     error: type[Exception],
     says: str,
 ):
     with pytest.raises(error, match=re.escape(says)):
-        _materialize(tmp_path, _refusing(transform))
+        _materialize(tmp_path, _refusing(fn))
 
     assert not list(tmp_path.rglob("*.parquet"))
 
@@ -324,7 +324,7 @@ def test_the_frame_guard_names_every_route_out():
         _call(_refusing(lambda: None))
     message = str(raised.value)
 
-    assert "polars DataFrame or LazyFrame" in message
+    assert "Polars DataFrame or LazyFrame" in message
     assert "dg.MaterializeResult" in message
     assert "plain `@dg.asset`" in message
     assert "schema_metadata" in message
