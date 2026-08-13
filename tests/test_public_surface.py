@@ -55,6 +55,8 @@ _ERRORS = {
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
     "InvalidSettingError",
+    "MaterializeResultFieldError",
+    "MaterializeResultValueError",
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",

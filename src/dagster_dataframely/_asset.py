@@ -14,10 +14,10 @@ from typing import Any
 
 import dagster as dg
 import dataframely as dy
-import polars as pl
 
 from dagster_dataframely._checks import check_specs
 from dagster_dataframely._metadata import quarantine_metadata, schema_metadata
+from dagster_dataframely._returns import TransformReturn, fold, unwrap
 from dagster_dataframely._runtime import AssetYield, process
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
@@ -34,7 +34,7 @@ from dagster_dataframely.errors import (
     QuarantineSettingError,
 )
 
-TransformFn = Callable[..., pl.DataFrame | pl.LazyFrame]
+TransformFn = Callable[..., TransformReturn]
 
 # The union `@dg.asset` accepts, spelled out because `AutomationCondition` is generic and its two parameterizations are not interchangeable.
 AutomationCondition = (
@@ -207,7 +207,19 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
-    The transform keeps plain polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and the return may be a `DataFrame` or a `LazyFrame`.
+    The transform keeps plain polars annotations: nothing rewrites the signature, and upstream dependencies bind as ordinary parameters. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
+
+        pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
+        pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
+
+    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch; this decorator cannot, because the annotation describes what the transform handed over while `dagster_type` describes what the asset stores, and those differ here: validation is eager, so the out always holds a `DataFrame` however the transform arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
+
+    A returned result is what `@dg.asset` accepts and the only route there is to a materialization's tags and data version:
+
+        def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
+            return dg.MaterializeResult(value=raw_orders, metadata={"source": "stripe"})
+
+    Its `value` is the frame to validate, and is required. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both. To attach metadata without returning a result at all, declare a `context` parameter and call `context.add_asset_metadata({...})`.
 
     **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
@@ -347,17 +359,25 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
         @functools.wraps(fn)
         def compute(*args: object, **kwargs: object) -> AssetYield:
-            yield from process(
-                schema,
-                fn(*args, **kwargs),
+            # One stage either side of `process`, which neither of them changes (#77).
+            frame, returned_result = unwrap(
+                fn(*args, **kwargs), asset=key.to_user_string()
+            )
+            yield from fold(
+                process(
+                    schema,
+                    frame,
+                    valid_key=key,
+                    quarantine_key=quarantine_key,
+                    check_granularity=granularity,
+                    multi_column_rules=multi_column,
+                    max_failure_samples=failure_samples,
+                    statistics=emit_statistics,
+                    row_sample=sampled_rows,
+                    temp_dir=staging_dir,
+                ),
+                returned_result,
                 valid_key=key,
-                quarantine_key=quarantine_key,
-                check_granularity=granularity,
-                multi_column_rules=multi_column,
-                max_failure_samples=failure_samples,
-                statistics=emit_statistics,
-                row_sample=sampled_rows,
-                temp_dir=staging_dir,
             )
 
         definition: dg.AssetsDefinition = dg.multi_asset(
