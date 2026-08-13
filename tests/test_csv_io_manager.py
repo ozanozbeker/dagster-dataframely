@@ -1,6 +1,6 @@
 """Tests for `DataframelyCSVIOManager` and the codecs it writes through.
 
-Everything here is asserted through `dg.materialize` in-process against `tmp_path`, as for parquet. The two managers share one implementation, so the behaviour that has no format in it is exercised once, on parquet. What is here is CSV's own: the five encodings, the schema the read needs, the refusals that keep polars from panicking, and the handful of shared assertions whose expected value is the format.
+Everything here is asserted through `dg.materialize` in-process against `tmp_path`, as for parquet. The two managers share one implementation, so the behaviour that has no format in it is exercised once, on parquet. What is here is CSV's own: the five encodings, the schema the read needs, the refusals that keep Polars from panicking, and the handful of shared assertions whose expected value is the format.
 
 Most assets carry `schema_metadata` on a plain `@dg.asset`. The manager reads the carrier off definition metadata and does not care how it got there, so putting it there by hand keeps these tests about the manager. One test at the end runs the decorator instead, to prove the two halves meet.
 """
@@ -166,7 +166,7 @@ def test_a_lazy_annotation_reads_back_a_scan_that_decodes_on_collect(
 
 
 def test_the_lazy_decode_resolves_no_schema_of_its_own(tmp_path: Path) -> None:
-    """`LazyFrame.columns` would answer which columns to decode by resolving the plan's schema, and polars warns about it once per read. The decode asks `collect_schema()` instead, which is the same question without the warning."""
+    """`LazyFrame.columns` would answer which columns to decode by resolving the plan's schema, and Polars warns about it once per read. The decode asks `collect_schema()` instead, which is the same question without the warning."""
     read_back: list[object] = []
 
     @dg.asset(name="shapes_copy")
@@ -262,7 +262,7 @@ def test_the_csv_sink_runs_the_streaming_engine(
 ) -> None:
     """Covered per format rather than once on the base class, because the engine is named at each format's own call and byte equality above holds whichever engine ran.
 
-    Counted as a set rather than a list, because polars reaches its own `sink_csv` again on the way through and the number of times it does is its business, not this package's.
+    Counted as a set rather than a list, because Polars reaches its own `sink_csv` again on the way through and the number of times it does is its business, not this package's.
     """
     engines: list[object] = []
     sink = pl.LazyFrame.sink_csv
@@ -347,7 +347,7 @@ def test_without_a_schema_an_encoded_column_comes_back_as_text(tmp_path: Path) -
 def test_a_dtype_with_no_codec_is_refused_before_the_write(
     tmp_path: Path, column: str, values: list[object], dtype: pl.DataType
 ) -> None:
-    """`Binary` and `Duration` are encodable at the top level and unreachable below one: polars panics writing binary to JSON, and writes a nested duration as ISO-8601 its own reader rejects. A Rust panic cannot be caught, so the manager gets there first."""
+    """`Binary` and `Duration` are encodable at the top level and unreachable below one: Polars panics writing binary to JSON, and writes a nested duration as ISO-8601 its own reader rejects. A Rust panic cannot be caught, so the manager gets there first."""
 
     @dg.asset(name="shapes")
     def unwritable() -> pl.DataFrame:

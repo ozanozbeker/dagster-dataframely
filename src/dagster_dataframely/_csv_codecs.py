@@ -1,15 +1,15 @@
 """Lossless encodings for the dtypes a CSV cell cannot hold.
 
-A cell holds text, so five polars dtypes have nowhere to land: `Duration`, `List`, `Array`, `Struct` and `Binary`. Four of the five refuse a plain cast outright. Each one here is an encoding paired with its declared inverse, so a column written and read back compares equal: nothing is rounded, widened or dropped, and the no-cast principle is untouched.
+A cell holds text, so five Polars dtypes have nowhere to land: `Duration`, `List`, `Array`, `Struct` and `Binary`. Four of the five refuse a plain cast outright. Each one here is an encoding paired with its declared inverse, so a column written and read back compares equal: nothing is rounded, widened or dropped, and the no-cast principle is untouched.
 
 The inverse needs the dtype the schema declares, which is the whole reason the CSV manager reads a schema off the asset and the parquet manager does not. A JSON string is dtype-blind, and so is an integer.
 
 Design decisions:
-    - A `Duration` encodes to the integer count of its own time unit rather than to a fixed unit. `dy.Duration` is always microseconds, so a cell holds microseconds for every duration dataframely can declare, while a hand-built `Duration('ns')` stays exact instead of being truncated on the way out.
-    - `List` and `Array` encode through a one-field struct named after the column, because polars exposes `json_encode` on the struct namespace alone. `Struct` needs no wrapper and does not get one, so its cell holds the object a reader expects.
+    - A `Duration` encodes to the integer count of its own time unit rather than to a fixed unit. `dy.Duration` is always microseconds, so a cell holds microseconds for every duration Dataframely can declare, while a hand-built `Duration('ns')` stays exact instead of being truncated on the way out.
+    - `List` and `Array` encode through a one-field struct named after the column, because Polars exposes `json_encode` on the struct namespace alone. `Struct` needs no wrapper and does not get one, so its cell holds the object a reader expects.
     - A null is an empty cell in every column, whatever the codec, which costs one `when` per JSON encoder.
-    - An `Array` decodes as a `List` and casts back, at every depth. polars panics deserializing a fixed-size list from JSON, and a Rust panic cannot be caught.
-    - `Binary` and `Duration` are refused *inside* a nested dtype rather than encoded there. polars panics writing binary to JSON, and writes a nested duration as ISO-8601 that its own reader then rejects. Both are exactly the failure `UnwritableDtypeError` exists to get ahead of.
+    - An `Array` decodes as a `List` and casts back, at every depth. Polars panics deserializing a fixed-size list from JSON, and a Rust panic cannot be caught.
+    - `Binary` and `Duration` are refused *inside* a nested dtype rather than encoded there. Polars panics writing binary to JSON, and writes a nested duration as ISO-8601 that its own reader then rejects. Both are exactly the failure `UnwritableDtypeError` exists to get ahead of.
 """
 
 from collections.abc import Callable, Mapping
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import polars as pl
 from polars.datatypes import DataTypeClass
 
-#: What polars annotates a nested dtype's member as. Both `Field.__init__` and the `List` and `Array` constructors parse their argument into an instance, so the class arm is unreachable at runtime, but a dtype tree cannot be walked without carrying it.
+#: What Polars annotates a nested dtype's member as. Both `Field.__init__` and the `List` and `Array` constructors parse their argument into an instance, so the class arm is unreachable at runtime, but a dtype tree cannot be walked without carrying it.
 type _Member = pl.DataType | DataTypeClass
 
 
@@ -38,7 +38,7 @@ class _Codec:
 
 
 def _decodable(dtype: _Member) -> _Member:
-    """Rewrites every `Array` in a dtype tree to a `List`, so polars can deserialize it.
+    """Rewrites every `Array` in a dtype tree to a `List`, so Polars can deserialize it.
 
     The declared dtype is restored by a cast after the decode. Recursive because an array can sit at any depth, and the panic it causes fires wherever it sits.
     """
@@ -118,10 +118,10 @@ _CODECS: Mapping[type[pl.DataType], _Codec] = {
     pl.Binary: _Codec("base64", _binary_encode, _binary_decode),
 }
 
-# No codec at any depth: nothing text can hold, and polars cannot nest it either.
+# No codec at any depth: nothing text can hold, and Polars cannot nest it either.
 _UNWRITABLE = (pl.Object,)
 
-# Encodable at the top level, unreachable below one. Both fail inside JSON, one by panic and one by an inverse polars will not take back.
+# Encodable at the top level, unreachable below one. Both fail inside JSON, one by panic and one by an inverse Polars will not take back.
 _TOP_LEVEL_ONLY = (pl.Binary, pl.Duration)
 
 
@@ -205,7 +205,7 @@ def decode(
 ) -> tuple[pl.DataFrame | pl.LazyFrame, dict[str, str]]:
     """Restores every encoded column to the dtype the schema declares.
 
-    Takes a scan as readily as a frame, and hands back whichever it was given. Every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data. The column names come off `collect_schema` rather than `columns`, which asks a `LazyFrame` the same question without the performance warning polars attaches to the shorter spelling.
+    Takes a scan as readily as a frame, and hands back whichever it was given. Every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data. The column names come off `collect_schema` rather than `columns`, which asks a `LazyFrame` the same question without the performance warning Polars attaches to the shorter spelling.
 
     Args:
         frame: The frame or scan `read_csv` and `scan_csv` return, with the encoded columns as text.

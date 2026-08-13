@@ -1,4 +1,4 @@
-"""The decorator: one argument attaches a dataframely schema to a Dagster asset.
+"""The decorator: one argument attaches a Dataframely schema to a Dagster asset.
 
 The decorator coordinates four artifacts no single `@dg.asset` parameter accepts as a bundle: the out, the check specs, the definition metadata, and the wrapped runtime. First-party precedent for a decorator that does this is `@dbt_assets`.
 
@@ -17,7 +17,7 @@ import dataframely as dy
 
 from dagster_dataframely._checks import check_specs
 from dagster_dataframely._metadata import quarantine_metadata, schema_metadata
-from dagster_dataframely._returns import TransformReturn, fold, unwrap
+from dagster_dataframely._returns import DecoratedReturn, fold, unwrap
 from dagster_dataframely._runtime import AssetYield, process
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
@@ -34,7 +34,7 @@ from dagster_dataframely.errors import (
     QuarantineSettingError,
 )
 
-TransformFn = Callable[..., TransformReturn]
+DecoratedFn = Callable[..., DecoratedReturn]
 
 # The union `@dg.asset` accepts, spelled out because `AutomationCondition` is generic and its two parameterizations are not interchangeable.
 AutomationCondition = (
@@ -53,7 +53,7 @@ AssetDep = (
     | dg.AssetDep
 )
 
-# Decorator-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The shape check and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a transform is not a virtual asset.
+# Decorator-owned: dropped from the rebuild so `dg.AssetOut`'s own default applies. The shape check and the nothing-survived path both skip an out, `dagster_type` was ruled out with evidence (#3), and a decorated function is not a virtual asset.
 _DECORATOR_OWNED_SETTINGS = frozenset({"is_required", "dagster_type", "is_virtual"})
 
 # Settings one step cannot hold two of. `partitions_def` and `backfill_policy` need no entry: they live on the `multi_asset`, so both outs carry them identically by construction. That is the property these three lack.
@@ -147,9 +147,9 @@ def _quarantine_out(
 def _description(schema: type[dy.Schema], description: str | None) -> str | None:
     """Resolves the asset's description, most specific source first.
 
-    What the decorator was passed wins, then the schema's own docstring. Returning `None` is what leaves Dagster's fallback to the transform's docstring standing, so the package fills the gap rather than closing it.
+    What the decorator was passed wins, then the schema's own docstring. Returning `None` is what leaves Dagster's fallback to the decorated function's docstring standing, so the package fills the gap rather than closing it.
 
-    The schema outranks the transform because the schema is what describes the table, whereas the transform's docstring describes the function that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's: those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
+    The schema outranks it because the schema is what describes the table, whereas the function's docstring describes the code that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's: those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
 
     Empty is absent on both sources, and neither can express "no description at all", because Dagster's own fallback takes over as soon as this returns nothing.
 
@@ -202,24 +202,26 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
     retry_policy: dg.RetryPolicy | None = None,
     code_version: str | None = None,
     pool: str | None = None,
-) -> Callable[[TransformFn], dg.AssetsDefinition]:
-    """Turns a polars transform into an asset that validates its output against `schema`.
+) -> Callable[[DecoratedFn], dg.AssetsDefinition]:
+    """Turns the decorated function into an asset that validates the frame it returns against `schema`.
 
-    The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
+    The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every Dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
-    The transform keeps plain polars annotations: nothing rewrites the signature, and upstream dependencies bind as ordinary parameters. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
+    The decorated function keeps plain Polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and a declared `context` binds the way it does on a plain `@dg.asset`. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
 
         pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
         pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
 
-    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch; this decorator cannot, because the annotation describes what the transform handed over while `dagster_type` describes what the asset stores, and those differ here: validation is eager, so the out always holds a `DataFrame` however the transform arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
+    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch; this decorator cannot, because the annotation describes what the decorated function handed over while `dagster_type` describes what the asset stores, and those differ here: validation is eager, so the out always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
 
     A returned result is what `@dg.asset` accepts and the only route there is to a materialization's tags and data version:
 
         def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(value=raw_orders, metadata={"source": "stripe"})
 
-    Its `value` is the frame to validate, and is required. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both. To attach metadata without returning a result at all, declare a `context` parameter and call `context.add_asset_metadata({...})`.
+    Its `value` is the frame to validate, and is required. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both.
+
+    A returned result is the route this package prefers, and the context is the other one. `context.add_asset_metadata({...}, asset_key=context.asset_key_for_output(<this asset's name>))` reaches the same materialization, with the `asset_key=` mandatory as soon as a quarantine is declared and whether or not it is written; that route also overrides this package's own metadata keys, where a returned result loses to them, and it cannot be reached by calling the asset.
 
     **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
@@ -235,7 +237,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
     `@dg.multi_asset` is the mechanism, but the vocabulary is `@dg.asset`'s, because this decorator is designed for a single table that happens to grow a quarantine sibling. Anything `@dg.asset` lets you say about one asset is sayable here under the same name, and a test asserts that in both directions.
 
     Args:
-        schema: The dataframely schema the transform's output must satisfy.
+        schema: The Dataframely schema the decorated function's output must satisfy.
         quarantine: Where invalid rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's.
         check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
         multi_column_rules: Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
@@ -255,9 +257,9 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         name: Asset name. Defaults to the function name.
         ins: Explicit input mapping, for the cases a parameter name cannot express.
         deps: Upstream assets this one depends on without loading.
-        description: Asset description. Unset, the schema's own docstring fills it, and the transform's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
+        description: Asset description. Unset, the schema's own docstring fills it, and the decorated function's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
         config_schema: Run configuration schema for the underlying op.
-        required_resource_keys: Resources the transform reaches through the context.
+        required_resource_keys: Resources the decorated function reaches through the context.
         partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning.
         hooks: Hooks to attach to the underlying op.
         backfill_policy: How Dagster backfills this asset's partitions.
@@ -318,7 +320,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         "pool": pool,
     }
 
-    def decorate(fn: TransformFn) -> dg.AssetsDefinition:
+    def decorate(fn: DecoratedFn) -> dg.AssetsDefinition:
         asset_name: str = name or fn.__name__
         prefix: list[str] = []
         if key_prefix is not None:

@@ -1,8 +1,8 @@
-"""What a transform may hand back, and what a returned `dg.MaterializeResult` does to the materialization.
+"""What a decorated function may hand back, and what a returned `dg.MaterializeResult` does to the materialization.
 
-A transform returns the frame to validate, or a `dg.MaterializeResult` carrying it. The second spelling is what Dagster's own docs teach for attaching metadata, and it is the only route there is to a materialization's tags and data version, so refusing it cost parity with the `@dg.asset` this decorator is modelled on (#77).
+A decorated function returns the frame to validate, or a `dg.MaterializeResult` carrying it. The second spelling is what Dagster's own docs teach for attaching metadata, and it is the only route there is to a materialization's tags and data version, so refusing it cost parity with the `@dg.asset` this decorator is modelled on (#77).
 
-Two halves, and neither reads without the other. The unwrap runs between calling the transform and handing the frame to `process`; the fold runs over what `process` yields. `process` itself is untouched by both, which is what keeps a hand-wired asset handing it a frame and keeps its own guard the thing that says so.
+Two halves, and neither reads without the other. The unwrap runs between calling the decorated function and handing the frame to `process`; the fold runs over what `process` yields. `process` itself is untouched by both, which is what keeps a hand-wired asset handing it a frame and keeps its own guard the thing that says so.
 
 The unwrap takes `value`, and the fold takes `metadata`, `data_version` and `tags`. That is four of the six fields; the other two are refused here, because the decorator decides the asset keys from the outs it declares and the check results from the schema's rules.
 """
@@ -16,15 +16,15 @@ from dagster_dataframely.errors import (
     MaterializeResultValueError,
 )
 
-#: A `dg.MaterializeResult` a transform returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would not accept either.
+#: A `dg.MaterializeResult` a decorated function returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would not accept either.
 ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.LazyFrame]
 
-#: Everything a transform is allowed to return. A static promise only: `unwrap` and the staging decision both read the object that arrives, never the annotation it was declared under, so a transform annotated wrongly still behaves as what it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it, which this decorator cannot: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the transform arrived at it.
-TransformReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult
+#: Everything a decorated function is allowed to return. A static promise only: `unwrap` and the staging decision both read the object that arrives, never the annotation it was declared under, so a decorated function annotated wrongly still behaves as what it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it, which this decorator cannot: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the decorated function arrived at it.
+DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult
 
 
 def unwrap(
-    returned: TransformReturn, *, asset: str
+    returned: DecoratedReturn, *, asset: str
 ) -> tuple[pl.DataFrame | pl.LazyFrame, ReturnedResult | None]:
     """Separates the frame to validate from the fields to fold in.
 
@@ -33,7 +33,7 @@ def unwrap(
     Every refusal is raised here rather than inside `process`, and all three are pipeline defects that no run should reach twice. The frame guard in `process` is deliberately left alone and still refuses a `dg.MaterializeResult` handed to it directly, which is what hand-wiring gets.
 
     Args:
-        returned: Whatever the transform returned, frame or result alike.
+        returned: Whatever the decorated function returned, frame or result alike.
         asset: The valid out's asset key, rendered, for the messages.
 
     Returns:
@@ -66,7 +66,7 @@ def fold(
 
     Three, because the unwrap already took `value`: whatever it still holds is the frame `process` has since validated, so nothing here reads it.
 
-    The valid out only. The quarantine keeps the tags and the data version Dagster gives it, on the same reasoning that keeps `automation_condition` and `freshness_policy` off the quarantine out: one returned result describes the table the transform produced, not the rows the schema rejected.
+    The valid out only. The quarantine keeps the tags and the data version Dagster gives it, on the same reasoning that keeps `automation_condition` and `freshness_policy` off the quarantine out: one returned result describes the table the decorated function produced, not the rows the schema rejected.
 
     The two metadata mappings combine with the package's own keys last, so a returned `dagster/row_count` loses to the one this package counted. That is the precedence the decorator already uses for definition metadata, and for the same reason: those keys are this package's surface and a collision is a mistake.
 
@@ -74,7 +74,7 @@ def fold(
 
     Args:
         results: What `process` yielded, materializations and check results alike.
-        returned_result: What the transform returned, or `None` when it returned a bare frame, in which case everything passes through untouched.
+        returned_result: What the decorated function returned, or `None` when it returned a bare frame, in which case everything passes through untouched.
         valid_key: The asset key whose materialization the fields land on.
 
     Yields:

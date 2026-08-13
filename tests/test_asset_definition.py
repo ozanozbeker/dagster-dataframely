@@ -30,7 +30,7 @@ from tests.scenario import Orders
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 _SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"
 
-# Every rule `Orders` declares, in the order dataframely reports them. Spelled out rather than derived so that a rule silently disappearing is a failure here.
+# Every rule `Orders` declares, in the order Dataframely reports them. Spelled out rather than derived so that a rule silently disappearing is a failure here.
 _RULES = [
     "paid_orders_have_amount",
     "line_numbers_are_dense",
@@ -57,7 +57,7 @@ _RULES = [
 
 @dataframely_asset(schema=Orders, group_name="sales")
 def orders() -> pl.DataFrame:
-    """The transform's own docstring, which `Orders`'s outranks."""
+    """The decorated function's own docstring, which `Orders`'s outranks."""
     return pl.DataFrame()
 
 
@@ -255,7 +255,7 @@ class _Blank(dy.Schema):
 def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
     @dataframely_asset(schema=_Documented)
     def postal_codes() -> pl.DataFrame:
-        """The transform's own docstring, which the schema outranks."""
+        """The decorated function's own docstring, which the schema outranks."""
         return pl.DataFrame()
 
     (spec,) = postal_codes.specs
@@ -265,7 +265,7 @@ def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
 def test_an_explicit_description_outranks_the_schema_docstring():
     @dataframely_asset(schema=_Documented, description="Said at the call site.")
     def explicit() -> pl.DataFrame:
-        """The transform's own docstring."""
+        """The decorated function's own docstring."""
         return pl.DataFrame()
 
     (spec,) = explicit.specs
@@ -273,15 +273,15 @@ def test_an_explicit_description_outranks_the_schema_docstring():
 
 
 def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
-    """The last source is Dagster's, not the package's: with nothing to fill the gap the transform's docstring lands, exactly as it did before."""
+    """The last source is Dagster's, not the package's: with nothing to fill the gap the decorated function's docstring lands, exactly as it did before."""
 
     @dataframely_asset(schema=_Undocumented)
     def undocumented() -> pl.DataFrame:
-        """The transform's own docstring."""
+        """The decorated function's own docstring."""
         return pl.DataFrame()
 
     (spec,) = undocumented.specs
-    assert spec.description == "The transform's own docstring."
+    assert spec.description == "The decorated function's own docstring."
 
 
 def test_the_base_schemas_docstring_never_reaches_an_asset():
@@ -302,7 +302,7 @@ def test_an_empty_description_counts_as_absent_too():
 
     @dataframely_asset(schema=_Documented, description="")
     def empty() -> pl.DataFrame:
-        """The transform's own docstring."""
+        """The decorated function's own docstring."""
         return pl.DataFrame()
 
     (spec,) = empty.specs
@@ -312,11 +312,11 @@ def test_an_empty_description_counts_as_absent_too():
 def test_a_whitespace_only_schema_docstring_counts_as_absent():
     @dataframely_asset(schema=_Blank)
     def blank() -> pl.DataFrame:
-        """The transform's own docstring."""
+        """The decorated function's own docstring."""
         return pl.DataFrame()
 
     (spec,) = blank.specs
-    assert spec.description == "The transform's own docstring."
+    assert spec.description == "The decorated function's own docstring."
 
 
 def test_a_multi_line_schema_docstring_arrives_dedented():
@@ -462,7 +462,7 @@ def test_a_column_carrying_no_rule_carries_no_check():
 
 
 def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
-    """dataframely emits one `inner_<field>_nullability` rule per struct field, so a wide struct is where the check list gets unreadable fastest."""
+    """Dataframely emits one `inner_<field>_nullability` rule per struct field, so a wide struct is where the check list gets unreadable fastest."""
 
     class Addresses(dy.Schema):
         address_id = dy.String(primary_key=True)
@@ -641,7 +641,7 @@ def test_the_columns_tab_is_populated_before_first_materialization():
 
 
 def test_column_metadata_becomes_tags():
-    """`Column.metadata` is stored by dataframely and never read, so column tags are its only destination. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
+    """`Column.metadata` is stored by Dataframely and never read, so column tags are its only destination. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
     assert _columns()["amount"].tags == {"owner": "finance", "pii": "False"}
 
 
@@ -658,13 +658,13 @@ def test_every_schema_column_reaches_the_catalog_in_order():
 
 
 def test_a_unique_column_says_so():
-    """`tracking_id` declares `unique=True`, which dataframely enforces with its own rule and therefore its own check. The catalog has to agree with the check."""
+    """`tracking_id` declares `unique=True`, which Dataframely enforces with its own rule and therefore its own check. The catalog has to agree with the check."""
     assert _columns()["tracking_id"].constraints.unique
     assert "dy_rule__tracking_id__unique" in _specs_by_name(orders)
 
 
 def test_a_primary_key_column_never_claims_to_be_unique():
-    """dataframely keeps the two flags independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`. Deriving `unique` from `primary_key` would assert a per-column uniqueness that nothing enforces."""
+    """Dataframely keeps the two flags independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`. Deriving `unique` from `primary_key` would assert a per-column uniqueness that nothing enforces."""
     assert not _columns()["order_id"].constraints.unique
     assert not _columns()["line_no"].constraints.unique
 
@@ -683,7 +683,7 @@ class Measurements(dy.Schema):
     corners = dy.Array(dy.Int32(min=0), 2)
     label = dy.String(
         min_length=2,
-        # Two lambdas, so dataframely disambiguates them with a counter rather than a name.
+        # Two lambdas, so Dataframely disambiguates them with a counter rather than a name.
         check=[lambda expr: expr != "", lambda expr: expr == expr.str.strip_chars()],
     )
 
@@ -724,7 +724,7 @@ def test_the_remaining_constraint_shapes_render_their_value():
 
 
 def test_a_named_check_renders_its_key_and_an_anonymous_one_says_it_is_one():
-    """The nudge to name a check: `custom check` is all an unnamed lambda leaves to render, and dataframely's counter suffix is not a name anybody wrote."""
+    """The nudge to name a check: `custom check` is all an unnamed lambda leaves to render, and Dataframely's counter suffix is not a name anybody wrote."""
     assert "lowercase" in _columns()["email"].constraints.other
     assert _columns()["note"].constraints.other == ["custom check"]
     assert _measured()["label"].constraints.other[:2] == [
@@ -765,7 +765,7 @@ def test_sibling_rules_render_in_one_voice_on_the_constraint_surface():
 
 
 def test_the_primary_key_is_stated_once_at_table_level():
-    """dataframely models it as one rule over a struct of every key column, and stating it once is what distinguishes a composite key from two independent single-column ones."""
+    """Dataframely models it as one rule over a struct of every key column, and stating it once is what distinguishes a composite key from two independent single-column ones."""
     table_schema = _catalog(orders, dg.AssetKey(["orders"]))
 
     assert "PK: order_id, line_no" in table_schema.constraints.other
@@ -779,7 +779,7 @@ def test_the_primary_key_is_stated_once_at_table_level():
 class Ledger(dy.Schema):
     """A key member that also declares `unique=True`, which `Orders` has nowhere to put.
 
-    dataframely keeps the two flags independent, so `entry_id` carries both rules: the composite `primary_key` over the pair, and its own `entry_id|unique` over itself.
+    Dataframely keeps the two flags independent, so `entry_id` carries both rules: the composite `primary_key` over the pair, and its own `entry_id|unique` over itself.
     """
 
     entry_id = dy.String(primary_key=True, unique=True)
@@ -792,7 +792,7 @@ def ledger() -> pl.DataFrame:
 
 
 def test_a_key_member_reads_not_null_and_claims_uniqueness_only_where_it_declared_it():
-    """dataframely forbids a nullable key column, so `not null` is free. `unique` is not: on a composite key only the tuple is unique, and `{"a": ["x", "x"], "b": [1, 2]}` passes."""
+    """Dataframely forbids a nullable key column, so `not null` is free. `unique` is not: on a composite key only the tuple is unique, and `{"a": ["x", "x"], "b": [1, 2]}` passes."""
     columns = _columns_of(ledger, dg.AssetKey(["ledger"]))
 
     assert not columns["entry_id"].constraints.nullable
@@ -1246,7 +1246,7 @@ _NOT_ON_THE_DECORATOR = {
     "key",  # decorator-owned: `key_prefix` plus `name` already say it, once
     "output_required",  # decorator-owned: the shape check and abort paths must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
-    "is_virtual",  # a virtual asset has no compute, so there is no transform
+    "is_virtual",  # a virtual asset has no compute, so there is nothing to decorate
     "io_manager_def",  # not settable per out; the forwarded `resource_defs` covers it
 }
 

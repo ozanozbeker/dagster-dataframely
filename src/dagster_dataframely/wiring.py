@@ -21,8 +21,7 @@ Example:
     ...     },
     ...     check_specs=dd.wiring.check_specs(Orders, asset="orders"),
     ... )
-    ... def orders() -> dd.wiring.AssetYield:
-    ...     context = dg.AssetExecutionContext.get()
+    ... def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
     ...     yield from dd.wiring.process(
     ...         Orders,
     ...         pl.DataFrame({"order_id": ["a"]}),

@@ -1,6 +1,6 @@
 """Characterization tests for the upstream APIs this package takes a hard dependency on.
 
-These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "dataframely changed" rather than "something broke".
+These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "Dataframely changed" rather than "something broke".
 """
 
 import datetime as dt
@@ -81,7 +81,7 @@ def test_a_column_rule_is_not_reachable_by_name():
     # `naming.rule_description` looks every rule up by name. Column rules are generated from column arguments and have no function to document, and the `|` is what makes the lookup miss without needing a branch.
     assert getattr(Orders, "amount|min", None) is None
 
-    # `primary_key` is the reason that function tests `isinstance` rather than truthiness: it collides with `Schema.primary_key`, so the lookup hits a bound method whose docstring belongs to dataframely rather than to any rule.
+    # `primary_key` is the reason that function tests `isinstance` rather than truthiness: it collides with `Schema.primary_key`, so the lookup hits a bound method whose docstring belongs to Dataframely rather than to any rule.
     assert not isinstance(getattr(Orders, "primary_key", None), RuleFactory)
 
 
@@ -164,7 +164,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
     """`FailureInfo.details()` still returns the invalid rows plus one column for each rule."""
     # #19 builds the quarantine frame straight off `details()`: original columns untouched, rule columns renamed into the reserved namespace.
     # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows each rule rejected.
-    # Guide-documented and upstream-tested, but absent from dataframely's API reference.
+    # Guide-documented and upstream-tested, but absent from Dataframely's API reference.
     _, failure = Orders.filter(_MIXED_ORDERS)
     details = failure.details()
 
@@ -183,7 +183,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
 
 def test_the_failure_example_limit_does_not_truncate_the_filter_path():
     """`dy.Config`'s `max_failure_examples` still governs only the message `validate` builds, and nothing `filter` returns."""
-    # #24 bounds the sample of failing rows in check metadata with the package's own setting. That is only a bound worth having if dataframely is not already applying one, and only package-owned if a project that tightened this one still gets the sample it asked this package for.
+    # #24 bounds the sample of failing rows in check metadata with the package's own setting. That is only a bound worth having if Dataframely is not already applying one, and only package-owned if a project that tightened this one still gets the sample it asked this package for.
     # Documented as "examples to include in failure messages", which says where it applies but not where it does not.
     with dy.Config(max_failure_examples=1):
         _, failure = Orders.filter(_MIXED_ORDERS)
@@ -206,8 +206,8 @@ def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
 
 
 def test_polars_renders_a_duration_in_its_own_friendly_style():
-    """`dt.to_string("polars")` still renders a duration the way a polars frame repr does: `8d`, `1m 30s`, `2h 5m`, a sign on every part of a negative one, and a null left null."""
-    # #23 renders every duration cell of the temporal statistics table through it. The ticket specifies polars' own style and calls it unreachable, which was true before polars 1.14 added `format="polars"`; the package's floor is well past that, so the rendering is upstream's rather than fifteen lines of this package's.
+    """`dt.to_string("polars")` still renders a duration the way a Polars frame repr does: `8d`, `1m 30s`, `2h 5m`, a sign on every part of a negative one, and a null left null."""
+    # #23 renders every duration cell of the temporal statistics table through it. The ticket specifies Polars' own style and calls it unreachable, which was true before Polars 1.14 added `format="polars"`; the package's floor is well past that, so the rendering is upstream's rather than fifteen lines of this package's.
     # Documented as "the same form seen in the frame repr", which is a repr and therefore restyleable without anybody upstream calling it a break. That is what makes it worth characterizing: the four decisions below are the ones the tables state.
     spans = pl.Series(
         "spans",
@@ -369,7 +369,7 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 ):
     """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
 
-    # #77 documents that `dataframely_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the transform arrived at it.
+    # #77 documents that `dataframely_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the decorated function arrived at it.
     # Undocumented as a contrast, though each half is documented alone. What a reader carries over from `@dg.asset` is exactly the expectation this breaks.
     @dg.asset(name="mismatch")
     def mismatch() -> pl.DataFrame:
@@ -387,7 +387,7 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 def test_materialize_result_still_takes_exactly_the_six_fields_the_fold_names():
     """`dg.MaterializeResult`'s constructor still takes exactly six fields, and `value` still defaults to a sentinel rather than to `None`."""
     # #77 folds a returned result into the materialization `process` built, rebuilding it because it is immutable and naming every field. A seventh added upstream would be dropped silently, so the field set is pinned here rather than left to be noticed.
-    # The sentinel is what lets one `isinstance` check cover a result carrying nothing and one carrying something that is not a frame, so it is asserted too: a default of `None` would make the two indistinguishable from a transform that returned `value=None` on purpose.
+    # The sentinel is what lets one `isinstance` check cover a result carrying nothing and one carrying something that is not a frame, so it is asserted too: a default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
     fields = set(inspect.signature(dg.MaterializeResult.__new__).parameters) - {"cls"}
 
     assert fields == {

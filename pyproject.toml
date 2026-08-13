@@ -1,7 +1,7 @@
 [project]
 name = "dagster-dataframely"
 version = "0.3.0"
-description = "A Dataframely plugin for Dagster."
+description = "A Dataframely integration for Dagster."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"

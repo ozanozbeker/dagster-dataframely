@@ -29,7 +29,7 @@ _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefinition:
-    """The same transform under whichever declaration a shape asks for."""
+    """The same decorated function under whichever declaration a shape asks for."""
 
     @dataframely_asset(schema=Orders, name="orders", **settings)
     def orders() -> pl.DataFrame:
@@ -172,8 +172,8 @@ def test_the_quarantined_rows_come_back_on_the_second_result():
     assert tables[dg.AssetKey(["orders_quarantine"])].height == 3
 
 
-def test_a_transform_taking_context_reads_its_partition_key_from_a_built_one():
-    """`dg.build_asset_context` is what makes a partitioned transform testable by calling it. It cannot set the ContextVar `AssetExecutionContext.get()` reads, which is why the wrapper no longer reads one."""
+def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_built_one():
+    """`dg.build_asset_context` is what makes a partitioned asset testable by calling it. It cannot set the ContextVar `AssetExecutionContext.get()` reads, which is why the wrapper no longer reads one."""
     seen: dict[str, str] = {}
 
     @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
@@ -189,7 +189,7 @@ def test_a_transform_taking_context_reads_its_partition_key_from_a_built_one():
     assert set(tables) == {dg.AssetKey(["orders"])}
 
 
-def test_a_transform_taking_context_alongside_an_input_is_invocable_too():
+def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too():
     """The context comes first and the frames follow, exactly as Dagster orders them."""
 
     @dataframely_asset(schema=Orders, name="orders")

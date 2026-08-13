@@ -83,7 +83,7 @@ def test_nothing_public_leaks_past_any_export_list():
 
     A submodule with a public name, or a third-party name imported at the root, is reachable as `dd.<name>` whatever `__all__` says, and reachable is what a user will come to depend on. The same assertion catches the other side: a name left in `__all__` after its import moved away is a `from dagster_dataframely import *` that fails.
 
-    `dd.errors` is held to the same standard, minus the three names it imports to build its messages. Those are listed rather than eliminated: the alternatives are `from __future__ import annotations` plus a `TYPE_CHECKING` block, which is what polars does and which would make this the one module in the package with stringified annotations, or spelling them `_pl` and `_Mapping` at seven sites in the module a user reads tracebacks from. Neither is worth paying to hide a name nobody will type, and listing them keeps the guarantee that matters: a fourth import fails this test.
+    `dd.errors` is held to the same standard, minus the three names it imports to build its messages. Those are listed rather than eliminated: the alternatives are `from __future__ import annotations` plus a `TYPE_CHECKING` block, which is what Polars does and which would make this the one module in the package with stringified annotations, or spelling them `_pl` and `_Mapping` at seven sites in the module a user reads tracebacks from. Neither is worth paying to hide a name nobody will type, and listing them keeps the guarantee that matters: a fourth import fails this test.
 
     `dd.wiring` imports nothing but what it re-exports, so it is held to the standard exactly.
     """
@@ -99,7 +99,7 @@ def test_nothing_public_leaks_past_any_export_list():
 def test_only_errors_and_wiring_have_public_module_names():
     """One responsibility per module and no promise about any of them, so the tree stays free to change.
 
-    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Ten error names and eight wiring names would be three quarters of it, and neither set is what a user reaches for to get work done. polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
+    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Ten error names and eight wiring names would be three quarters of it, and neither set is what a user reaches for to get work done. Polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
 
     What each costs is the freedom to rename that one file. `errors` is a leaf holding one class per failure, so it has nothing to split along, and `wiring` re-exports rather than defines, so everything behind it stays free to move.
     """

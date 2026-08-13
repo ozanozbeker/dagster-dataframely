@@ -4,9 +4,9 @@ The asset body owns what the data is; the manager owns where and how it is writt
 
 Design decisions:
     - `dagster/column_schema` describes the data, not the write. The asset definition emits it, not the IO manager.
-    - Both managers share one base class, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into polars.
+    - Both managers share one base class, so what a materialization records is one implementation and cannot differ by format. What a format owns is exactly its refusals and its calls into Polars.
     - **A lazy output sinks to a local temp file and is promoted, rather than sinking at the destination.** See `_FrameIOManager._sink_and_promote` for why the two steps are not one.
-    - **A scan is built on the open handle, not on the path.** Handed a file object, polars reads its bytes there and then, which is why the plan still collects after the handle closes. That gives up the transfer a scan of an `s3://` path would have pruned with range requests, and it buys two things worth more here: credentials stay one mechanism, fsspec's, rather than the second one polars' own object-store would need, and a missing file raises `FileNotFoundError` from the open, where `UPathIOManager` can still catch it and honour `allow_missing_partitions`. A scan of a path raises nothing until the caller collects, long after the manager has returned. So laziness buys decoding and materialization here, not transfer: the same bytes an eager read moves, and only the rows and columns a query keeps.
+    - **A scan is built on the open handle, not on the path.** Handed a file object, Polars reads its bytes there and then, which is why the plan still collects after the handle closes. That gives up the transfer a scan of an `s3://` path would have pruned with range requests, and it buys two things worth more here: credentials stay one mechanism, fsspec's, rather than the second one Polars' own object-store would need, and a missing file raises `FileNotFoundError` from the open, where `UPathIOManager` can still catch it and honour `allow_missing_partitions`. A scan of a path raises nothing until the caller collects, long after the manager has returned. So laziness buys decoding and materialization here, not transfer: the same bytes an eager read moves, and only the rows and columns a query keeps.
 """
 
 import shutil
@@ -129,7 +129,7 @@ class _FrameIOManager(UPathIOManager):
         Here rather than in `dump_to_path` so that a rejection writes nothing and creates no directory, and not at definition time because an asset cannot know which IO manager it will be bound to.
         """
         if not isinstance(obj, (pl.DataFrame, pl.LazyFrame)):
-            wrong_type = f"This manager writes polars frames, but the output is a {type(obj).__name__}. Annotate the asset `-> None` if it manages its own storage, so that Dagster skips the IO manager entirely."
+            wrong_type = f"This manager writes Polars frames, but the output is a {type(obj).__name__}. Annotate the asset `-> None` if it manages its own storage, so that Dagster skips the IO manager entirely."
             raise DagsterInvariantViolationError(wrong_type)
 
         unwritable = self._unwritable(obj.collect_schema())
@@ -148,7 +148,7 @@ class _FrameIOManager(UPathIOManager):
 
         **Local rather than a sibling key beside the destination.** An object store has no rename, so promoting a sibling temp key would cost a full server-side copy of everything just written.
 
-        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the decorator resolves it where the asset is declared and hands it to `process`, which has staged and validated its transform long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
+        `temp_dir` resolves through the environment and the package default alone. `dataframely_asset`'s own `temp_dir` argument does not reach here: the decorator resolves it where the asset is declared and hands it to `process`, which has staged and validated its decorated function long before a manager sees a frame. The setting names a disk, and which disk a code location has is a deployment's decision, so the environment tier is the one that matters here anyway.
 
         Args:
             context: The executing output's context, forwarded to the format's own sink.
@@ -159,7 +159,7 @@ class _FrameIOManager(UPathIOManager):
             FileNotFoundError: `temp_dir` names a directory that does not exist. It is not created, because the setting exists to move the staging file off a container's ephemeral disk and a mistyped path silently created there is the failure somebody set it to avoid.
         """
         with staging(TEMP_DIR.resolve(None)) as directory:
-            # The destination's own suffix rather than a bare name: polars reads a
+            # The destination's own suffix rather than a bare name: Polars reads a
             # compression setting off the extension it is handed, and a staging file that
             # outlived a killed process still says what it holds.
             staged = directory / f"staged{self._suffix}"
@@ -191,7 +191,7 @@ class _FrameIOManager(UPathIOManager):
 
 
 class _ParquetIOManager(_FrameIOManager):
-    """Writes polars frames to `.parquet`, built by the `DataframelyParquetIOManager` users bind."""
+    """Writes Polars frames to `.parquet`, built by the `DataframelyParquetIOManager` users bind."""
 
     storage_kind = "parquet"
 
@@ -233,7 +233,7 @@ class _ParquetIOManager(_FrameIOManager):
 
 
 class _CSVIOManager(_FrameIOManager):
-    """Writes polars frames to `.csv`, built by the `DataframelyCSVIOManager` users bind."""
+    """Writes Polars frames to `.csv`, built by the `DataframelyCSVIOManager` users bind."""
 
     storage_kind = "csv"
 
@@ -319,7 +319,7 @@ class _CSVIOManager(_FrameIOManager):
 
         CSV is the sole reason a read path needs the schema at all. It arrives from the carrier in the upstream asset's definition metadata, so it costs no round trip to storage and cannot drift from the data, because it never came from the data.
 
-        With no schema to read against, this is an ordinary inferred CSV read: every column arrives as whatever polars makes of the text.
+        With no schema to read against, this is an ordinary inferred CSV read: every column arrives as whatever Polars makes of the text.
 
         Going lazy costs the schema nothing. `scan_csv` takes the same `schema_overrides`, and every codec is an expression over `with_columns`, which behaves the same on both frame types, so the decode is the one written for the eager read.
         """
@@ -348,13 +348,13 @@ class _CSVIOManager(_FrameIOManager):
 
 
 class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager]):
-    """Stores polars frames as `.parquet` files under `base_dir`, locally or in cloud storage.
+    """Stores Polars frames as `.parquet` files under `base_dir`, locally or in cloud storage.
 
     `base_dir` is a universal-pathlib path, so `s3://bucket/prefix`, `gs://...` and `az://...` are written the way a local directory is, on credentials from the ambient environment. A cloud scheme needs its fsspec filesystem installed alongside this package: `s3fs`, `gcsfs` or `adlfs`.
 
     Every materialization carries `path`, `bytes_written` and `dagster/storage_kind`, and nothing else: no column schema, no data sample, no statistics pass. A dtype that parquet cannot represent raises `UnwritableDtypeError` before the write.
 
-    **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
+    **A read dispatches on the input annotation.** `pl.LazyFrame` hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded; `pl.DataFrame` reads the file whole, as before. The scan rides the same fsspec handle the eager read does, on the ambient credentials above and no second mechanism, and Polars reads the file's bytes when the scan is built. So what a scan saves is decoding and materialization, not transfer.
 
     **A write dispatches on the runtime type instead, and a `LazyFrame` output streams.** It is sunk through the streaming engine to a local temp file and promoted to `base_dir` once the plan succeeded, so peak memory is the engine's buffers rather than the whole frame. A plan that fails writes nothing to the destination and leaves a file already there untouched, which is what the promote buys: sinking at the destination would truncate it before knowing the plan works. A `DataFrame` output is written where it is, having nothing left to stream.
 
@@ -394,7 +394,7 @@ class DataframelyParquetIOManager(ConfigurableIOManagerFactory[_ParquetIOManager
 
 
 class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
-    """Stores polars frames as `.csv` files under `base_dir`, locally or in cloud storage.
+    """Stores Polars frames as `.csv` files under `base_dir`, locally or in cloud storage.
 
     Everything `DataframelyParquetIOManager` does about storage, this does identically: the same universal-pathlib `base_dir`, the same three metadata keys, no column schema, and `UnwritableDtypeError` before the write for a dtype it cannot hold.
 
@@ -402,7 +402,7 @@ class DataframelyCSVIOManager(ConfigurableIOManagerFactory[_CSVIOManager]):
 
     **The read needs the schema, so attach the asset's schema to reach it.** The decode reads the dtype off the carrier `dataframely_asset` puts in the asset's definition metadata, which `schema_metadata` also builds for a plain `@dg.asset`. Without one, the read is an ordinary inferred CSV read and an encoded column arrives as text. The schema never comes from a sidecar file and never from the data, so it costs no round trip and cannot drift.
 
-    Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. polars cannot write the first to JSON and cannot read the second back, so encoding either one would write a file that no longer round-trips.
+    Two dtypes are refused rather than encoded: `Binary` and `Duration` *inside* a `List`, `Array` or `Struct`. Polars cannot write the first to JSON and cannot read the second back, so encoding either one would write a file that no longer round-trips.
 
     A `pl.LazyFrame` input annotation reads back a scan here too, and it keeps everything above: `scan_csv` takes the same schema-driven dtypes, and the decode is the same expression over `with_columns`, run when the caller collects.
 
