@@ -1036,6 +1036,75 @@ def test_no_quarantine_means_one_out():
     assert orders.keys == {dg.AssetKey(["orders"])}
 
 
+# --- the quarantine's place in the graph ---
+def test_the_quarantine_hangs_off_the_valid_asset_alone():
+    """A `multi_asset` gives every out every input by default, so both tables would otherwise fan off the same parents and read as unrelated (ADR-0003). Asserted whole, so a parent leaking onto the quarantine fails here."""
+
+    @dataframely_asset(
+        schema=Orders,
+        quarantine=dg.AssetOut(),
+        deps=["ledger"],
+        ins={"raw": dg.AssetIn(key=dg.AssetKey(["upstream_frame"]))},
+    )
+    def connected(raw: pl.DataFrame) -> pl.DataFrame:
+        return raw
+
+    assert connected.asset_deps == {
+        dg.AssetKey(["connected"]): {
+            dg.AssetKey(["ledger"]),
+            dg.AssetKey(["upstream_frame"]),
+        },
+        dg.AssetKey(["connected_quarantine"]): {dg.AssetKey(["connected"])},
+    }
+
+
+def test_an_asset_with_no_parents_of_its_own_still_gets_the_edge():
+    """The empty set is what `internal_asset_deps` needs for the valid out here, and it is the one input Dagster could have refused."""
+    assert quarantined.asset_deps == {
+        dg.AssetKey(["quarantined"]): set(),
+        _QUARANTINE_KEY: {dg.AssetKey(["quarantined"])},
+    }
+
+
+@pytest.mark.parametrize(
+    ("quarantine", "expected"),
+    [
+        (dg.AssetOut(), dg.AssetKey(["sales", "wired_quarantine"])),
+        (dg.AssetOut(key_prefix=["dlq"]), dg.AssetKey(["dlq", "wired_quarantine"])),
+        (
+            dg.AssetOut(key=dg.AssetKey(["restricted", "rows"])),
+            dg.AssetKey(["restricted", "rows"]),
+        ),
+    ],
+    ids=["derived", "own_prefix", "named"],
+)
+def test_the_edge_arrives_however_the_quarantine_key_was_decided(
+    quarantine: dg.AssetOut, expected: dg.AssetKey
+):
+    """`internal_asset_deps` is keyed by output name rather than by asset key, so a quarantine that named its own key costs nothing extra. The three ways it can be decided, as in ADR-0002's own test."""
+
+    @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=quarantine)
+    def wired() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert wired.asset_deps[expected] == {dg.AssetKey(["sales", "wired"])}
+
+
+def test_an_asset_without_a_quarantine_keeps_the_wiring_dagster_gave_it():
+    """Nothing is rewired where there is no second out to rewire, which is what leaves the single-out case built once."""
+
+    @dataframely_asset(schema=Orders, deps=["ledger"])
+    def lone(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders
+
+    assert lone.asset_deps == {
+        dg.AssetKey(["lone"]): {
+            dg.AssetKey(["ledger"]),
+            dg.AssetKey(["raw_orders"]),
+        }
+    }
+
+
 # --- definition-time errors ---
 def test_a_user_column_in_the_reserved_namespace_raises():
     class Reserved(dy.Schema):
@@ -1198,7 +1267,7 @@ _NOT_FORWARDED = {
     "check_specs",  # decorator-owned: derived from the schema, never contested
     "specs",  # decorator-owned: the alternative spelling of `outs`
     "can_subset",  # deliberately absent (#4): a subset executes but saves nothing
-    "internal_asset_deps",  # nothing to wire: neither out feeds the other
+    "internal_asset_deps",  # decorator-owned: it is what hangs the quarantine off the valid asset
     # Refused by `multi_asset` outright when any out names one, so it lands on the
     # outs, which is what leaves the quarantine free to claim a group of its own.
     "group_name",
@@ -1285,7 +1354,9 @@ def test_the_surfaces_the_package_owns_are_not_parameters():
     """Statically unpassable, so no runtime guard is needed."""
     parameters = set(inspect.signature(dataframely_asset).parameters)
 
-    assert parameters.isdisjoint({"outs", "check_specs", "specs", "can_subset"})
+    assert parameters.isdisjoint(
+        {"outs", "check_specs", "specs", "can_subset", "internal_asset_deps"}
+    )
 
 
 def test_the_code_location_snapshot_degrades_the_schema_carrier():

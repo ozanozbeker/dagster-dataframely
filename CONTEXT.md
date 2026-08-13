@@ -25,6 +25,7 @@ _Avoid_: good rows, the good table, the good out
 _Avoid_: rejected rows, bad rows, failed rows
 
 **Quarantine**: The sibling asset invalid rows materialize into.
+Sibling in the definition, since one decorator declares both as outs of one op; downstream in the graph, where its only parent is the valid asset, because it cannot exist without it.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
 _Avoid_: reject table, dead-letter asset
 

@@ -238,7 +238,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     Args:
         schema: The Dataframely schema the decorated function's output must satisfy.
-        quarantine: Where invalid rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's.
+        quarantine: Where invalid rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's. Its only parent in the graph is the valid out, whatever the asset's own parents are, so the quarantine reads as downstream of the table it came from rather than as a second child of every upstream (ADR-0003).
         check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
         multi_column_rules: Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
         max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
@@ -382,22 +382,33 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
                 valid_key=key,
             )
 
+        # The op's name, not the asset's. `@dg.asset` derives it from the whole key and this decorator matches that, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would build two ops called the same thing, and Dagster tolerates that only where the two definitions compare equal. Two of these never compare equal, since every check output name embeds its own asset key (#70).
+        op_name = key.to_python_identifier()
+        specs = check_specs(
+            schema,
+            asset=key,
+            check_granularity=granularity,
+            multi_column_rules=multi_column,
+        )
+
         definition: dg.AssetsDefinition = dg.multi_asset(
-            # The op's name, not the asset's. `@dg.asset` derives it from the whole key and this decorator matches that, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would build two ops called the same thing, and Dagster tolerates that only where the two definitions compare equal. Two of these never compare equal, since every check output name embeds its own asset key (#70).
-            name=key.to_python_identifier(),
-            outs=outs,
-            check_specs=check_specs(
-                schema,
-                asset=key,
-                check_granularity=granularity,
-                multi_column_rules=multi_column,
-            ),
-            **forwarded,
+            name=op_name, outs=outs, check_specs=specs, **forwarded
         )(compute)
 
         if quarantine_name is not None:
             # Dagster's answer, not a second derivation of it: a quarantine that named its own `key_prefix` has a key only Dagster builds. Read off `keys` rather than `keys_by_output_name`, which spells it directly but carries no `@public`. Set subtraction works because there are at most two outs, so removing the valid key leaves exactly the quarantine (ADR-0002).
             (quarantine_key,) = definition.keys - {key}
+            # Built once more, because `internal_asset_deps` is the only lever there is and it refuses a partial map: naming the quarantine alone fails on every input the valid out still holds. The definition just built is what supplies them, through `asset_deps`, so Dagster's own input resolution is read rather than repeated (ADR-0003).
+            definition = dg.multi_asset(
+                name=op_name,
+                outs=outs,
+                check_specs=specs,
+                internal_asset_deps={
+                    asset_name: set(definition.asset_deps[key]),
+                    quarantine_name: {key},
+                },
+                **forwarded,
+            )(compute)
 
         return definition
 

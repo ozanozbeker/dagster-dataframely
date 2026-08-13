@@ -160,6 +160,11 @@ Its materialization also carries a `cooccurrence` table, so one broken upstream 
 It inherits the asset's own key prefix, group and IO manager, and its own `dg.AssetOut` can override any of them, which is how you send invalid rows to a separate storage and ownership domain.
 Three settings raise `QuarantineSettingError` instead of being honoured: `automation_condition`, `freshness_policy` and `code_version` can't differ between two outs of one step, so they belong on the decorator, where they cover both.
 
+Its only parent in the graph is the valid table, so the lineage runs `raw_orders`, then `orders`, then `orders_quarantine`, rather than fanning both tables off `raw_orders`.
+That edge is asset-grained rather than row-grained: no row in the quarantine came from the valid table, since `Schema.filter` splits one frame into two.
+What it states is that the quarantine can't be planned or materialized without the valid table, which is true, both being outs of one step.
+It costs you one thing: a clean run skips the quarantine, so Dagster reads it as stale against the valid table's newer materialization until the next run that rejects a row.
+
 ## The package never casts
 
 The shape check compares your frame's dtypes against the schema's and aborts on a mismatch, and the filter runs with `cast=False`.
@@ -464,6 +469,28 @@ Spelling the key type in the annotation, as above, is what makes that read type-
 
 Collapsing one dimension is a partition mapping and nothing more.
 An asset partitioned by `day` alone, depending on the grid through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`, gets that day's regions and nothing else: two entries rather than four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
+
+## Automation
+
+`automation_condition` and `freshness_policy` go on the decorator, cover the asset, and are never given to the quarantine.
+Neither out can execute alone, so a condition on the quarantine would request a step the asset's condition already requests, and a freshness policy there would fail forever on a healthy pipeline, where a clean run writes no invalid rows at all.
+Both raise `QuarantineSettingError` on the quarantine's own `dg.AssetOut` rather than being quietly ignored.
+
+There's nothing to wire up between the two tables either.
+They're two outs of one step, so the run that writes the asset writes the quarantine in the same call, with no schedule, sensor or condition in between.
+
+Automating on what landed in the quarantine is yours to declare, and its asset key is the whole interface:
+
+```python
+@dg.asset(
+    ins={"bad_rows": dg.AssetIn(key=dg.AssetKey(["orders_quarantine"]))},
+    automation_condition=dg.AutomationCondition.eager(),
+)
+def triage(bad_rows: pl.DataFrame) -> None: ...
+```
+
+That fires on the runs that quarantined something and stays quiet on the clean ones, because a clean run skips the quarantine rather than writing an empty table.
+Silence there means no invalid rows, not a missed trigger.
 
 ## Storage
 
@@ -851,6 +878,10 @@ Two outs and a `quarantine_key=` are the whole of the quarantine: somewhere to w
             is_required=False,
         ),
     },
+    internal_asset_deps={
+        "orders": set(),
+        "orders_quarantine": {dg.AssetKey("orders")},
+    },
     check_specs=dd.wiring.check_specs(Orders, asset="orders"),
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
@@ -870,8 +901,20 @@ The quarantine's own metadata is two entries rather than one call, because the p
 
 `is_required=False` matters on both outs: the shape check and both abort paths end the step without yielding either, and a clean run skips the quarantine.
 
+`internal_asset_deps` is what hangs the quarantine off the valid table instead of off the asset's own parents, which is what a `multi_asset` gives every out by default.
+It takes the whole map: name only the quarantine and Dagster refuses it, because every input the valid out still holds has to be accounted for.
+This asset has no inputs, hence the empty set.
+
 Resolve both keys with `asset_key_for_output` rather than building them by hand.
 An out that declares `key_prefix` has an asset key its output name doesn't spell, and results yielded against a key no out owns fail the step on the first yield with `Asset key ... not found in AssetsDefinition`.
+`internal_asset_deps` is the one place you can't do that, since it's read at definition time where there's no context, so the key you spell there has to carry the out's prefix itself.
+Get it wrong and the code location fails to load:
+
+```text
+Invalid asset dependencies: {AssetKey(['orders'])} specified in `internal_asset_deps` argument
+for multi-asset 'orders' on key 'orders_quarantine'. Each specified asset key must be associated
+with an input to the asset or produced by this asset.
+```
 
 ### Give up the quarantine and a plain `@dg.asset` will do
 
