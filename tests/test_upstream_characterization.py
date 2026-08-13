@@ -364,6 +364,43 @@ def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
     ]
 
 
+def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
+    tmp_path: Path,
+):
+    """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
+
+    # #77 documents that `dataframely_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the transform arrived at it.
+    # Undocumented as a contrast, though each half is documented alone. What a reader carries over from `@dg.asset` is exactly the expectation this breaks.
+    @dg.asset(name="mismatch")
+    def mismatch() -> pl.DataFrame:
+        return pl.LazyFrame({"order_id": ["ORD-1"]})  # pyrefly: ignore[bad-return]
+
+    with pytest.raises(dg.DagsterTypeCheckDidNotPass) as raised:
+        dg.materialize(
+            [mismatch],
+            resources={"io_manager": dg.FilesystemIOManager(base_dir=str(tmp_path))},
+        )
+
+    assert "failed type check for Dagster type DataFrame" in str(raised.value)
+
+
+def test_materialize_result_still_takes_exactly_the_six_fields_the_fold_names():
+    """`dg.MaterializeResult`'s constructor still takes exactly six fields, and `value` still defaults to a sentinel rather than to `None`."""
+    # #77 folds a returned result into the materialization `process` built, rebuilding it because it is immutable and naming every field. A seventh added upstream would be dropped silently, so the field set is pinned here rather than left to be noticed.
+    # The sentinel is what lets one `isinstance` check cover a result carrying nothing and one carrying something that is not a frame, so it is asserted too: a default of `None` would make the two indistinguishable from a transform that returned `value=None` on purpose.
+    fields = set(inspect.signature(dg.MaterializeResult.__new__).parameters) - {"cls"}
+
+    assert fields == {
+        "asset_key",
+        "metadata",
+        "check_results",
+        "data_version",
+        "tags",
+        "value",
+    }
+    assert dg.MaterializeResult().value is not None
+
+
 def test_assets_definition_keys_still_holds_the_keys_dagster_derived():
     """`AssetsDefinition.keys` still reports the key Dagster derived for an out that declared only a `key_prefix`, and still agrees with `keys_by_output_name`."""
     # #72 resolves both of the decorator's keys off the finished definition rather than off the execution context (ADR-0002). It reads `keys` because it is `@public` and `keys_by_output_name` is not, which costs a set subtraction: with at most two outs, removing the valid key leaves exactly the quarantine.

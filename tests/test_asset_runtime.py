@@ -172,6 +172,35 @@ def test_a_transform_that_returns_no_frame_says_so(tmp_path: Path):
     assert not list(tmp_path.rglob("*.parquet"))
 
 
+# --- the object returned decides, never the annotation ---
+# `@dg.asset` infers the output's `dagster_type` from the return annotation and fails the run
+# on a mismatch. This decorator cannot: the annotation describes what the transform handed
+# over, `dagster_type` describes what the out stores, and validation is eager, so the out holds
+# a `DataFrame` however the transform arrived at it. Both mismatches below therefore run green,
+# and `tests/test_upstream_characterization.py` pins the plain-asset half of the contrast.
+@pytest.mark.parametrize(
+    ("lazy", "annotation"),
+    [
+        pytest.param(True, pl.DataFrame, id="lazy under an eager annotation"),
+        pytest.param(False, pl.LazyFrame, id="eager under a lazy annotation"),
+    ],
+)
+def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
+    tmp_path: Path, lazy: bool, annotation: type
+):
+    """Both write the same table. A type checker is what holds an annotation here, and it does: pyrefly reports `bad-return` on either pairing when it is spelled out literally, which is why neither can be written as an ordinary decorated function."""
+
+    def transform():
+        return clean_orders().lazy() if lazy else clean_orders()
+
+    # Set by hand so one body can carry an annotation that contradicts it, and on a function declared here rather than on an imported one, which would leave the annotation on a module-level object every other test shares.
+    transform.__annotations__ = {"return": annotation}
+    asset = dataframely_asset(schema=Orders, name="orders")(transform)
+
+    assert _materialize(tmp_path, asset).success
+    assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
+
+
 # --- a transform that takes the context ---
 # Nothing in the package enables this: `functools.wraps` puts the transform's signature in
 # front of Dagster, so the parameter binds exactly as it does on a bare `@dg.multi_asset`.

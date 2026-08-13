@@ -39,10 +39,14 @@ def _require_frame(frame: object, asset: str) -> None:
     The parameter's annotation is a promise Dagster cannot enforce, because it calls the transform dynamically. Left alone, a forgotten return annotation surfaces two frames down as `'NoneType' object has no attribute 'collect_schema'`.
 
     Dagster's own error rather than the package's: this is a wiring mistake, not a data one, which is the line `_ParquetIOManager` already draws.
+
+    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dataframely_asset` takes the frame off it before `process` sees anything (#77), so on that path this guard sees only what the result carried.
+
+    The message names three routes because two of them are new. Sending the reader to a plain `@dg.asset` was the whole of the old advice, which made it wrong for anyone who wanted metadata on a validated table; it is right for the one case it now closes, an asset that writes its own storage and never holds a frame at all. That reader gets told what they keep, since `schema_metadata` fills a plain asset's Columns tab and nothing about it needs the decorator.
     """
     if isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. An asset that manages its own storage has no schema to validate, so write it as a plain `@dg.asset`."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. `dataframely_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
@@ -52,6 +56,8 @@ def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
     What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a transform with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
     The file is gone before this returns, so no exit can leave one behind, including the two whose whole purpose is that nothing is written.
+
+    Promoting it to the destination on a clean run, rather than letting the IO manager write the frame again, was considered and declined: the read back above is structural, so it saves one write and costs a boundary. `docs/research/lazyframe-end-to-end.md` §11 has the measurement.
 
     Args:
         frame: The plan to stage.

@@ -16,6 +16,8 @@ __all__ = [
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
     "InvalidSettingError",
+    "MaterializeResultFieldError",
+    "MaterializeResultValueError",
     "NothingSurvivedError",
     "QuarantineSettingError",
     "ReservedColumnError",
@@ -119,6 +121,43 @@ class CollectionNotSupportedError(DagsterDataframelyError):
         """
         super().__init__(
             f"{collection_name} is a dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema."
+        )
+
+
+class MaterializeResultValueError(DagsterDataframelyError):
+    """A returned `dg.MaterializeResult` carries no frame on `value`.
+
+    Raised before the shape check, because there is nothing to check. The frame is what this package validates, filters and writes, so a result without one describes a materialization the asset never made.
+    """
+
+    def __init__(self, asset: str) -> None:
+        """Names the asset and all three routes out.
+
+        Two readers write this, and `value=` answers neither on its own. One wanted metadata on a table this package does write, and the `context` route is what they were reaching for: sending them to build a returned result around a frame they were not returning anyway would answer a question they did not ask. The other manages their own storage and has no frame at any point, which is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
+
+        Args:
+            asset: The asset key, rendered, whose transform returned the result.
+        """
+        super().__init__(
+            f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
+        )
+
+
+class MaterializeResultFieldError(DagsterDataframelyError):
+    """A returned `dg.MaterializeResult` sets a field the decorator owns.
+
+    Raised before the shape check. Both fields are decided by the declaration rather than by the transform, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
+    """
+
+    def __init__(self, asset: str, field: str) -> None:
+        """Names the field, why the decorator owns it, and the four that fold in instead.
+
+        Args:
+            asset: The asset key, rendered, whose transform returned the result.
+            field: The `dg.MaterializeResult` field that was set.
+        """
+        super().__init__(
+            f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`. The decorator owns it: the asset keys come from the outs it declares, and the check results from the schema's rules. Drop it. `value`, `metadata`, `data_version` and `tags` are what this package folds into the materialization."
         )
 
 

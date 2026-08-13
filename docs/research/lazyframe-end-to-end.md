@@ -277,6 +277,47 @@ Decided 2026-08-11.
 
 ---
 
+## 11. Promoting the staged file, considered and declined
+
+Raised while implementing [#77](https://github.com/ozanozbeker/dagster-dataframely/issues/77), from the observation that a schema-backed lazy transform never reaches the IO manager's sink-and-promote path that §10 says shipped for plain assets.
+
+The idea: on a clean run, the file `_staged_frame` already wrote holds exactly what the valid out should hold.
+Promote it instead of re-writing the frame at the destination.
+
+**What each path costs today. [RAN]** Traced by wrapping `sink_parquet`, `write_parquet` and `read_parquet`, one lazy transform each:
+
+```text
+dataframely_asset    sink_parquet(temp) | read_parquet(temp) | write_parquet(DEST)
+plain @dg.asset      sink_parquet(temp) | <promote: rename>
+```
+
+**Declined.**
+The saving is one write, not the write and the read it looks like, and it is paid for with an architecture boundary.
+
+**The read-back is structural and cannot go.** `Schema.filter` collects internally, `statistics_metadata` runs its aggregates over a frame, and `sample_rows` reads rows off one.
+So the frame is resident on a clean run whatever happens to the file, and promoting removes only the second write. 2 writes and 1 read becomes 1 write and 1 read.
+
+**What the saving is not.**
+It is the *output's* size, not the plan's intermediates.
+Those are already handled: `_staged_frame` sinks with `engine="streaming"`, which is the whole reason it stages, so a transform whose plan fans out before filtering back down already pays only for what it produced.
+A filtering transform's output is the small end of that, which is where the saving is smallest.
+
+Three more blockers, none fatal on its own, which together leave a one-write saving behind a boundary crossing and a format special case:
+
+- **It crosses the line the package draws.** `process` would hand the IO manager a path rather than a frame, against `_metadata.py`'s "the asset body owns what the data is, the IO manager owns where and how it was written".
+- **Parquet to parquet only.**
+  The CSV manager cannot take a promoted parquet, and neither could a Delta one.
+  A special case on one format, not a path.
+- **Clean runs only.**
+  Any rejection means writing the filtered frame anyway, so the split exits keep both writes regardless.
+
+Not investigated, and the first thing to settle if this is ever revisited: whether `Schema.filter` preserves column order and any columns the schema does not declare.
+If it does not, the staged file is not interchangeable with the valid out even on a clean run, and the idea fails before any of the above matters.
+
+Decided 2026-08-12.
+
+---
+
 ## Uncertainty ledger
 
 Verified by running code or reading installed source:

@@ -26,6 +26,15 @@ _Avoid_: reject table, dead-letter asset
 **Rule column**: A column of the quarantine carrying one rule's outcome per row, reading `valid`, `invalid` or `unknown`. dataframely's own term, from `FailureInfo.details()`.
 _Avoid_: outcome column
 
+**Returned result**: A `dg.MaterializeResult` a transform returns in place of a bare frame.
+Its `value` is the frame to validate; the rest folds into the valid out's materialization.
+_Avoid_: wrapped frame, enriched result
+
+**Unwrap**: Taking the frame off a returned result, before anything is validated.
+
+**Fold**: What a returned result's remaining fields do to the materialization the package built.
+_Avoid_: merge, enrich
+
 **Hand-wiring**: Building a `@dg.multi_asset` from the package's exported parts instead of using the decorator.
 _Avoid_: the kit
 
