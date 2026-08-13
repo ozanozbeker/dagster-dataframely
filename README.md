@@ -61,7 +61,7 @@ To write to `s3://`, `gs://` or `az://`, install that scheme's fsspec filesystem
 > **Pre-1.0.**
 > The public surface is covered by a characterization test rather than held by convention, so it won't move quietly.
 > It can still move: a `0.x` minor release is where a breaking change lands.
-> Pin `dagster-dataframely>=0.1,<0.2` if that matters to you.
+> Pin `dagster-dataframely>=0.5,<0.6` if that matters to you.
 
 Declare the schema and the asset as above, then tell the code location where to write:
 
