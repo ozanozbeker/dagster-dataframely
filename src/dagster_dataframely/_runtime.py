@@ -1,8 +1,10 @@
 """What a schema-backed asset runs after its decorated function: check the shape, stage, filter, then one of five exits.
 
-The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out is what splits three exits into five: it is the consent to partial data, and its absence is the refusal.
+The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out splits three exits into five. It is the consent to partial data, and its absence is the refusal.
 
-The middle phase is the only one a decorated function can skip, and its return type is what skips it: see `_staged_frame` for what a plan buys by staging. Validation itself is eager and stays that way, because this package does not promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
+The middle phase is the only one a decorated function can skip, and its return type decides. See `_staged_frame` for what a plan buys by staging.
+
+Validation itself is eager and stays that way. This package does not promise to write a file. It promises to write a file and report on it. `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
 """
 
 from collections.abc import Iterator, Mapping
@@ -34,15 +36,15 @@ AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 def _require_frame(frame: object, asset: str) -> None:
-    """Rejects a return value the shape check cannot read.
+    """Reject a return value the shape check cannot read.
 
     The parameter's annotation is a promise Dagster cannot enforce, because it calls the decorated function dynamically. Left alone, a forgotten return annotation surfaces two frames down as `'NoneType' object has no attribute 'collect_schema'`.
 
-    Dagster's own error rather than the package's: this is a wiring mistake, not a data one, which is the line `_ParquetIOManager` already draws.
+    Dagster's own error rather than the package's. This is a wiring mistake, not a data one, which is the line `_ParquetIOManager` already draws.
 
     A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dataframely_asset` takes the frame off it before `process` sees anything (#77), so on that path this guard sees only what the result carried.
 
-    The message names three routes because two of them are new. Sending the reader to a plain `@dg.asset` was the whole of the old advice, which made it wrong for anyone who wanted metadata on a validated table; it is right for the one case it now closes, an asset that writes its own storage and never holds a frame at all. That reader gets told what they keep, since `schema_metadata` fills a plain asset's Columns tab and nothing about it needs the decorator.
+    The message names three routes because two of them are new. Sending the reader to a plain `@dg.asset` was the whole of the old advice, which made it wrong for anyone who wanted metadata on a validated table. It is right for the one case it now closes: an asset that writes its own storage and never holds a frame at all. That reader gets told what they keep, since `schema_metadata` fills a plain asset's Columns tab and nothing about it needs the decorator.
     """
     if isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
@@ -51,23 +53,29 @@ def _require_frame(frame: object, asset: str) -> None:
 
 
 def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
-    """Streams a plan to a local parquet, reads it back whole, and removes the file.
+    """Stream a plan to a local parquet, read it back whole, and remove the file.
 
     What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
-    The file is gone before this returns, so no exit can leave one behind, including the two whose whole purpose is that nothing is written.
+    The file is gone before this returns, so no exit can leave one behind. That includes the two exits whose whole purpose is that nothing is written.
 
-    Promoting it to the destination on a clean run, rather than letting the IO manager write the frame again, was considered and declined: the read back above is structural, so it saves one write and costs a boundary. `docs/research/lazyframe-end-to-end.md` §11 has the measurement.
+    Promoting it to the destination on a clean run, rather than letting the IO manager write the frame again, was considered and declined. The read back above is structural, so promotion saves one write and costs a boundary. `docs/research/lazyframe-end-to-end.md` §11 has the measurement.
 
-    Args:
-        frame: The plan to stage.
-        temp_dir: Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`: the decorator resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
+    Parameters
+    ----------
+    frame
+        The plan to stage.
+    temp_dir
+        Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`. The decorator resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
 
-    Returns:
-        The frame the plan produced, read back whole.
+    Returns
+    -------
+    The frame the plan produced, read back whole.
 
-    Raises:
-        FileNotFoundError: `temp_dir` names a directory that does not exist.
+    Raises
+    ------
+    FileNotFoundError
+        `temp_dir` names a directory that does not exist.
     """
     with staging(temp_dir) as directory:
         path = directory / "staged.parquet"
@@ -79,7 +87,7 @@ def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
 def _shape_failure(
     problems: list[dict[str, str]], *, asset_key: dg.AssetKey
 ) -> dg.AssetCheckResult:
-    """Builds the failing shape check, tabulating every offending column."""
+    """Build the failing shape check, tabulating every offending column."""
     return dg.AssetCheckResult(
         check_name=SHAPE_CHECK,
         asset_key=asset_key,
@@ -103,9 +111,9 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
     multi_column_rules: MultiColumnRules | None,
     max_failure_samples: int | None,
 ) -> list[dg.AssetCheckResult]:
-    """Builds every check result for a run that made it past the shape check.
+    """Build every check result for a run that made it past the shape check.
 
-    Severity is derived here, once, from whether the valid table was written. That is what makes it a property of the run's outcome rather than of any one rule: no code path can hand two sibling checks different severities. A invalid row with a quarantine to go to is a warning; the same row with nowhere to go, or with nothing left beside it, is an error.
+    Severity is derived here, once, from whether the valid table was written. That makes it a property of the run's outcome rather than of any one rule, so no code path can hand two sibling checks different severities. An invalid row with a quarantine to go to is a warning. The same row with nowhere to go, or with nothing left beside it, is an error.
 
     The shape check is not a rule, so it reports on its own at every granularity and never joins a rule set.
     """
@@ -125,18 +133,22 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
 
 
 def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
-    """Builds the frame the quarantine out materializes.
+    """Build the frame the quarantine out materializes.
 
-    `FailureInfo.details()` rather than `invalid()`: the invalid rows plus a rule column for every rule, reading `valid` / `invalid` / `unknown`. Attribution has to be here because check-metadata samples are bounded, so without it the per-row detail exists nowhere at volume.
+    `FailureInfo.details()` rather than `invalid()`: the invalid rows plus a rule column for every rule, reading `valid` / `invalid` / `unknown`. Attribution has to be here because check-metadata samples are bounded. Without it the per-row detail exists nowhere at volume.
 
     Two changes to what Dataframely hands over. The rule columns are renamed into the reserved namespace, so a column of this table and the asset check for the same rule are the same string. And they are cast from `Enum` to `String`, which is mandatory rather than defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`. It is the one cast this package makes, and it touches only columns the package itself generated.
 
-    Args:
-        schema: The schema that rejected the rows.
-        failure: What `Schema.filter` reported.
+    Parameters
+    ----------
+    schema
+        The schema that rejected the rows.
+    failure
+        What `Schema.filter` reported.
 
-    Returns:
-        The invalid rows: the original columns in their own order, then a `String` rule column for every rule.
+    Returns
+    -------
+    The invalid rows: the original columns in their own order, then a `String` rule column for every rule.
     """
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
@@ -151,19 +163,22 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
 
 
 def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue:
-    """Tabulates which rules a row broke together.
+    """Tabulate which rules a row broke together.
 
     One broken upstream field tripping three rules at once then reads as one row rather than as three unrelated counts.
 
     Rules are named as their asset checks, not as Dataframely names them. Both places this table sends a reader spell them that way: the check list, and the quarantine's own columns. The original name lives on `dy_rule` in each check's metadata.
 
-    **The rows are sorted, and they have to be.** `cooccurrence_counts()` builds its mapping out of a `group_by` with no `maintain_order`, so the order it hands over is arbitrary: the same frame twice already emits these rows differently, which makes two runs of the same data diff as though something changed. Biggest group first is also the reading order the table exists for, since the question it answers is which broken upstream field trips the most rows at once. Ties break on the names, which is the same sort this function already applies inside each set.
+    **The rows are sorted, and they have to be.** `cooccurrence_counts()` builds its mapping out of a `group_by` with no `maintain_order`, so the order it hands over is arbitrary. The same frame twice already emits these rows differently, which makes two runs of the same data diff as though something changed. Biggest group first is also the reading order the table exists for, since the question it answers is which broken upstream field trips the most rows at once. Ties break on the names, the same sort this function already applies inside each set.
 
-    Args:
-        counts: How many rows broke each set of rules together. The key is a `frozenset` and therefore unordered, so it is sorted before rendering.
+    Parameters
+    ----------
+    counts
+        How many rows broke each set of rules together. The key is a `frozenset` and therefore unordered, so it is sorted before rendering.
 
-    Returns:
-        One record per co-occurring set, most rows first, ready for the quarantine's materialization metadata.
+    Returns
+    -------
+    One record per co-occurring set, most rows first, ready for the quarantine's materialization metadata.
     """
     # The count is negated so that a plain tuple sort puts the biggest group first and falls back to the names for a tie, in one pass and with no key function.
     ordered: list[tuple[int, str]] = sorted(
@@ -188,34 +203,53 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     row_sample: int | None = None,
     temp_dir: str | None = None,
 ) -> AssetYield:
-    """Validates a decorated function's output and reports it to Dagster.
+    """Validate a decorated function's output and report it to Dagster.
 
-    Three phases and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which is what keeps the peak at the frame's size rather than the plan's; an eager one skips that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`: it is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Three phases and five exits. The shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which keeps the peak at the frame's size rather than the plan's. An eager one skips that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`. It is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
-    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_key` is the whole policy: with it, invalid rows are written next door and the run stays green; without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
+    Which of the five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_key` is the whole policy. With it, invalid rows are written next door and the run stays green. Without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
 
-    Args:
-        schema: The schema the frame must satisfy.
-        frame: Whatever the decorated function returned.
-        valid_key: The asset key the validated frame materializes under. Read it off the `AssetsDefinition` or resolve it with `context.asset_key_for_output(...)` rather than building it by hand: an out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`. The decorator takes the first route, which is what leaves it callable outside a run (ADR-0002); the second needs one.
-        quarantine_key: The asset key the invalid rows materialize under, or `None` when the asset declares no quarantine.
-        check_granularity: How far the rules collapse. Pass the same value the check specs were derived with: the decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity, on the same terms.
-        max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
-        statistics: Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
-        row_sample: How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
-        temp_dir: Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
+    Parameters
+    ----------
+    schema
+        The schema the frame must satisfy.
+    frame
+        Whatever the decorated function returned.
+    valid_key
+        The asset key the validated frame materializes under. Read it off the `AssetsDefinition` or resolve it with `context.asset_key_for_output(...)` rather than building it by hand. An out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`. The decorator takes the first route, which is what leaves it callable outside a run (ADR-0002). The second needs one.
+    quarantine_key
+        The asset key the invalid rows materialize under, or `None` when the asset declares no quarantine.
+    check_granularity
+        How far the rules collapse. Pass the same value the check specs were derived with. The decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity, on the same terms.
+    max_failure_samples
+        How many of the rows a rule rejected reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
+    statistics
+        Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
+    row_sample
+        How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
+    temp_dir
+        Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
-    Yields:
-        A `MaterializeResult` per out that survived its outcome, then every check result standalone. Nothing is bundled onto a materialization, deliberately: direct invocation satisfies a check output only from a standalone `AssetCheckResult`, which is what makes an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed.
+    Yields
+    ------
+    A `MaterializeResult` per out that survived its outcome, then every check result standalone. Nothing is bundled onto a materialization, deliberately. Direct invocation satisfies a check output only from a standalone `AssetCheckResult`, which is what makes an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed.
 
-    Raises:
-        InvalidSettingError: A setting resolved to a value outside its vocabulary.
-        DagsterInvariantViolationError: The decorated function returned something that is not a Polars frame.
-        FileNotFoundError: `temp_dir` names a directory that does not exist, on a run that had a plan to stage.
-        SchemaShapeError: The frame's columns or dtypes do not match the schema.
-        ValidationAbortError: Rows were rejected and no quarantine is declared.
-        NothingSurvivedError: Rows were rejected and none survived.
+    Raises
+    ------
+    InvalidSettingError
+        A setting resolved to a value outside its vocabulary.
+    DagsterInvariantViolationError
+        The decorated function returned something that is not a Polars frame.
+    FileNotFoundError
+        `temp_dir` names a directory that does not exist, on a run that had a plan to stage.
+    SchemaShapeError
+        The frame's columns or dtypes do not match the schema.
+    ValidationAbortError
+        Rows were rejected and no quarantine is declared.
+    NothingSurvivedError
+        Rows were rejected and none survived.
     """
     _require_frame(frame, valid_key.to_user_string())
     # Resolved before the shape check so a mistyped environment variable fails the same way at every exit, rather than only on the runs that reach the one reading it.
@@ -258,9 +292,9 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     )
 
     def valid_result() -> dg.MaterializeResult[pl.DataFrame]:
-        """Builds the valid out's materialization, where it is yielded rather than ahead of every exit.
+        """Build the valid out's materialization, where it is yielded rather than ahead of every exit.
 
-        Two of the five discard it, and since the statistics are a pass over the whole frame, building it early would charge an aborting run for a table nobody will see.
+        Two of the five exits discard it, and the statistics are a pass over the whole frame, so building it early would charge an aborting run for a table nobody will see.
         """
         return dg.MaterializeResult(
             asset_key=valid_key,

@@ -83,7 +83,7 @@ def _materialize(
     partition_key: str | None = None,
     selection: str | None = None,
 ) -> dg.ExecuteInProcessResult:
-    """Runs `assets` with the manager rooted at `tmp_path`."""
+    """Run `assets` with the manager rooted at `tmp_path`."""
     return dg.materialize(
         list(assets),
         resources={"io_manager": dd.DataframelyCSVIOManager(base_dir=str(tmp_path))},
@@ -99,7 +99,7 @@ def _round_trip(
     name: str,
     instance: dg.DagsterInstance | None = None,
 ) -> pl.DataFrame:
-    """Writes `source` and reads it back through a downstream asset, which is the only way in."""
+    """Write `source` and read it back through a downstream asset, which is the only way in."""
     read_back: list[pl.DataFrame] = []
 
     @dg.asset(name=f"{name}_copy", ins={name: dg.AssetIn()})
@@ -118,7 +118,7 @@ def round_tripped(tmp_path: Path) -> pl.DataFrame:
 
 @pytest.fixture
 def shapes_metadata(tmp_path: Path) -> dict[str, dg.MetadataValue]:
-    """Materializes `shapes` once and returns the metadata on its materialization."""
+    """Materialize `shapes` once and return the metadata on its materialization."""
     result = _materialize(tmp_path, _shapes)
     (event,) = result.get_asset_materialization_events()
     return dict(event.step_materialization_data.materialization.metadata)
@@ -209,7 +209,7 @@ def test_the_file_on_disk_is_ordinary_csv(tmp_path: Path) -> None:
 
 
 def test_the_encoded_columns_are_named_at_encode_time(run_log: list[str]) -> None:
-    """The log is the codec's only home: materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager will bind."""
+    """The log is the codec's only home. Materialization metadata is barred by the varied-this-run rule, and definition metadata cannot know which manager will bind."""
     (encoded,) = [message for message in run_log if message.startswith("Encoded")]
 
     assert "5 column(s)" in encoded
@@ -278,7 +278,7 @@ def test_the_csv_sink_runs_the_streaming_engine(
 
 
 def _warnings(tmp_path: Path, asset: dg.AssetsDefinition) -> list[str]:
-    """Materializes `asset` and returns everything it logged at warning level."""
+    """Materialize `asset` and return everything it logged at warning level."""
     with dg.DagsterInstance.ephemeral() as instance:
         result = _materialize(tmp_path, asset, instance=instance)
         assert result.success
@@ -367,7 +367,7 @@ def test_a_frame_its_schema_does_not_describe_is_refused_before_the_write(
 ) -> None:
     """The declaration is part of what gets written, because the decode reads every column back into the dtype it names.
 
-    A `Duration('ns')` under a declared `Duration('us')` is the case that would otherwise land quietly: the file holds a tick count, the unit is nowhere in it, and the frame read back is a thousand times too long with nothing failing.
+    A `Duration('ns')` under a declared `Duration('us')` is the case that would otherwise pass quietly. The file holds a tick count, the unit is nowhere in it, and the frame read back is a thousand times too long with nothing failing.
     """
 
     @dg.asset(name="shapes", metadata=dd.wiring.schema_metadata(Shapes))

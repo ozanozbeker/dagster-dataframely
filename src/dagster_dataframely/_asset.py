@@ -75,18 +75,22 @@ def _asset_out_settings() -> frozenset[str]:
 
 
 def _rebuild(out: dg.AssetOut, overrides: Mapping[str, Any]) -> dg.AssetOut:
-    """Reconstructs a `dg.AssetOut` with the decorator's overrides applied.
+    """Reconstruct a `dg.AssetOut` with the decorator's overrides applied.
 
-    It is immutable with no `_replace`, so the only route is to read its attributes back out and build a new one. That works because every constructor parameter currently has a readable attribute of the same name, which is an undocumented upstream property asserted by its own test: a parameter Dagster adds whose attribute is named differently would drop the user's value silently.
+    It is immutable with no `_replace`, so the only route is to read its attributes back out and build a new one. That works because every constructor parameter currently has a readable attribute of the same name, an undocumented upstream property asserted by its own test. A parameter Dagster adds whose attribute is named differently would drop the user's value silently.
 
     `getattr` is deliberately unguarded for the same reason. A missing attribute is the failure the characterization test exists to catch, and swallowing it here would hide it.
 
-    Args:
-        out: The out to read settings off.
-        overrides: Settings the decorator imposes, applied over what the out carries.
+    Parameters
+    ----------
+    out
+        The out to read settings off.
+    overrides
+        Settings the decorator imposes, applied over what the out carries.
 
-    Returns:
-        A new out carrying the user's settings with the overrides applied.
+    Returns
+    -------
+    A new out carrying the user's settings with the overrides applied.
     """
     settings = {
         name: getattr(out, name)
@@ -103,29 +107,38 @@ def _quarantine_out(
     io_manager_key: str | None,
     group_name: str | None,
 ) -> dg.AssetOut:
-    """Composes the passed `dg.AssetOut` with the decorator's own parameters.
+    """Compose the passed `dg.AssetOut` with the decorator's own parameters.
 
     `dg.AssetOut` is already the typed container for everything quarantine-specific, so the decorator takes one rather than growing a second two-valued container that could disagree with it. What it costs is a rule per setting that also exists on the decorator:
 
     - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: invalid rows to a different key and ownership domain.
-    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the valid out: the Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
+    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the valid out. The Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
     - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the invalid rows elsewhere stays a one-word change.
     - The three in `_CONTESTED_SETTINGS` raise.
 
-    The decorator's own `automation_condition` and `freshness_policy` stay on the valid out rather than reaching this one. A freshness policy here would fail forever on a healthy pipeline, because a clean run skips the quarantine by design; and a condition here would request a step the valid out's condition already requests, since neither out can execute alone.
+    The decorator's own `automation_condition` and `freshness_policy` stay on the valid out rather than reaching this one. A freshness policy here would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition here would request a step the valid out's condition already requests, since neither out can execute alone.
 
-    Args:
-        quarantine: The out the user declared, verbatim.
-        schema: The schema whose invalid rows the out holds.
-        key: The default sibling key, used only when the user named neither a key nor a prefix.
-        io_manager_key: The valid out's manager, inherited when the quarantine names none.
-        group_name: The valid out's group, inherited when the quarantine names none.
+    Parameters
+    ----------
+    quarantine
+        The out the user declared, verbatim.
+    schema
+        The schema whose invalid rows the out holds.
+    key
+        The default sibling key, used only when the user named neither a key nor a prefix.
+    io_manager_key
+        The valid out's manager, inherited when the quarantine names none.
+    group_name
+        The valid out's group, inherited when the quarantine names none.
 
-    Returns:
-        The out to hand `@dg.multi_asset`.
+    Returns
+    -------
+    The out to hand `@dg.multi_asset`.
 
-    Raises:
-        QuarantineSettingError: The out sets something one step cannot hold two of.
+    Raises
+    ------
+    QuarantineSettingError
+        The out sets something one step cannot hold two of.
     """
     for setting in _CONTESTED_SETTINGS:
         if getattr(quarantine, setting) is not None:
@@ -145,20 +158,24 @@ def _quarantine_out(
 
 
 def _description(schema: type[dy.Schema], description: str | None) -> str | None:
-    """Resolves the asset's description, most specific source first.
+    """Resolve the asset's description, most specific source first.
 
-    What the decorator was passed wins, then the schema's own docstring. Returning `None` is what leaves Dagster's fallback to the decorated function's docstring standing, so the package fills the gap rather than closing it.
+    What the decorator was passed wins, then the schema's own docstring. Returning `None` leaves Dagster's fallback to the decorated function's docstring standing, so the package fills the gap rather than closing it.
 
-    The schema outranks it because the schema is what describes the table, whereas the function's docstring describes the code that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's: those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
+    The schema outranks it because the schema is what describes the table, whereas the function's docstring describes the code that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's. Those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
 
     Empty is absent on both sources, and neither can express "no description at all", because Dagster's own fallback takes over as soon as this returns nothing.
 
-    Args:
-        schema: The schema the asset validates against.
-        description: What the decorator was given, or `None`.
+    Parameters
+    ----------
+    schema
+        The schema the asset validates against.
+    description
+        What the decorator was given, or `None`.
 
-    Returns:
-        The description to forward, or `None` to leave Dagster's own fallback in place.
+    Returns
+    -------
+    The description to forward, or `None` to leave Dagster's own fallback in place.
     """
     # Read through `__doc__` rather than `inspect.getdoc`, which walks the MRO: a schema declaring no docstring would inherit `dy.Schema`'s and describe itself as a base class for schema definitions.
     # `cleandoc` because a raw docstring keeps its source indentation, which the catalog renders as a code block.
@@ -203,16 +220,16 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
     code_version: str | None = None,
     pool: str | None = None,
 ) -> Callable[[DecoratedFn], dg.AssetsDefinition]:
-    """Turns the decorated function into an asset that validates the frame it returns against `schema`.
+    """Turn the decorated function into an asset that validates the frame it returns against `schema`.
 
     The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every Dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
-    The decorated function keeps plain Polars annotations: nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and a declared `context` binds the way it does on a plain `@dg.asset`. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
+    The decorated function keeps plain Polars annotations. Nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and a declared `context` binds the way it does on a plain `@dg.asset`. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
 
         pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
         pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
 
-    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch; this decorator cannot, because the annotation describes what the decorated function handed over while `dagster_type` describes what the asset stores, and those differ here: validation is eager, so the out always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
+    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch. This decorator cannot: the annotation describes what the decorated function handed over, while `dagster_type` describes what the asset stores, and those differ here. Validation is eager, so the out always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
 
     A returned result is what `@dg.asset` accepts and the only route there is to a materialization's tags and data version:
 
@@ -221,11 +238,11 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     Its `value` is the frame to validate, and is required. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both.
 
-    A returned result is the route this package prefers, and the context is the other one. `context.add_asset_metadata({...}, asset_key=context.asset_key_for_output(<this asset's name>))` reaches the same materialization, with the `asset_key=` mandatory as soon as a quarantine is declared and whether or not it is written; that route also overrides this package's own metadata keys, where a returned result loses to them, and it cannot be reached by calling the asset.
+    A returned result is the route this package prefers, and the context is the other one. `context.add_asset_metadata({...}, asset_key=context.asset_key_for_output(<this asset's name>))` reaches the same materialization. The `asset_key=` is mandatory as soon as a quarantine is declared, whether or not it is written. That route also overrides this package's own metadata keys, where a returned result loses to them, and it cannot be reached by calling the asset.
 
-    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately: declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what a invalid row costs is visible in the definition and cannot disagree with what the asset declares.
+    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately. Declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares.
 
-    With no quarantine, every row has to be valid: a run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
+    With no quarantine, every row has to be valid. A run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
 
         valid, _ = Orders.filter(raw_orders)
         return valid
@@ -236,60 +253,102 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     `@dg.multi_asset` is the mechanism, but the vocabulary is `@dg.asset`'s, because this decorator is designed for a single table that happens to grow a quarantine sibling. Anything `@dg.asset` lets you say about one asset is sayable here under the same name, and a test asserts that in both directions.
 
-    Args:
-        schema: The Dataframely schema the decorated function's output must satisfy.
-        quarantine: Where invalid rows go. Passing one is the consent to partial data; leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's. Its only parent in the graph is the valid out, whatever the asset's own parents are, so the quarantine reads as downstream of the table it came from rather than as a second child of every upstream (ADR-0003).
-        check_granularity: How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
-        max_failure_samples: How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted; the bound is this package's own and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
-        statistics: Whether each materialization carries `skimr`-style statistics for what it wrote: one table per dtype family present, on both the valid out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
-        row_sample: How many of the valid output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
-        temp_dir: Where a `LazyFrame` return is staged before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the staging file goes to the system temp directory, which in a container is its ephemeral disk**, and a staged frame bigger than what the pod has spare fills it; pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
-        key_prefix: Prefix for the asset key. The checks and the quarantine follow it automatically.
-        io_manager_key: Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
-        group_name: Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
-        metadata: Definition metadata to carry alongside the schema's own. `dagster/column_schema` and `dagster_dataframely/schema` are the package's and win a collision.
-        tags: Asset tags, for filtering and grouping in the catalog.
-        owners: Asset owners, as emails or `team:<name>`.
-        kinds: Kind badges shown on the asset in the graph.
-        automation_condition: Declarative automation condition for the asset.
-        freshness_policy: Freshness policy for the asset.
-        name: Asset name. Defaults to the function name.
-        ins: Explicit input mapping, for the cases a parameter name cannot express.
-        deps: Upstream assets this one depends on without loading.
-        description: Asset description. Unset, the schema's own docstring fills it, and the decorated function's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
-        config_schema: Run configuration schema for the underlying op.
-        required_resource_keys: Resources the decorated function reaches through the context.
-        partitions_def: Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning.
-        hooks: Hooks to attach to the underlying op.
-        backfill_policy: How Dagster backfills this asset's partitions.
-        op_tags: Tags on the underlying op, for run launcher and executor routing.
-        resource_defs: Resources bound to this asset specifically.
-        retry_policy: Retry policy for the underlying op.
-        code_version: Version string for change-based staleness.
-        pool: Concurrency pool the underlying op runs in.
+    Parameters
+    ----------
+    schema
+        The Dataframely schema the decorated function's output must satisfy.
+    quarantine
+        Where invalid rows go. Passing one is the consent to partial data. Leaving it `None` is the refusal. The out is free to name its own key, group, owners and IO manager, which is how invalid rows reach a separate storage and ownership domain. Its key defaults to a sibling of the valid out and its IO manager to the valid out's. Its only parent in the graph is the valid out, whatever the asset's own parents are, so the quarantine reads as downstream of the table it came from rather than as a second child of every upstream (ADR-0003).
+    check_granularity
+        How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their timelines end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships rather than after. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
+    max_failure_samples
+        How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted. The bound is this package's own, and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
+    statistics
+        Whether each materialization carries `skimr`-style statistics for what it wrote: one table per dtype family present, on both the valid out and the quarantine. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
+    row_sample
+        How many of the valid output's rows reach its materialization metadata, under the display key `sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. The quarantine carries none, because its rows already reach the log through the checks that rejected them. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
+    temp_dir
+        Where a `LazyFrame` return is staged before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the staging file goes to the system temp directory, which in a container is its ephemeral disk**, and a staged frame bigger than what the pod has spare fills it. Pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
+    key_prefix
+        Prefix for the asset key. The checks and the quarantine follow it automatically.
+    io_manager_key
+        Resource key the table is stored under. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
+    group_name
+        Asset group. The quarantine inherits it unless its own `dg.AssetOut` names a different one.
+    metadata
+        Definition metadata to carry alongside the schema's own. `dagster/column_schema` and `dagster_dataframely/schema` are the package's and win a collision.
+    tags
+        Asset tags, for filtering and grouping in the catalog.
+    owners
+        Asset owners, as emails or `team:<name>`.
+    kinds
+        Kind badges shown on the asset in the graph.
+    automation_condition
+        Declarative automation condition for the asset.
+    freshness_policy
+        Freshness policy for the asset.
+    name
+        Asset name. Defaults to the function name.
+    ins
+        Explicit input mapping, for the cases a parameter name cannot express.
+    deps
+        Upstream assets this one depends on without loading.
+    description
+        Asset description. Unset, the schema's own docstring fills it, and the decorated function's docstring stands only where the schema has none. The quarantine inherits whatever resolves unless its own `dg.AssetOut` names a description.
+    config_schema
+        Run configuration schema for the underlying op.
+    required_resource_keys
+        Resources the decorated function reaches through the context.
+    partitions_def
+        Partitioning for the asset. Validation then runs per partition, on that partition's frame, and both outs carry it, so the quarantine cannot escape its asset's partitioning.
+    hooks
+        Hooks to attach to the underlying op.
+    backfill_policy
+        How Dagster backfills this asset's partitions.
+    op_tags
+        Tags on the underlying op, for run launcher and executor routing.
+    resource_defs
+        Resources bound to this asset specifically.
+    retry_policy
+        Retry policy for the underlying op.
+    code_version
+        Version string for change-based staleness.
+    pool
+        Concurrency pool the underlying op runs in.
 
-    Returns:
-        A decorator producing a `multi_asset` carrying the checks `check_granularity` asks for, and a second out when a quarantine is declared.
+    Returns
+    -------
+    A decorator producing a `multi_asset` carrying the checks `check_granularity` asks for, and a second out when a quarantine is declared.
 
-    Raises:
-        CollectionNotSupportedError: `schema` is a `dy.Collection`.
-        InvalidSettingError: A setting resolved to a value outside its vocabulary, from any tier.
-        QuarantineSettingError: The quarantine's `dg.AssetOut` sets something one step cannot hold two of.
+    Raises
+    ------
+    CollectionNotSupportedError
+        `schema` is a `dy.Collection`.
+    InvalidSettingError
+        A setting resolved to a value outside its vocabulary, from any tier.
+    QuarantineSettingError
+        The quarantine's `dg.AssetOut` sets something one step cannot hold two of.
 
-    Example:
-        >>> import dagster as dg
-        >>> import dataframely as dy
-        >>> import polars as pl
-        >>> import dagster_dataframely as dd
-        >>> class Orders(dy.Schema):
-        ...     order_id = dy.String(primary_key=True)
-        ...     amount = dy.Float64(nullable=False, min=0.0)
-        >>> @dd.dataframely_asset(
-        ...     schema=Orders, quarantine=dg.AssetOut(), group_name="sales"
-        ... )
-        ... def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-        ...     return raw_orders.select("order_id", "amount")
+    Examples
+    --------
+    ```python
+    import dagster as dg
+    import dataframely as dy
+    import polars as pl
+    import dagster_dataframely as dd
+
+
+    class Orders(dy.Schema):
+        order_id = dy.String(primary_key=True)
+        amount = dy.Float64(nullable=False, min=0.0)
+
+
+    @dd.dataframely_asset(schema=Orders, quarantine=dg.AssetOut(), group_name="sales")
+    def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders.select("order_id", "amount")
+    ```
     """
     # Deliberately narrow: anything else keeps failing however it already fails.
     if isinstance(schema, type) and issubclass(schema, dy.Collection):

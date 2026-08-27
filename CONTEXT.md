@@ -14,7 +14,7 @@ _Avoid_: door, front door
 
 **Decorated function**: The function the decorator wraps.
 Upstream assets bind into it as parameters, it may declare `context`, and it returns the frame to validate or a returned result carrying one.
-Dagster's own phrase, and the whole of what makes it explicit: it names the function by its relation to the decorator rather than by what it happens to do inside.
+Dagster's own phrase, and explicit for one reason: it names the function by its relation to the decorator rather than by what it happens to do inside.
 _Avoid_: transform, compute function (Dagster's, but there it names the wrapper this decorator builds)
 
 **Valid rows**: The rows `Schema.filter` kept.
@@ -25,7 +25,8 @@ _Avoid_: good rows, the good table, the good out
 _Avoid_: rejected rows, bad rows, failed rows
 
 **Quarantine**: The sibling asset invalid rows materialize into.
-Sibling in the definition, since one decorator declares both as outs of one op; downstream in the graph, where its only parent is the valid asset, because it cannot exist without it.
+Sibling in the definition, since one decorator declares both as outs of one op.
+Downstream in the graph, where its only parent is the valid asset, because it cannot exist without it.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
 _Avoid_: reject table, dead-letter asset
 
@@ -48,7 +49,8 @@ _Avoid_: the kit
 ### Validation
 
 **Shape**: A frame's columns and their dtypes, against what the schema declares.
-A mismatch is a pipeline defect, so it stops the run before any row is filtered and reports through a blocking check.
+A mismatch is a pipeline defect.
+It stops the run before any row is filtered, and reports through a blocking check.
 _Avoid_: gate, schema gate
 
 **Rule**: One Dataframely validation rule, under the name Dataframely gives it.

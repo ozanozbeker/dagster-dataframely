@@ -183,7 +183,7 @@ def test_pool_reaches_the_underlying_op():
 
 
 def test_asset_level_parameters_reach_the_out():
-    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them; `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which is what leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the decorator is designed for one table."""
+    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them. `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the decorator is designed for one table."""
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
@@ -215,7 +215,7 @@ def test_asset_level_parameters_reach_the_out():
 
 
 def test_user_metadata_cannot_displace_the_packages_own():
-    """The Columns tab and the schema carrier are what the decorator is for, so a colliding user key loses rather than silently breaking the IO manager's read path."""
+    """The Columns tab and the schema carrier are what the decorator is for, so a colliding user key loses rather than quietly breaking the IO manager's read path."""
 
     @dataframely_asset(
         schema=Orders,
@@ -273,7 +273,7 @@ def test_an_explicit_description_outranks_the_schema_docstring():
 
 
 def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
-    """The last source is Dagster's, not the package's: with nothing to fill the gap the decorated function's docstring lands, exactly as it did before."""
+    """The last source is Dagster's, not the package's. With nothing to fill the gap, the decorated function's docstring lands, exactly as it did before."""
 
     @dataframely_asset(schema=_Undocumented)
     def undocumented() -> pl.DataFrame:
@@ -765,7 +765,7 @@ def test_sibling_rules_render_in_one_voice_on_the_constraint_surface():
 
 
 def test_the_primary_key_is_stated_once_at_table_level():
-    """Dataframely models it as one rule over a struct of every key column, and stating it once is what distinguishes a composite key from two independent single-column ones."""
+    """Dataframely models it as one rule over a struct of every key column, and stating it once distinguishes a composite key from two independent single-column ones."""
     table_schema = _catalog(orders, dg.AssetKey(["orders"]))
 
     assert "PK: order_id, line_no" in table_schema.constraints.other
@@ -1059,7 +1059,7 @@ def test_the_quarantine_hangs_off_the_valid_asset_alone():
 
 
 def test_an_asset_with_no_parents_of_its_own_still_gets_the_edge():
-    """The empty set is what `internal_asset_deps` needs for the valid out here, and it is the one input Dagster could have refused."""
+    """The empty set is what `internal_asset_deps` needs for the valid out here, and the one input Dagster could have refused."""
     assert quarantined.asset_deps == {
         dg.AssetKey(["quarantined"]): set(),
         _QUARANTINE_KEY: {dg.AssetKey(["quarantined"])},
@@ -1091,7 +1091,7 @@ def test_the_edge_arrives_however_the_quarantine_key_was_decided(
 
 
 def test_an_asset_without_a_quarantine_keeps_the_wiring_dagster_gave_it():
-    """Nothing is rewired where there is no second out to rewire, which is what leaves the single-out case built once."""
+    """Nothing is rewired where there is no second out to rewire, which leaves the single-out case built once."""
 
     @dataframely_asset(schema=Orders, deps=["ledger"])
     def lone(raw_orders: pl.DataFrame) -> pl.DataFrame:
@@ -1187,7 +1187,7 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
 def _shipments(
     prefix: str, *, quarantine: dg.AssetOut | None = None
 ) -> dg.AssetsDefinition:
-    """Builds the asset that used to collide with itself under a second prefix (#70)."""
+    """Build the asset that used to collide with itself under a second prefix (#70)."""
 
     @dataframely_asset(
         schema=Orders, key_prefix=prefix, name="shipments", quarantine=quarantine
@@ -1199,7 +1199,7 @@ def _shipments(
 
 
 def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
-    """An op name has to be unique across a code location, and the asset name alone is not: the prefix is the whole of what distinguishes two assets that share one.
+    """An op name has to be unique across a code location, and the asset name alone is not. The prefix is the whole of what distinguishes two assets that share one.
 
     Asserted against a live `@dg.asset` rather than a spelled-out string, so the parity holds through an upstream change to how the identifier is built.
     """
@@ -1238,9 +1238,9 @@ def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
 
 
 def test_a_downstream_asset_binds_to_the_node_that_owns_its_key():
-    """The collision's second face, and the expensive one: in a graph of any size it surfaces later than the name clash and reads as a dependency wired to the wrong node.
+    """The collision's second face, and the expensive one. In a graph of any size it surfaces later than the name clash, and it reads as a dependency wired to the wrong node.
 
-    `dependency_structure` is undocumented but not private, and it is the only place the resolved edge is readable as a node name. `graph.dependencies` holds the same edge wrapped in a `BlockingAssetChecksDependencyDefinition`, which the shape check puts there and which says nothing extra here.
+    `dependency_structure` is undocumented but not private, and the only place the resolved edge is readable as a node name. `graph.dependencies` holds the same edge wrapped in a `BlockingAssetChecksDependencyDefinition`, which the shape check puts there and which says nothing extra here.
     """
 
     @dg.asset(ins={"upstream": dg.AssetIn(key=dg.AssetKey(["beta", "shipments"]))})

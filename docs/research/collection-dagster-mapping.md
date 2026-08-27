@@ -10,7 +10,7 @@ Scratch scripts lived in `/tmp/dydg/`.
 
 ## Answer / Recommendation
 
-**Collections do fit — but only in one shape, and the fit is narrower than it looks.**
+**Collections do fit, but only in one shape, and the fit is narrower than it looks.**
 
 Recommended shape: **one `@dg.multi_asset` with `outs=`, one asset key per member, plus one asset check per (member × collection filter) pair.**
 This is candidate shape A, with the specific correction that `specs=` does not work and `outs=` is required.
@@ -19,16 +19,18 @@ The three questions the ticket asked, answered:
 
 | Question | Answer |
 | --- | --- |
-| Where does a cross-member rule report? | **Against every non-ignored member, once each.** This is dataframely's own answer, not a design choice we get to make — `Collection.filter` appends a rule column named after the filter to *every* non-ignored member's `FailureInfo`, with per-member row counts. A rule spanning `orders` and `customers` therefore becomes **two** checks: `customers/<rule>` and `orders/<rule>`. **[RAN]** |
+| Where does a cross-member rule report? | **Against every non-ignored member, once each.** This is dataframely's own answer, not a design choice we get to make. `Collection.filter` appends a rule column named after the filter to *every* non-ignored member's `FailureInfo`, with per-member row counts. A rule spanning `orders` and `customers` therefore becomes **two** checks: `customers/<rule>` and `orders/<rule>`. **[RAN]** |
 | How does `CollectionFilterResult` map to per-asset results? | **Cleanly, and this is the strongest argument for shape A.** `CollectionFilterResult` is `(result: C, failure: dict[str, FailureInfo])`. The `failure` dict is *already keyed by member name*. Map member name → asset key and you get: `result.<member>` → that asset's output, `failure[<member>]` → that asset's quarantine artifact and check metadata. No re-derivation, no invention. **[RAN]** |
-| How does `Collection.write_parquet`'s directory layout interact with IO manager paths? | **In the recommended shape it never comes up** — each member goes through the ordinary per-asset-key IO manager and `Collection.write_parquet` is never called. It only matters for shape C, where it composes *perfectly* with `UPathIOManager` if `extension = None`, and collides *destructively* with any `.parquet` extension (including `dagster-polars`' own). **[RAN]** |
+| How does `Collection.write_parquet`'s directory layout interact with IO manager paths? | **In the recommended shape it never comes up.** Each member goes through the ordinary per-asset-key IO manager and `Collection.write_parquet` is never called. It only matters for shape C, where it composes *perfectly* with `UPathIOManager` if `extension = None`, and collides *destructively* with any `.parquet` extension (including `dagster-polars`' own). **[RAN]** |
 
 Three things should be **ruled out**, with evidence below:
 
 1. **Shape B (N assets + a `multi_asset_check` carrying the cross-member rules) cannot deliver the collection guarantee.**
    Checks observe; `Collection.filter` mutates.
    A check can report that `customers` contains rows the collection invariant forbids, but the rows stay on disk.
-2. **Shape C (a single asset whose value *is* the Collection) works mechanically but collapses N tables into one asset key** — no per-table lineage, no downstream dep on just `orders` — and **cannot be carried by `dagster-polars` at all** (two independent hard failures, below).
+2. **Shape C (a single asset whose value *is* the Collection) works mechanically but collapses N tables into one asset key.**
+   There is no per-table lineage and no downstream dep on just `orders`.
+   It also **cannot be carried by `dagster-polars` at all** (two independent hard failures, below).
    Since `dagster-polars` is a hard dependency and upstreaming is the North Star, this is disqualifying rather than merely awkward.
 3. **`can_subset=True` on a Collection multi-asset is a lie** and should not be offered.
    It executes, but it produces mutually inconsistent persisted members.
@@ -38,13 +40,13 @@ And two things should be scoped **out of v1**:
 4. **Partitioned collections.**
    Cross-member rules run per-partition.
    If an entity's rows span partitions, the rule quarantines rows that are valid globally.
-   Sound only when the collection's entities are partition-local — a constraint we cannot verify for the user.
+   Sound only when the collection's entities are partition-local, a constraint we cannot verify for the user.
 5. **The N-times-quarantine question.**
    One logically-rejected entity produces rows in *N* members' `FailureInfo`.
    That is correct (each member's rows really were removed) but it means "rows quarantined" is not an entity count, and any UI summing it across assets double-counts.
    Needs a DX decision, not more research.
 
-**Bottom line for the map:** Collection support is *additive* — nothing in the `Schema`-level design depends on it.
+**Bottom line for the map:** Collection support is *additive*: nothing in the `Schema`-level design depends on it.
 If the map wants v1 small, deferring Collections costs nothing structural.
 But if it is in scope, shape A is the answer and the other three candidates should be closed.
 
@@ -151,7 +153,7 @@ check_specs = [
 ```
 
 `AssetCheckSpec` accepts `additional_deps` so each per-member check declares the other members it logically depends on (already established on the map).
-Signature confirmed to also carry `blocking` — relevant below.
+Signature confirmed to also carry `blocking`, which is relevant below.
 **[RAN, via signature inspection]**
 
 ### Fact 2b: a Collection with **zero** filters can still couple its members **[RAN]**
@@ -179,11 +181,11 @@ failure[orders].counts()    -> {'amt|min': 1}
 It surfaces exactly like a filter: a synthetic rule column named `<member>|failure_propagation` appended to every non-ignored member's `FailureInfo`.
 So the check-spec generation rule is not "one check per `@dy.filter`" but **one check per (non-ignored member × cross-member rule)**, where cross-member rules = `Collection._filters()` **plus** `{f"{m}|failure_propagation" for m in Collection._failure_propagating_members()}`.
 
-The consequence for the design is sharper than it looks: **you cannot use "this collection has no filters" as a licence to treat its members as independent assets.** `_failure_propagating_members()` must be checked too. (Confirmed in source: `CollectionMeta.__new__` requires an overlapping primary key if *either* filters or failure-propagation are present — `collection/_base.py:137-148`.)
+The consequence for the design is sharper than it looks: **you cannot use "this collection has no filters" as a licence to treat its members as independent assets.** `_failure_propagating_members()` must be checked too. (Confirmed in source: `CollectionMeta.__new__` requires an overlapping primary key if *either* filters or failure-propagation are present; `collection/_base.py:137-148`.)
 
 ---
 
-## Shape A — `@dg.multi_asset`, one asset per member — **RECOMMENDED**
+## Shape A: `@dg.multi_asset`, one asset per member. **RECOMMENDED**
 
 The recommended shape, verified end to end against real parquet output.
 
@@ -231,7 +233,7 @@ downstream asset depending on ONLY `orders` ran: True
 Per-member lineage, per-member storage, per-member checks, downstream selectivity.
 All present.
 
-### Gotcha 1: `specs=` does not work — you must use `outs=` **[RAN]**
+### Gotcha 1: `specs=` does not work, so you must use `outs=` **[RAN]**
 
 `@dg.multi_asset(specs=[dg.AssetSpec(key=m) ...])` gives each output the Dagster type `Nothing`, so yielding an actual value fails:
 
@@ -242,7 +244,8 @@ Dagster type Nothing:
 TypeError: "'!='" comparison not supported for LazyFrame objects
 ```
 
-(The `!=` crash is a secondary bug — Dagster's `Nothing` type-check does `value != NoValueSentinel`, which polars `LazyFrame` refuses.
+(The `!=` crash is a secondary bug.
+Dagster's `Nothing` type-check does `value != NoValueSentinel`, which polars `LazyFrame` refuses.
 Worth knowing: **any** Dagster type check that compares a `LazyFrame` by `!=` blows up with a confusing error.)
 
 `specs=` is for `MaterializeResult`-only multi-assets.
@@ -269,7 +272,7 @@ files: ['customers.parquet', 'orders.parquet']
 ```
 
 So the mapping is exact: `Collection.optional_members()` → `AssetOut(is_required=False)`.
-**Ignored members** (`ignored_in_filters=True`) get an ordinary required `AssetOut`; they are still in `required_members()`, still get a `FailureInfo` entry, but are excluded from `common_primary_key()` and from every cross-member check — so they get schema checks only, no collection checks.
+**Ignored members** (`ignored_in_filters=True`) get an ordinary required `AssetOut`; they are still in `required_members()`, still get a `FailureInfo` entry, but are excluded from `common_primary_key()` and from every cross-member check, so they get schema checks only and no collection checks.
 **[RAN]**
 
 ### Gotcha 3: `can_subset=True` executes but is semantically unsound **[RAN]**
@@ -287,7 +290,7 @@ But look at what it cost and what it broke:
 - **It saved nothing.** `Collection.filter` still required *all* required members (`ValueError: Input misses 1 required members: orders.` if you honestly pass only the selected one).
   The full computation happens regardless; subsetting only discards outputs.
 - **It broke the invariant.** `customers` was written with the cascade applied (1 row), while `orders` on disk is whatever a previous run left there.
-  The two persisted members are now mutually inconsistent — precisely the thing a Collection exists to prevent.
+  The two persisted members are now mutually inconsistent, precisely the thing a Collection exists to prevent.
 
 Recommendation: do **not** set `can_subset=True` on a generated Collection multi-asset, and document why.
 Shape D ("something using `AssetSpec` / `can_subset` / `additional_deps`") reduces to this: `additional_deps` is already used by shape A's check specs, `AssetSpec` is the wrong output mechanism (gotcha 1), and `can_subset` is a trap.
@@ -309,7 +312,7 @@ Recommend scoping partitioned collections out of v1 and saying so.
 
 ---
 
-## Shape B — N assets + `@dg.multi_asset_check` — **RULED OUT**
+## Shape B: N assets plus `@dg.multi_asset_check`. **RULED OUT**
 
 Built and ran it: independent `customers` and `orders` assets each doing their own `Schema.filter`, then a `multi_asset_check` re-loading both and running `Collection.filter(..., skip_member_validation=True)` to report what the cross-member rule *would* remove.
 **[RAN]**
@@ -323,7 +326,8 @@ PERSISTED customers (what downstream consumers actually read):
 ```
 
 The check correctly identified the violation.
-The data on disk is still invalid — customer 3 has no orders and customer 2's only order was rejected, yet both are sitting in the `customers` asset for every downstream consumer to read.
+The data on disk is still invalid.
+Customer 3 has no orders and customer 2's only order was rejected, yet both are sitting in the `customers` asset for every downstream consumer to read.
 
 This is the categorical difference: **`Collection.filter` is a mutation; an asset check is an observation.**
 Shape B converts dataframely's guarantee ("the members you hold are mutually consistent") into a notification ("the members you hold are not mutually consistent").
@@ -332,14 +336,16 @@ That is strictly weaker than what `dy.Collection` promises, and it is weaker tha
 Dagster's own docs confirm this is inherent, not an artifact of how I built the probe: checks "run after the asset has been materialized", and by default "if a parent's asset check fails during a run, the run will continue and downstream assets will be materialized".
 **[READ]**
 
-`blocking=True` on the check specs (parameter exists on `AssetCheckSpec` **[RAN, signature]**) partially mitigates — with it, "if the `orders_id_has_no_nulls` check fails, the downstream `augmented_orders` asset won't be materialized" **[READ]** — but the bad rows are still persisted, and any consumer outside the Dagster graph reads them.
+`blocking=True` on the check specs (parameter exists on `AssetCheckSpec` **[RAN, signature]**) partially mitigates.
+With it, "if the `orders_id_has_no_nulls` check fails, the downstream `augmented_orders` asset won't be materialized" **[READ]**.
+But the invalid rows are still persisted, and any consumer outside the Dagster graph reads them.
 Mitigation, not a fix.
 
 Secondary cost: the check must re-read both members from storage and re-run the join, so the cross-member work is done twice per run.
 
 ---
 
-## Shape C — a single asset whose value *is* the Collection — **RULED OUT (but instructive)**
+## Shape C: a single asset whose value *is* the Collection. **RULED OUT (but instructive)**
 
 Ruled out against dagster-polars 0.27.12, but its failures are worth recording.
 
@@ -396,7 +402,7 @@ Any tool, notebook, or downstream `PolarsParquetIOManager` pointed at that key r
 This is the strongest concrete argument that the collection directory must **not** live at a path that looks like a single file.
 If shape C is ever revived, `extension = None` is mandatory.
 
-### `dagster-polars` cannot carry a Collection — two independent hard failures **[RAN]**
+### `dagster-polars` cannot carry a Collection: two independent hard failures **[RAN]**
 
 1. Type routing rejects it outright:
 
@@ -407,7 +413,7 @@ If shape C is ever revived, `extension = None` is mandatory.
 
    `TYPE_ROUTERS = [TypeRouter, OptionalTypeRouter, DictTypeRouter, (PatitoTypeRouter), PolarsTypeRouter]` matches only `Any`/`None`, `Optional[...]`, `dict`/`Mapping`, patito models, and `pl.DataFrame`/`pl.LazyFrame`.
    A `dy.Collection` subclass matches nothing.
-   `TYPE_ROUTERS` is a bare module-level list with no registration hook — a third party can only `.append()` to it by monkey-patching.
+   `TYPE_ROUTERS` is a bare module-level list with no registration hook, so a third party can only `.append()` to it by monkey-patching.
    **[READ: `dagster_polars/io_managers/type_routers.py:227-250`]**
 
 2. Even with routing bypassed, metadata generation assumes a single frame:
@@ -419,12 +425,12 @@ If shape C is ever revived, `extension = None` is mandatory.
         base.py:209 (get_metadata)
    ```
 
-   Note `DictTypeRouter` sounds promising but is *not* a directory-of-named-frames router —
+   Note `DictTypeRouter` sounds promising but is *not* a directory-of-named-frames router:
    its docstring is "Handles loading partitions as dictionaries of DataFrames" and it just
    delegates to the parent router on a single path. **[READ:
    `dagster_polars/io_managers/type_routers.py:133-146`]**
 
-So a Collection IO manager would have to override `dump_to_path`, `load_from_path`, *and* `get_metadata` — i.e. every method that does work — inheriting only `base_dir` and `storage_options` config plumbing.
+So a Collection IO manager would have to override `dump_to_path`, `load_from_path`, *and* `get_metadata`, which is every method that does work, inheriting only `base_dir` and `storage_options` config plumbing.
 The abstract seam `dagster-polars` exposes (`write_df_to_path` / `sink_df_to_path` / `scan_df_from_path`) is single-frame by signature **[READ: `base.py:103-124`]**, and a Collection is N frames.
 Given that `dagster-polars` is a hard dependency and `dagster-polars[dataframely]` is the North Star, "we cannot reuse any of its format logic" is a strong signal that Collection-as-asset-value is not the upstreamable shape.
 
@@ -445,10 +451,10 @@ That is a narrow case and it can be built by a user in ~15 lines (the `Collectio
 
 | Shape | Delivers the collection guarantee? | Per-member lineage? | Composes with dagster-polars? | Verdict |
 | --- | --- | --- | --- | --- |
-| A — `multi_asset` + `outs=`, N assets, N×F checks | **Yes** (filter runs once, over all members, before any output) | **Yes** | Yes — each member is a plain `pl.LazyFrame` through the normal IO manager | **Recommended** |
-| B — N assets + `multi_asset_check` | **No** — observes, does not repair | Yes | Yes | Ruled out |
-| C — one asset whose value is the Collection | Yes | **No** — one key for N tables | **No** — two hard failures | Ruled out |
-| D — `AssetSpec` / `can_subset` / `additional_deps` | `can_subset` actively breaks it | — | — | Reduces to A; adds nothing |
+| A: `multi_asset` plus `outs=`, N assets, N×F checks | **Yes** (filter runs once, over all members, before any output) | **Yes** | Yes: each member is a plain `pl.LazyFrame` through the normal IO manager | **Recommended** |
+| B: N assets plus `multi_asset_check` | **No**: observes, does not repair | Yes | Yes | Ruled out |
+| C: one asset whose value is the Collection | Yes | **No**: one key for N tables | **No**: two hard failures | Ruled out |
+| D: `AssetSpec` / `can_subset` / `additional_deps` | `can_subset` actively breaks it | n/a | n/a | Reduces to A; adds nothing |
 
 ---
 
@@ -469,36 +475,36 @@ That is a narrow case and it can be built by a user in ~15 lines (the `Collectio
 - **Not tested: `Collection.filter(lazy=True)` inside an asset.** `LazyFilterResult` / `collect_all()` behaviour under Dagster's output handling is untouched here; it belongs with the lazy-vs-eager fog on the map.
   Note `_validate_lazy_param` rejects `lazy=True` outright if the collection has any eager (`dy.DataFrame[...]`) member.
   **[READ: `collection.py:1020-1025`]**
-*(`propagate_row_failures` was initially listed here as unverified; it has since been run — see the section above.)*
+*(`propagate_row_failures` was initially listed here as unverified; it has since been run; see the section above.)*
 
 ---
 
 ## Sources
 
-Hands-on, against the installed environment (`.venv/bin/python`, dagster 1.13.16, dataframely 3.0.0, polars 1.43.2) — scripts in `/tmp/dydg/`.
+Hands-on, against the installed environment (`.venv/bin/python`, dagster 1.13.16, dataframely 3.0.0, polars 1.43.2), scripts in `/tmp/dydg/`.
 
 Library source read directly:
 
-- `dataframely/collection/collection.py` — `filter`, `validate`, `write_parquet`,
+- `dataframely/collection/collection.py`: `filter`, `validate`, `write_parquet`,
   `read_parquet`, `scan_parquet`, `_validate_input_keys`, `_validate_lazy_param`
-- `dataframely/collection/_base.py` — `CollectionMember`, `MemberInfo`, `required_members`,
+- `dataframely/collection/_base.py`: `CollectionMember`, `MemberInfo`, `required_members`,
   `optional_members`, `ignored_members`, `common_primary_key`
-- `dataframely/collection/filter_result.py` — `CollectionFilterResult`
-- `dagster/_core/storage/upath_io_manager.py:201-297` — `_get_path`, `_with_extension`,
+- `dataframely/collection/filter_result.py`: `CollectionFilterResult`
+- `dagster/_core/storage/upath_io_manager.py:201-297`: `_get_path`, `_with_extension`,
   `_get_paths_for_partitions`
-- `dagster_polars 0.27.12` — `io_managers/base.py`, `io_managers/parquet.py`,
+- `dagster_polars 0.27.12`: `io_managers/base.py`, `io_managers/parquet.py`,
   `io_managers/type_routers.py` (wheel unpacked to `/tmp/dgp`)
 
 Docs:
 
-- [dataframely — Primary keys](https://dataframely.readthedocs.io/v1.14.0/sites/features/primary-keys.html)
+- [dataframely: Primary keys](https://dataframely.readthedocs.io/v1.14.0/sites/features/primary-keys.html)
   and its source `docs/guides/features/primary-keys.md`: "The central idea behind `Collection` is to unify multiple tables relating to the same set of underlying entities.
   This is useful because it allows us to write `filter`s that use information from multiple tables to identify whether the underlying entity is valid or not.
   If any `filter`s are defined, dataframely requires the tables in a `Collection` to have an overlapping primary key."
-- [dataframely — `dataframely.collection` API](https://dataframely.readthedocs.io/v1.14.0/_api/dataframely.collection.html):
+- [dataframely: `dataframely.collection` API](https://dataframely.readthedocs.io/v1.14.0/_api/dataframely.collection.html):
   `write_parquet` "writes one parquet file per member into the provided directory.
   Each parquet file is named `<member>.parquet`."
-- [Dagster — Defining assets](https://docs.dagster.io/guides/build/assets/defining-assets):
+- [Dagster: Defining assets](https://docs.dagster.io/guides/build/assets/defining-assets):
   `@multi_asset` is for "when you need to generate multiple assets from a single operation", e.g. "using the same in-memory object to compute multiple assets".
-- [Dagster — Asset checks](https://docs.dagster.io/guides/test/asset-checks): "The asset check will run after the asset has been materialized"; by default "if a parent's asset check fails during a run, the run will continue and downstream assets will be materialized"; with `blocking=True`, "the downstream `augmented_orders` asset won't be materialized".
+- [Dagster: Asset checks](https://docs.dagster.io/guides/test/asset-checks): "The asset check will run after the asset has been materialized"; by default "if a parent's asset check fails during a run, the run will continue and downstream assets will be materialized"; with `blocking=True`, "the downstream `augmented_orders` asset won't be materialized".
   With `@multi_asset_check`, "both asset checks will run in a single operation after the asset has been materialized."

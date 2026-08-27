@@ -22,11 +22,11 @@ Behind it sits a principle that decided several of the smaller questions: **hand
 
 ## Consequences
 
-The five exits are now reachable by calling a function. `TestExitSelection` in `tests/test_asset_runtime.py` does that, with no run, no IO manager and no `tmp_path`. Writing it surfaced one fact no existing test stated: check results are bundled onto the valid materialization where there is one and yielded standalone where the valid out is skipped, and a run flattens both into a single event stream so the difference is invisible from there.
+The five exits are now reachable by calling a function. `TestExitSelection` in `tests/test_asset_runtime.py` does that, with no run, no IO manager and no `tmp_path`. Writing it surfaced one fact no existing test stated. Check results are bundled onto the valid materialization where there is one, and yielded standalone where the valid out is skipped. A run flattens both into a single event stream, so the difference is invisible from there.
 
 > **Superseded by ADR-0002.** The bundling is gone: every check result is yielded standalone at every exit, because direct invocation is satisfied only by a standalone one.
 
-Hand-wiring can now pass a key no out owns. This fails on the first yield with `DagsterInvariantViolationError: Asset key ... not found in AssetsDefinition`; the step fails and nothing is written. That was verified before the decision, not assumed.
+Hand-wiring can now pass a key no out owns. This fails on the first yield with `DagsterInvariantViolationError: Asset key ... not found in AssetsDefinition`. The step fails and nothing is written. That was verified before the decision, not assumed.
 
 The change is breaking, and `process` is public. It lands in a `0.x` minor, per the policy the README states.
 
@@ -36,11 +36,11 @@ Nothing in `CONTEXT.md` changed. `valid_key` and `quarantine_key` are built from
 
 **Keep the context and the output names.** The names are what a hand-wiring user writes in `outs={...}`, so passing them is the friendlier call site, and the package would keep doing the reconciliation. Rejected because it preserves exactly the dependency that forces every exit test through a run, in order to save one line at a call site taken by advanced users.
 
-**Accept the context as an optional parameter, resolving names when given.** Rejected for the same reason and one more: `process` would still carry the context path, so the tests could keep routing around the new interface and the change would deliver nothing until the option was removed.
+**Accept the context as an optional parameter, resolving names when given.** Rejected for the same reason and one more. `process` would still carry the context path, so the tests could keep routing around the new interface, and the change would deliver nothing until the option was removed.
 
 **Export a helper that turns a context and output names into the pair.** Rejected as a second exported name bought to save one line.
 
-**Close over the valid key at definition time.** The decorator already builds that key and passes it to the out, so it is guaranteed correct and needs no lookup. Rejected because the quarantine key cannot always be known at definition time: `_quarantine_out` may keep the user's own `key_prefix`, and Dagster derives the key from it. Two mechanisms answering one question in one function would need explaining every time it is read, and the saving is one dictionary lookup per run against a validation pass.
+**Close over the valid key at definition time.** The decorator already builds that key and passes it to the out, so it is guaranteed correct and needs no lookup. Rejected because the quarantine key cannot always be known at definition time. `_quarantine_out` may keep the user's own `key_prefix`, and Dagster derives the key from it. Two mechanisms answering one question in one function would need explaining every time it is read, and the saving is one dictionary lookup per run against a validation pass.
 
 > **Superseded by ADR-0002**, which adopts a variant: both keys resolve at definition time, and the quarantine's is read off the finished `AssetsDefinition` rather than rebuilt. The objection above is what rules out rebuilding it, and it still holds. What changed is that the lookup no longer has to happen inside a run, which is what made the decorator directly invocable.
 

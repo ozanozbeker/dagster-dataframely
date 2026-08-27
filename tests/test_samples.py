@@ -1,8 +1,8 @@
 """The two row samples, asserted through the metadata a run emits.
 
-Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them: the check's metadata for the rows a rule rejected, and the valid out's materialization's for the rows that survived.
+Both write real data into the event log, so both are asserted where that lands rather than at the function that renders them. The check's metadata holds the rows a rule rejected. The valid out's materialization holds the rows that survived.
 
-Both are opt-out, so almost every asset in this file declares nothing about them. What each test that does declare something covers is the off switch, which is the half of an opt-out setting that has to work.
+Both are opt-out, so almost every asset in this file declares nothing about them. The tests that do declare something cover the off switch, the half of an opt-out setting that has to work.
 """
 
 import datetime as dt
@@ -317,7 +317,7 @@ def _by_column() -> pl.DataFrame:
 
 
 def test_a_collapsed_check_says_which_rule_rejected_each_sampled_row(tmp_path: Path):
-    """A rule set stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace is what makes it a column name no schema can collide with."""
+    """A rule set stands for several rules, so a row in its sample has to name the one that put it there. `dy_rule` is the same key a rule check carries it under, and the reserved namespace makes it a column name no schema can collide with."""
     result = _materialize(tmp_path, _by_column)
     sampled = _records(_check_metadata(result, "dy_col__amount")["dy_failed_sample"])
 
@@ -326,7 +326,7 @@ def test_a_collapsed_check_says_which_rule_rejected_each_sampled_row(tmp_path: P
 
 
 def test_a_collapsed_check_samples_every_rule_that_rejected_something(tmp_path: Path):
-    """Bounded per rule rather than per check, which is what keeps the rule that rejected one row visible beside the rule that rejected a thousand."""
+    """Bounded per rule rather than per check, which keeps the rule that rejected one row visible beside the rule that rejected a thousand."""
     result = _materialize(tmp_path, _by_column)
     sampled = _records(_check_metadata(result, "dy_schema__rules")["dy_failed_sample"])
 
@@ -336,7 +336,7 @@ def test_a_collapsed_check_samples_every_rule_that_rejected_something(tmp_path: 
 
 # --- the settings are three, not one ---
 def test_turning_the_statistics_off_leaves_both_samples_on(tmp_path: Path):
-    """Consenting to summary statistics is not consenting to raw values, and the converse holds too: they are separate settings because they are separate consents."""
+    """Consenting to summary statistics is not consenting to raw values, and the converse holds too. They are separate settings because they are separate consents."""
 
     @dataframely_asset(
         schema=Orders, name="orders", quarantine=dg.AssetOut(), statistics=False

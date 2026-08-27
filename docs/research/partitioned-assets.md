@@ -173,7 +173,8 @@ It is not taken in v1 for one reason: constructing that spec emits
 > Specifying a partitions_def on an AssetCheckSpec is currently in preview, and may have breaking changes in patch version
 
 and this package pins `dagster>=1.13.16` with no upper bound.
-Adopting it would key every check's history off a surface that can change in a patch release, and a change in how those rows are keyed is exactly the kind that orphans the history it was adopted to fix.
+Adopting it would key every check's history off a surface that can change in a patch release.
+A change in how those rows are keyed is exactly the kind that orphans the history it was adopted to fix.
 The spec's own instruction is to observe rather than design around, so this is written down and left alone.
 
 > **Sharpened by [#31](https://github.com/ozanozbeker/dagster-dataframely/issues/31).**

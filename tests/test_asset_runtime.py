@@ -106,7 +106,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
 
 
 def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
-    """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting: `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change, and the shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
+    """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting. `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change. The shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
     @dataframely_asset(schema=Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
@@ -156,7 +156,7 @@ def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
 
 
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
-    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's: this is a wiring mistake, not a data one, which is the same line `_ParquetIOManager` draws."""
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one, the same line `_ParquetIOManager` draws."""
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
     @dataframely_asset(schema=Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
@@ -460,7 +460,7 @@ def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
 
 
 def test_an_upstream_and_a_quarantine_still_execute_as_one_step(tmp_path: Path):
-    """The quarantine depends on an asset produced by its own op, which is the shape `internal_asset_deps` exists for and the one that could plausibly have been read as a cycle (ADR-0003)."""
+    """The quarantine depends on an asset produced by its own op. That is the shape `internal_asset_deps` exists for, and the one that could plausibly have been read as a cycle (ADR-0003)."""
 
     @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
@@ -515,7 +515,7 @@ def test_an_eager_asset_on_the_quarantine_key_fires_only_when_rows_landed(
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
-    """Consent to partial data was given by declaring the out, so a invalid row is a warning rather than a failure."""
+    """Consent to partial data was given by declaring the out, so an invalid row is a warning rather than a failure."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -541,7 +541,7 @@ def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
 
 
 def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
-    """Landing the survivors is only worth anything if the run does not stop there. The rule checks are non-blocking, so a `WARN` never holds a consumer back."""
+    """Writing the survivors is only worth anything if the run does not stop there. The rule checks are non-blocking, so a `WARN` never holds a consumer back."""
     seen: dict[str, int] = {}
 
     @dg.asset(name="reconciled")
@@ -557,7 +557,7 @@ def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
 def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
     tmp_path: Path,
 ):
-    """`invalid()` was rejected as the content: check-metadata samples are bounded, so without per-row attribution here it exists nowhere at volume."""
+    """`invalid()` was rejected as the content. Check-metadata samples are bounded, so without per-row attribution here the detail exists nowhere at volume."""
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
     rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
@@ -626,7 +626,7 @@ def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
 def test_the_cooccurrence_table_leads_with_the_set_that_broke_the_most_rows(
     tmp_path: Path,
 ):
-    """`cooccurrence_counts()` groups without `maintain_order`, so what it hands over is in no order at all: the same frame twice emits these rows differently, and two runs of the same data then diff as though something changed.
+    """`cooccurrence_counts()` groups without `maintain_order`, so what it hands over is in no order at all. The same frame twice emits these rows differently, and two runs of the same data then diff as though something changed.
 
     Sorted here rather than upstream, on the two keys the table is read by: how many rows a set broke, then the names, which is the sort already applied inside each set.
     """
@@ -867,7 +867,7 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
 def test_the_temp_dir_environment_variable_reaches_the_landing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier, asserted through a materialization rather than through `resolve`: the decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
+    """The house-style tier, asserted through a materialization rather than through `resolve`. The decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
     _, lazy = _both_ways(clean_orders, None)
@@ -927,7 +927,7 @@ def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: P
 def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
     tmp_path: Path,
 ):
-    """The count is what collapsing would otherwise cost, so a rule set carries one per member rather than a single total: rules are not comparable by row, because one row can break several."""
+    """The count is what collapsing would otherwise cost, so a rule set carries one per member rather than a single total. Rules are not comparable by row, because one row can break several."""
     evaluations = _evaluations(_materialize(tmp_path, _by_column))
 
     assert _members(evaluations["dy_col__email"]) == {
@@ -942,7 +942,7 @@ def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
 
 
 def test_a_collapsed_check_carries_the_live_expression_of_every_member(tmp_path: Path):
-    """The same property a rule check has, kept per member: a tightened bound shows up in the timeline rather than orphaning it."""
+    """The same property a rule check has, kept per member. A tightened bound shows up in the timeline rather than orphaning it."""
     evaluation = _evaluations(_materialize(tmp_path, _by_column))["dy_col__amount"]
     table = dict(evaluation.metadata)["dy_rules"]
 
@@ -1007,7 +1007,7 @@ class TestExitSelection:
     def _drained(
         cls, frame: pl.DataFrame, *, quarantine: bool
     ) -> tuple[_Yielded, DagsterDataframelyError | None]:
-        """Runs `process` to exhaustion, keeping both what it yielded and whatever ended it.
+        """Run `process` to exhaustion, keeping both what it yielded and whatever ended it.
 
         Three of the five exits raise after yielding, so draining with `list()` alone would discard the results that say what happened.
         """

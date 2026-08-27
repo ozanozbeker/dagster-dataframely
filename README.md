@@ -145,7 +145,7 @@ Every error this package raises lives in `dd.errors` and subclasses `dd.errors.D
 
 **Without a quarantine, every row has to be valid.**
 A run that rejects even one row fails and writes nothing, so your last-known-good table stays in place.
-Landing the survivors and dropping the rest is the failure this package exists to make visible, so you can't get there by configuration.
+Writing the survivors and dropping the rest is the failure this package exists to make visible, so you can't get there by configuration.
 If you want to drop rows, drop them yourself, in your own asset body, where the drop is a line you wrote:
 
 ```python
@@ -479,7 +479,7 @@ Both raise `QuarantineSettingError` on the quarantine's own `dg.AssetOut` rather
 There's nothing to wire up between the two tables either.
 They're two outs of one step, so the run that writes the asset writes the quarantine in the same call, with no schedule, sensor or condition in between.
 
-Automating on what landed in the quarantine is yours to declare, and its asset key is the whole interface:
+Automating on what reached the quarantine is yours to declare, and its asset key is the whole interface:
 
 ```python
 @dg.asset(
@@ -513,7 +513,9 @@ They record `path`, `bytes_written` and `dagster/storage_kind` on each materiali
 No column schema, in particular: the asset definition owns what the data is, and leaving the materialization's own metadata empty is what keeps the Columns tab showing the schema as declared.
 
 If you use someone else's manager, one surface degrades.
-A stock Polars IO manager writes its own `dagster/column_schema` onto the materialization, and with both metadata surfaces populated Dagster merges them in the catalog Columns tab: column names come out lowercased and the constraints disappear, because the materialization's constraint-free schema becomes the base.
+A stock Polars IO manager writes its own `dagster/column_schema` onto the materialization.
+With both metadata surfaces populated, Dagster merges them in the catalog Columns tab.
+Column names come out lowercased and the constraints disappear, because the materialization's constraint-free schema becomes the base.
 Dtypes, descriptions and column tags survive, and the Lineage Metadata accordion is definition-only and never merged, so full fidelity is still one click away.
 This is documented, not designed around.
 Parity is a preference, never a constraint.
@@ -639,7 +641,8 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
 
 Your joins, filters and aggregations therefore run in the streaming engine, which the sink names rather than leaves to `auto`: an engine that chose to collect would pay the write and keep the peak anyway.
 What comes back into memory is what the plan produced, not the plan.
-Peak memory is then the size of that result rather than the plan's own high-water mark, which is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
+Peak memory is then the size of that result rather than the plan's own high-water mark.
+That is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
 A `DataFrame` return skips the staging, because a frame you already materialized has nothing left to stream and staging it would be pure cost.
 The shape check runs before the staging, so a frame whose shape disagrees with the schema is refused before a single row is streamed, and the staged file is removed before the run picks an outcome.
 
@@ -649,11 +652,14 @@ The shape check runs before the staging, so a frame whose shape disagrees with t
 > `temp_dir` points it at a mounted volume instead.
 
 What stays eager is storage, not the computation, and that's the difference from the section above.
-This package doesn't promise to write a file, it promises to write a file and report on it: `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation can't choose among its five exits without counting both halves of the split, so the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+This package doesn't promise to write a file.
+It promises to write a file and report on it.
+`dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation can't choose among its five exits without counting both halves of the split.
+So the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
 A plain `@dg.asset` streams end to end, sink to storage with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
-The habitat is post-ingest transformation: bronze to silver to gold, where the data is already on your side and the question is whether it's fit to publish.
+This package is built for post-ingest work: bronze to silver to gold, where the data is already on your side and the question is whether it's fit to publish.
 Ingestion-scale and larger-than-memory work belongs to other tools.
 
 ## Settings
@@ -783,7 +789,8 @@ The description lands on the op, so the quarantine sibling inherits it.
 ### The op is named after the whole asset key
 
 `@dataframely_asset(key_prefix="sales", name="orders")` builds an op called `sales__orders`, which is how `@dg.asset` names its own.
-The asset name alone won't do, because an op name has to be unique across a code location and an asset name is not: two assets sharing a name under different prefixes would be two ops called the same thing.
+The asset name alone won't do, because an op name has to be unique across a code location and an asset name is not.
+Two assets sharing a name under different prefixes would be two ops called the same thing.
 Dagster allows a repeated op name only where the two definitions compare equal, and two of these never are, since every check output name embeds its own asset key.
 
 The op name is the step key and the address run config resolves against, so both spell the whole key:
@@ -811,7 +818,8 @@ The prefix is hardcoded rather than configurable: its whole value is being the s
 ## Two ways to get this wrong
 
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
-Under PEP 563 every annotation reaches Dagster as a string, and its check on the `context` parameter compares against the real classes, so it rejects `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
+Under PEP 563 every annotation reaches Dagster as a string.
+Its check on the `context` parameter compares against the real classes, so it rejects `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
 
 ```text
 DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.AssetExecutionContext.
@@ -829,7 +837,8 @@ def orders(context) -> pl.DataFrame:
 ```
 
 **A `@dy.rule()` body needs its class parameter.**
-Write one without it and the class still builds and the asset still defines; the run then fails when this package reads the rule's expression for the check metadata:
+Write one without it and the class still builds and the asset still defines.
+The run then fails when this package reads the rule's expression for the check metadata:
 
 ```text
 TypeError: Orders.amount_is_positive() takes 0 positional arguments but 1 was given
@@ -907,7 +916,8 @@ This asset has no inputs, hence the empty set.
 
 Resolve both keys with `asset_key_for_output` rather than building them by hand.
 An out that declares `key_prefix` has an asset key its output name doesn't spell, and results yielded against a key no out owns fail the step on the first yield with `Asset key ... not found in AssetsDefinition`.
-`internal_asset_deps` is the one place you can't do that, since it's read at definition time where there's no context, so the key you spell there has to carry the out's prefix itself.
+`internal_asset_deps` is the one place you can't do that.
+It's read at definition time, where there's no context, so the key you spell there has to carry the out's prefix itself.
 Get it wrong and the code location fails to load:
 
 ```text
@@ -966,9 +976,10 @@ def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
         pass
 ```
 
-This is the arrangement to reach for when the write must not depend on the verdict: the asset returns its frame, lazy or eager, the IO manager writes whatever it returned, and the checks run afterwards against what landed.
+This is the arrangement to reach for when the write must not depend on the verdict: the asset returns its frame, lazy or eager, the IO manager writes whatever it returned, and the checks run afterwards against what was written.
 What you give up is the guarantee the decorator exists for.
-The table is written before anything is validated, so a bad table lands and the red check is what tells you, where the decorator would have refused to write it at all.
+The table is written before anything is validated, so a bad table reaches storage and the red check is what tells you.
+The decorator would have refused to write it at all.
 
 Three details earn their place in that block:
 
@@ -1085,7 +1096,8 @@ It is worth reading for what it doesn't do:
 - No `check_granularity`, so a 40-column schema is 40-odd checks and stays that way.
 - A `LazyFrame` return is yours to collect and stage.
 - Three exits rather than five.
-  A run where every row was rejected goes green here, with the valid out skipped and nobody told; the decorator fails it with `NothingSurvivedError`, because consenting to partial data was never consent to no data.
+  A run where every row was rejected goes green here, with the valid out skipped and nobody told.
+  The decorator fails it with `NothingSurvivedError`, because consenting to partial data was never consent to no data.
 - Nothing guards the names.
   A schema with a column already called `dy_rule__amount__min`, or two rules that rewrite to one check name, collide silently instead of raising at definition time.
 - Under a `key_prefix` both asset keys are yours to build and yours to get wrong.

@@ -2,7 +2,7 @@
 
 Direct invocation is Dagster's documented unit-testing path, and it costs nothing: no run, no IO manager, no instance. `MaterializeResult` carries the frame on `value`, so a call hands back the validated rows, the quarantined rows, and every check outcome as ordinary Python objects.
 
-Every shape here is asserted twice, once by calling and once through `dg.materialize`, because the property worth having is not that a call yields keys but that it yields *the same* keys a run writes under. The four shapes are the four ways the quarantine's key can be decided: absent, derived, derived under the quarantine's own prefix, and named outright.
+Every shape here is asserted twice, once by calling and once through `dg.materialize`. The property worth having is not that a call yields keys, but that it yields *the same* keys a run writes under. The four shapes are the four ways the quarantine's key can be decided: absent, derived, derived under the quarantine's own prefix, and named outright.
 """
 
 from collections.abc import Callable
@@ -60,7 +60,7 @@ _SHAPES = [
 
 
 def _events(asset: dg.AssetsDefinition, *args: object) -> _Yielded:
-    """Calls the asset and drains what comes back.
+    """Call the asset and drain what comes back.
 
     `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator, which is what the ignore asserts and what `tests/test_upstream_characterization.py` pins.
     """

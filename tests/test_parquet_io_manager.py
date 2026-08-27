@@ -62,7 +62,7 @@ def _materialize(
     selection: str | None = None,
     raise_on_error: bool = True,
 ) -> dg.ExecuteInProcessResult:
-    """Runs `assets` with the manager rooted at `tmp_path`."""
+    """Run `assets` with the manager rooted at `tmp_path`."""
     return dg.materialize(
         list(assets),
         resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
@@ -75,7 +75,7 @@ def _materialize(
 
 @pytest.fixture
 def orders_metadata(tmp_path: Path) -> dict[str, dg.MetadataValue]:
-    """Materializes `orders` once and returns the metadata on its materialization."""
+    """Materialize `orders` once and return the metadata on its materialization."""
     result = _materialize(tmp_path, _orders)
     (event,) = result.get_asset_materialization_events()
     return dict(event.step_materialization_data.materialization.metadata)
@@ -143,7 +143,7 @@ def test_a_lazy_output_streams_to_storage_and_reports_what_landed(
 ) -> None:
     """The one path in this package where laziness runs end to end, because it is the only one with nothing to report on: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the plan into memory (#54).
 
-    The absence of a warning is half of what this asserts. The line that used to stand here said a lazy sink was ruled out, and it is what shipping this removed.
+    The absence of a warning is half of what this asserts. The line that used to stand here said a lazy sink was ruled out. Shipping this removed it.
     """
     # `caplog` never sees this. `context.log` writes to the event log, not the stdlib
     # logger tree, and the event log is where a user reads it anyway.
@@ -189,9 +189,9 @@ def test_the_plan_streams_to_a_file_that_is_not_the_destination(
 
 
 def test_a_local_promote_renames_rather_than_rewriting_in_place(tmp_path: Path) -> None:
-    """A rename is one metadata operation instead of a second copy of the whole file, and it is atomic, so a local destination is never an open empty file waiting to be filled.
+    """A rename is one metadata operation instead of a second copy of the whole file. It is atomic too, so a local destination is never an open empty file waiting to be filled.
 
-    Asserted on the inode, which is what separates the two: a rewrite through the destination's own handle keeps the file that was already there and fills it, while a rename replaces it.
+    Asserted on the inode, which is what separates the two. A rewrite through the destination's own handle keeps the file that was already there and fills it. A rename replaces it.
     """
     assert _materialize(tmp_path, _orders).success
     written = tmp_path / "orders.parquet"
@@ -203,7 +203,7 @@ def test_a_local_promote_renames_rather_than_rewriting_in_place(tmp_path: Path) 
 
 
 def test_a_failing_plan_writes_nothing_to_the_destination(tmp_path: Path) -> None:
-    """Sinking at the destination would leave a zero-byte file where the plan died, or a non-empty partial one where it died late. Promoting on success is what keeps the failure invisible from storage."""
+    """Sinking at the destination would leave a zero-byte file where the plan died, or a non-empty partial one where it died late. Promoting on success keeps the failure invisible from storage."""
     result = _materialize(tmp_path, _failing_orders, raise_on_error=False)
 
     assert not result.success
@@ -211,7 +211,7 @@ def test_a_failing_plan_writes_nothing_to_the_destination(tmp_path: Path) -> Non
 
 
 def test_a_failing_plan_leaves_the_file_already_there_untouched(tmp_path: Path) -> None:
-    """The same invariant `NothingSurvivedError` protects on the validation side, arriving from the storage side: a failed run does not replace a last-known-good file with a broken one."""
+    """The same invariant `NothingSurvivedError` protects on the validation side, arriving from the storage side. A failed run does not replace a last-known-good file with a broken one."""
     assert _materialize(tmp_path, _orders).success
     written = tmp_path / "orders.parquet"
     before = written.read_bytes()
@@ -309,7 +309,7 @@ def test_a_lazy_fan_in_arrives_as_a_dict_of_scans(tmp_path: Path) -> None:
 def test_a_missing_partition_is_still_skipped_on_the_lazy_path(tmp_path: Path) -> None:
     """`allow_missing_partitions` is implemented by catching `FileNotFoundError` out of `load_from_path`, and a scan raises none: it returns a plan, and the miss surfaces at the caller's `collect()` long after the manager could have handled it.
 
-    What keeps the miss inside the manager is that the scan is built on the handle the manager opens, so the open is what raises, on the lazy path and the eager one alike (#52).
+    The scan is built on the handle the manager opens, so the open raises and the miss stays inside the manager, on the lazy path and the eager one alike (#52).
     """
     read_back: dict[str, object] = {}
 

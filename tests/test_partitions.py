@@ -1,8 +1,8 @@
 """What a partitioned `@dataframely_asset` actually does, asserted rather than assumed.
 
-Partitioning is forwarded, not designed around (#25), so the risk was never that the mechanics are wrong; it is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
+Partitioning is forwarded, not designed around (#25). The risk was never that the mechanics are wrong. It is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
 
-Static partitions throughout except where a test says otherwise: they name the frame each partition gets, which makes the fixture readable, and a date would only obscure it.
+Static partitions throughout, except where a test says otherwise. They name the frame each partition gets, which makes the fixture readable. A date would only obscure it.
 """
 
 import inspect
@@ -105,7 +105,7 @@ def test_the_quarantine_lands_under_the_partition_that_produced_it(tmp_path: Pat
 
 
 def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
-    """Same rule as unpartitioned, and it is what makes an empty quarantine partition mean something."""
+    """Same rule as unpartitioned, which is what makes an empty quarantine partition mean something."""
     result = _materialize(tmp_path, "clean")
 
     assert set(_partitions(result)) == {_GOOD_KEY}
@@ -113,7 +113,7 @@ def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
 
 
 def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
-    """The partition's own count, not the asset's: `dg.build_metadata_bounds_checks` then trends a partition against itself."""
+    """The partition's own count, not the asset's, so `dg.build_metadata_bounds_checks` trends a partition against itself."""
     _materialize(tmp_path, "clean")
     counts = _row_counts(_materialize(tmp_path, "mixed"))
 
@@ -223,7 +223,7 @@ def test_a_history_row_is_traceable_to_its_partition_through_the_materialization
 def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
     """Dagster's behaviour, not this package's, and the reason the finding above is worse on dates than on the static partitions the rest of this file uses.
 
-    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none, and the update that would close the row matches on partition, so it misses: the planned row is left behind for good and the result is inserted as a second, partition-less row. The catalog therefore holds one never-executed row per partition alongside a timeline that names none of them.
+    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none, and the update that would close the row matches on partition, so it misses. The planned row is left behind for good, and the result is inserted as a second, partition-less row. The catalog therefore holds one never-executed row per partition alongside a timeline that names none of them.
     """
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
@@ -254,7 +254,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 
 # --- backfill policy ---
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
-    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the decorator leaves it alone rather than rejecting the policy it cannot know the manager for."""
+    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage. `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write. So the decorator leaves it alone rather than rejecting a policy it cannot know the manager for."""
 
     @dataframely_asset(
         schema=Orders,

@@ -1,6 +1,6 @@
 """Characterization tests for the upstream APIs this package takes a hard dependency on.
 
-These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "Dataframely changed" rather than "something broke".
+These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented. Each carries a comment naming the decision that took the dependency, so a failure reads as "Dataframely changed" rather than "something broke".
 """
 
 import datetime as dt
@@ -329,7 +329,7 @@ def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run()
 
 
 def _invoked(asset: dg.AssetsDefinition) -> list[object]:
-    """Calls an asset directly and drains what comes back.
+    """Call an asset directly and drain what comes back.
 
     `AssetsDefinition.__call__` is annotated `-> object`, because a direct call hands back whatever the body returns. Both assets below are generators, which is what the ignore asserts.
     """

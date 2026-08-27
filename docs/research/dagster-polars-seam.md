@@ -31,9 +31,10 @@ Concretely:
      which is IO-manager-agnostic and is the only patito symbol in the public
      API docs.
 
-2. **The `TYPE_ROUTERS` list is a de-facto extension point — verified working.**
+2. **The `TYPE_ROUTERS` list is a de-facto extension point, verified working.**
    It is a plain module-level `list` and `resolve_type_router` iterates it at call time ([`type_routers.py:241-250`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L241-L250)).
-   I appended a third-party router subclassing `BaseTypeRouter` and materialized a two-asset graph through `PolarsParquetIOManager` end to end with dataframely validation on dump — it works (probe below).
+   I appended a third-party router subclassing `BaseTypeRouter` and materialized a two-asset graph through `PolarsParquetIOManager` end to end with dataframely validation on dump.
+   It works (probe below).
    But: the module is not exported from `dagster_polars/__init__.py`, not in the API reference, has zero test coverage for third-party registration, and registration is import-order-dependent mutation of a global.
 
 3. **There is no plugin/entry-point mechanism at all.** `grep` for
@@ -50,7 +51,8 @@ Concretely:
 
 5. **The blocking problem for dataframely is upstream in Dagster, not in dagster-polars.**
    Patito's `Model.DataFrame` is a real runtime class that real instances belong to.
-   Dataframely's `dy.DataFrame[S]` is a `typing._GenericAlias` that Dagster rejects outright, and `dy.DataFrame` itself is a phantom type that is **never instantiated** — dataframely's own docstring says so.
+   Dataframely's `dy.DataFrame[S]` is a `typing._GenericAlias` that Dagster rejects outright, and `dy.DataFrame` itself is a phantom type that is **never instantiated**.
+   Dataframely's own docstring says so.
    So the patito route (annotate with the typed frame, let Dagster infer the `DagsterType`) is *structurally unavailable* to dataframely, independent of any seam.
    Details in §4.
 
@@ -66,7 +68,7 @@ And even with a perfect seam, dataframely cannot copy patito's annotation UX wit
 
 Two hard-coded attachment points, neither exported nor documented.
 
-### 1a. `PatitoTypeRouter` — inside dagster-polars, gated on `find_spec`
+### 1a. `PatitoTypeRouter`, inside dagster-polars, gated on `find_spec`
 
 [`type_routers.py:227-238`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L227-L238):
 
@@ -93,7 +95,7 @@ Verified at runtime: with patito installed, `TYPE_ROUTERS` is `['TypeRouter', 'O
 Structurally it *is* the right abstraction for a second validation library.
 It just isn't offered as one.
 
-### 1b. Metadata — hard-coded into the base IO manager
+### 1b. Metadata, hard-coded into the base IO manager
 
 [`base.py:202-232`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/base.py#L202-L232):
 
@@ -122,18 +124,20 @@ def _get_patito_metadata(self, context: OutputContext) -> dict[str, MetadataValu
 
 This is not a hook.
 It is `import patito` by name in the base class of every `dagster-polars` IO manager.
-A `TypeRouter` has **no** metadata callback — the only way a third party emits `dagster/column_schema` through this path is to subclass every concrete IO manager and override `get_metadata`. (Or to attach metadata to the `DagsterType` instead, as `patito_model_to_dagster_type` also does — see §1c.)
+A `TypeRouter` has **no** metadata callback.
+The only way a third party emits `dagster/column_schema` through this path is to subclass every concrete IO manager and override `get_metadata`. (Or to attach metadata to the `DagsterType` instead, as `patito_model_to_dagster_type` also does; see §1c.)
 
 Corroborating evidence that this hard-coding bites in practice: on
 [community-integrations#202](https://github.com/dagster-io/community-integrations/issues/202)
 a user reports that the patito-derived `dagster/column_schema` overwrites a pandera-supplied one, and asks for a way to disable it.
 There is no such way.
 
-### 1c. `patito_model_to_dagster_type` — the only public patito symbol
+### 1c. `patito_model_to_dagster_type`, the only public patito symbol
 
 [`patito.py:53-110`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/patito.py#L53-L110)
 builds a `DagsterType` with a patito-validating `type_check_fn`, `metadata=get_patito_metadata(model)`, and `typing_type=model.DataFrame`.
-Its docstring says "Compatible with any IOManager" — this route does not require `dagster-polars` IO managers at all, and `dagster_polars_tests/test_patito.py::test_dagster_type_with_default_io_manager` exercises exactly that.
+Its docstring says "Compatible with any IOManager".
+This route does not require `dagster-polars` IO managers at all, and `dagster_polars_tests/test_patito.py::test_dagster_type_with_default_io_manager` exercises exactly that.
 
 It then does this ([`patito.py:105-108`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/patito.py#L105-L108)):
 
@@ -146,7 +150,7 @@ setattr(dagster_type, HANDLES_DATA_VALIDATION_ATTRIBUTE, True)
 
 `HANDLES_DATA_VALIDATION_ATTRIBUTE = "_handles_data_validation"`
 ([`patito.py:50`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/patito.py#L50)).
-The name reads generic, but it is defined in the patito module and read in exactly one place — `PatitoTypeRouter.requires_data_validation`
+The name reads generic, but it is defined in the patito module and read in exactly one place: `PatitoTypeRouter.requires_data_validation`
 ([`type_routers.py:180-185`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L180-L185)).
 It is not a cross-library de-duplication protocol; a dataframely router would have to read the same private attribute deliberately, or invent its own.
 Note also that the maintainer's own comment calls it a hack and points at Dagster core as the right home.
@@ -165,7 +169,7 @@ Note also that the maintainer's own comment calls it a hack and points at Dagste
   ([`__init__.py:1-37`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/__init__.py#L1-L37)).
   Neither `type_routers` nor anything from it is exported.
 - **No documentation.**
-  The Sphinx page (`docs/sphinx/sections/integrations/libraries/polars/dagster-polars.rst` in `dagster-io/dagster`) documents four IO managers and `dagster_polars.patito.patito_model_to_dagster_type` — and nothing else.
+  The Sphinx page (`docs/sphinx/sections/integrations/libraries/polars/dagster-polars.rst` in `dagster-io/dagster`) documents four IO managers and `dagster_polars.patito.patito_model_to_dagster_type`, and nothing else.
   Its "Supported type annotations" table lists only `DataFrame`, `LazyFrame`, their `Optional` forms, and `Dict[str, ...]`; patito is not in the table.
   <https://docs.dagster.io/api/libraries/dagster-polars>
 - **No tests.**
@@ -173,11 +177,11 @@ Note also that the maintainer's own comment calls it a hack and points at Dagste
   Nothing in `dagster_polars_tests/` registers a router.
 
 **Verdict on "generic vs bespoke":** the *class hierarchy* is generic; the *wiring* is bespoke.
-`BaseTypeRouter` was clearly designed as an abstraction, but every affordance that would make it a supported extension point — export, docs, tests, non-global registration, a metadata callback — is absent.
+`BaseTypeRouter` was clearly designed as an abstraction, but every affordance that would make it a supported extension point is absent: export, docs, tests, non-global registration, a metadata callback.
 
 ---
 
-## 2. `TYPE_ROUTERS` mutation works — verified end to end
+## 2. `TYPE_ROUTERS` mutation works, verified end to end
 
 Probe (throwaway venv, not this repo's `.venv`): a `DataframelyTypeRouter` appended to `TYPE_ROUTERS`, a per-schema marker class subclassing `pl.DataFrame` used as `typing_type`, and an explicit `DagsterType`:
 
@@ -209,13 +213,16 @@ tr.TYPE_ROUTERS.append(DyTypeRouter)
 Result: `dg.materialize([up, down], resources={"io_manager": PolarsParquetIOManager(...)})` → `SUCCESS: True`, with the router's `dump` and `load` both invoked and dataframely validation actually running.
 So the de-facto seam is real.
 
-Constraints discovered while making the probe pass — these are load-bearing design constraints for us:
+Constraints discovered while making the probe pass.
+These are load-bearing design constraints for us:
 
-- **`match` only sees `(context, typing_type)`.** `resolve_type_router` calls `router_class.match(context, dagster_type_to_resolve.typing_type)` ([`type_routers.py:247`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L247)) — the `DagsterType` itself is *not* passed.
+- **`match` only sees `(context, typing_type)`.** `resolve_type_router` calls `router_class.match(context, dagster_type_to_resolve.typing_type)` ([`type_routers.py:247`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L247)).
+  The `DagsterType` itself is *not* passed.
   A first attempt that dispatched on a custom attribute of the `DagsterType` (reached via `context.dagster_type`) caused **infinite recursion**: `parent_type_router` re-resolves with a fresh `TypeHintInferredDagsterType(self.inner_type)` ([`type_routers.py:65-68`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L65-L68)) but `context` is unchanged, so the router matched itself forever (`RecursionError` during `handle_output`).
   **The schema must be recoverable from the `typing_type` object alone.**
   That is the single sharpest constraint the seam imposes on our type design.
-- **Appending is safe; the router must not claim to be a base type.** `PolarsTypeRouter.match` is `typing_type in [pl.DataFrame, pl.LazyFrame]` ([`type_routers.py:153-157`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L153-L157)) — an `==` membership test, not `issubclass` — so a `pl.DataFrame` *subclass* is not shadowed by it and `TYPE_ROUTERS.append(...)` is sufficient.
+- **Appending is safe; the router must not claim to be a base type.** `PolarsTypeRouter.match` is `typing_type in [pl.DataFrame, pl.LazyFrame]` ([`type_routers.py:153-157`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/type_routers.py#L153-L157)), an `==` membership test rather than `issubclass`.
+  So a `pl.DataFrame` *subclass* is not shadowed by it, and `TYPE_ROUTERS.append(...)` is sufficient.
   But `is_base_type` must be `False`: `type_router_is_eager` asks `issubclass(pl.DataFrame, type_router.typing_type)` (arguments reversed) ([`base.py:126-139`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/io_managers/base.py#L126-L139)), and for a marker subclass `MyFrame(pl.DataFrame)` both `issubclass(pl.DataFrame, MyFrame)` and `issubclass(pl.LazyFrame, MyFrame)` are `False` (verified), which raises `NotImplementedError`.
   Delegating via `inner_type = pl.DataFrame` avoids this.
 - **Ordering relative to `OptionalTypeRouter` / `DictTypeRouter` is favourable.**
@@ -241,7 +248,7 @@ patito = [
 
 Confirmed in the published wheel metadata (`dagster_polars-0.27.12.dist-info/METADATA`): `Provides-Extra: patito` / `Requires-Dist: patito>=0.8.3; extra == "patito"`.
 
-So `dagster-polars[dataframely]` would be a one-line addition — `dataframely = ["dataframely>=3.0.0"]` — plus:
+So `dagster-polars[dataframely]` would be a one-line addition, `dataframely = ["dataframely>=3.0.0"]`, plus:
 
 - a `dagster_polars/dataframely.py` module (mirroring `patito.py`),
 - a `DataframelyTypeRouter` in `type_routers.py` behind
@@ -250,7 +257,8 @@ So `dagster-polars[dataframely]` would be a one-line addition — `dataframely =
 
 Note the discipline the repo already enforces: PR
 [#196](https://github.com/dagster-io/community-integrations/pull/196)
-("fix `ImportError` with patito and ensure optional deps are not imported at top level") and CHANGELOG entry "Fixed `ImportError` when `patito` is not installed" — i.e. optional-dep imports must be function-local.
+("fix `ImportError` with patito and ensure optional deps are not imported at top level") and CHANGELOG entry "Fixed `ImportError` when `patito` is not installed".
+So optional-dep imports must be function-local.
 `patito.py` follows this (`if TYPE_CHECKING: import patito as pt` at
 [`patito.py:15-17`](https://github.com/dagster-io/community-integrations/blob/5b11a97949bd23e34df1837e333730c9b3e3ee5e/libraries/dagster-polars/dagster_polars/patito.py#L15-L17),
 runtime imports inside functions).
@@ -308,15 +316,13 @@ Dataframely is on the pandera side of that line.**
 - Verified independently: `resolve_type_router` on `dy.DataFrame` raises `RuntimeError: Could not resolve type router` (`dy.DataFrame != pl.DataFrame`, so `PolarsTypeRouter`'s `==` test misses).
   This is byte-for-byte the failure mode reported in [community-integrations#202](https://github.com/dagster-io/community-integrations/issues/202) for pandera-polars.
 
-**So a dataframely integration cannot use dataframely's own typed frames as Dagster annotations at all** — not the parametrised alias (Dagster rejects the type), not the bare class (Dagster's isinstance check rejects the value).
+**So a dataframely integration cannot use dataframely's own typed frames as Dagster annotations at all**: not the parametrised alias (Dagster rejects the type), not the bare class (Dagster's isinstance check rejects the value).
 It must supply an explicit `DagsterType`.
 Within that, the two viable shapes are:
 
-1. `typing_type=pl.DataFrame` + a validating `type_check_fn`, schema carried on
-   the `DagsterType` — routes through the existing `PolarsTypeRouter`, needs no
-   seam at all, but gets no IO-manager-level load-side coercion and no
-   `TypeRouter` hook (the schema is invisible to `match`).
-2. `typing_type=<synthetic per-schema marker class subclassing pl.DataFrame>` — what the §2 probe used.
+1. `typing_type=pl.DataFrame` + a validating `type_check_fn`, schema carried on the `DagsterType`.
+   Routes through the existing `PolarsTypeRouter`, needs no seam at all, but gets no IO-manager-level load-side coercion and no `TypeRouter` hook (the schema is invisible to `match`).
+2. `typing_type=<synthetic per-schema marker class subclassing pl.DataFrame>`, what the §2 probe used.
    Gets full router participation, at the cost of inventing a runtime class dataframely does not provide.
 
 This corroborates the map's existing note that `dy.DataFrame[Schema]` cannot be a return annotation, and sharpens it: the bare `dy.DataFrame` cannot be one either.
@@ -329,7 +335,7 @@ This corroborates the map's existing note that `dy.DataFrame[Schema]` cannot be 
 | --- | --- | --- |
 | [community-integrations#201](https://github.com/dagster-io/community-integrations/issues/201) "Why patito over pandera" | open | Maintainer explains patito was chosen because Dagster lacks generic type-hint support; wants to wait for Dagster generics before adding pandera; points users to `dagster-pandera` meanwhile. |
 | [community-integrations#202](https://github.com/dagster-io/community-integrations/issues/202) "[dagster-pandera] x [dagster-polars] Could not resolve type router" | open | The exact `resolve_type_router` failure a second validation library hits. Maintainer: exposing type routers as an IO-manager constructor argument "seems like we should actually do it". Also: patito's `dagster/column_schema` overwrites a user-supplied one, with no opt-out. |
-| [community-integrations#179](https://github.com/dagster-io/community-integrations/pull/179) "[dagster-polars] add Patito integration" | merged | The original integration PR, ported from dagster core. Review was a one-line approval — no recorded design discussion about generalising the mechanism. |
+| [community-integrations#179](https://github.com/dagster-io/community-integrations/pull/179) "[dagster-polars] add Patito integration" | merged | The original integration PR, ported from dagster core. Review was a one-line approval, with no recorded design discussion about generalising the mechanism. |
 | [community-integrations#196](https://github.com/dagster-io/community-integrations/pull/196) | merged | Establishes the "optional deps must not be imported at top level" rule. |
 | [dagster#22694](https://github.com/dagster-io/dagster/issues/22694) "Support generic type hints" | open | The upstream blocker for `dy.DataFrame[S]`-style annotations. Filed by the dagster-polars maintainer, explicitly motivated by validation-library integration. |
 | [dagster#22676](https://github.com/dagster-io/dagster/pull/22676) "Draft: [dagster-polars] Pandera integration" | closed (stale) | The abandoned first attempt at a second validation library. |
@@ -353,15 +359,15 @@ Inferred, not verified:
   They have never said so.
   It is unexported, undocumented, and untested for that use.
   I verified it *works*; I did not verify it is *sanctioned*.
-- **That a `dagster-polars[dataframely]` PR would be welcomed.** #201's "I don't have anything against Pandera, but I would like to wait for Dagster to support generics" is about pandera and reads as a soft deferral of *any* second validation library until dagster#22694 lands.
+- **That a `dagster-polars[dataframely]` PR would be welcomed.** #201's "I don't have anything against Pandera, but I would like to wait for Dagster to support generics" is about pandera.
+  It reads as a soft deferral of *any* second validation library until dagster#22694 lands.
   Nobody has asked for dataframely upstream.
-- **Whether `dy.Collection` could ride the router mechanism.** `BaseTypeRouter.dump` receives a single `UPath` and may ignore `dump_fn` entirely, and `PolarsParquetIOManager.extension` is a `ClassVar[".parquet"]` (`parquet.py:280`) — so a Collection router would be writing a *directory* named `*.parquet`.
+- **Whether `dy.Collection` could ride the router mechanism.** `BaseTypeRouter.dump` receives a single `UPath` and may ignore `dump_fn` entirely, and `PolarsParquetIOManager.extension` is a `ClassVar[".parquet"]` (`parquet.py:280`), so a Collection router would be writing a *directory* named `*.parquet`.
   I did not test this; treat it as unexplored.
 
 Not investigated:
 
 - Whether `dagster-polars`'s Delta and BigQuery IO managers interact differently
   with routers (I only probed `PolarsParquetIOManager`).
-- The `dagster-patito` name — no such standalone package appears to exist; the
-  docs page at `/integrations/libraries/patito` documents
-  `dagster-polars[patito]`, not a separate library.
+- The `dagster-patito` name.
+  No such standalone package appears to exist; the docs page at `/integrations/libraries/patito` documents `dagster-polars[patito]`, not a separate library.

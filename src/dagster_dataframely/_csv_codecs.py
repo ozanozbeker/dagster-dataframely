@@ -1,15 +1,16 @@
 """Lossless encodings for the dtypes a CSV cell cannot hold.
 
-A cell holds text, so five Polars dtypes have nowhere to land: `Duration`, `List`, `Array`, `Struct` and `Binary`. Four of the five refuse a plain cast outright. Each one here is an encoding paired with its declared inverse, so a column written and read back compares equal: nothing is rounded, widened or dropped, and the no-cast principle is untouched.
+A cell holds text, so five Polars dtypes have nowhere to land: `Duration`, `List`, `Array`, `Struct` and `Binary`. Four of the five refuse a plain cast outright. Each entry here is an encoding paired with its declared inverse, so a column written and read back compares equal. Nothing is rounded, widened or dropped, and the no-cast principle is untouched.
 
-The inverse needs the dtype the schema declares, which is the whole reason the CSV manager reads a schema off the asset and the parquet manager does not. A JSON string is dtype-blind, and so is an integer.
+The inverse needs the dtype the schema declares. That is the whole reason the CSV manager reads a schema off the asset and the parquet manager does not. A JSON string is dtype-blind, and so is an integer.
 
-Design decisions:
-    - A `Duration` encodes to the integer count of its own time unit rather than to a fixed unit. `dy.Duration` is always microseconds, so a cell holds microseconds for every duration Dataframely can declare, while a hand-built `Duration('ns')` stays exact instead of being truncated on the way out.
-    - `List` and `Array` encode through a one-field struct named after the column, because Polars exposes `json_encode` on the struct namespace alone. `Struct` needs no wrapper and does not get one, so its cell holds the object a reader expects.
-    - A null is an empty cell in every column, whatever the codec, which costs one `when` per JSON encoder.
-    - An `Array` decodes as a `List` and casts back, at every depth. Polars panics deserializing a fixed-size list from JSON, and a Rust panic cannot be caught.
-    - `Binary` and `Duration` are refused *inside* a nested dtype rather than encoded there. Polars panics writing binary to JSON, and writes a nested duration as ISO-8601 that its own reader then rejects. Both are exactly the failure `UnwritableDtypeError` exists to get ahead of.
+Notes
+-----
+- A `Duration` encodes to the integer count of its own time unit rather than to a fixed unit. `dy.Duration` is always microseconds, so a cell holds microseconds for every duration Dataframely can declare, while a hand-built `Duration('ns')` stays exact instead of being truncated on the way out.
+- `List` and `Array` encode through a one-field struct named after the column, because Polars exposes `json_encode` on the struct namespace alone. `Struct` needs no wrapper and does not get one, so its cell holds the object a reader expects.
+- A null is an empty cell in every column, whatever the codec. That costs one `when` per JSON encoder.
+- An `Array` decodes as a `List` and casts back, at every depth. Polars panics deserializing a fixed-size list from JSON, and a Rust panic cannot be caught.
+- `Binary` and `Duration` are refused *inside* a nested dtype rather than encoded there. Polars panics writing binary to JSON, and writes a nested duration as ISO-8601 that its own reader then rejects. Both are exactly the failure `UnwritableDtypeError` exists to get ahead of.
 """
 
 from collections.abc import Callable, Mapping
@@ -26,10 +27,14 @@ type _Member = pl.DataType | DataTypeClass
 class _Codec:
     """An encoding and its declared inverse.
 
-    Attributes:
-        label: What the encoded cell holds, for the log line that names the column.
-        encode: Builds the expression that writes the column as text.
-        decode: Builds the expression that reads it back, given the dtype the schema declares.
+    Attributes
+    ----------
+    label
+        What the encoded cell holds, for the log line that names the column.
+    encode
+        Builds the expression that writes the column as text.
+    decode
+        Builds the expression that reads it back, given the dtype the schema declares.
     """
 
     label: str
@@ -38,9 +43,9 @@ class _Codec:
 
 
 def _decodable(dtype: _Member) -> _Member:
-    """Rewrites every `Array` in a dtype tree to a `List`, so Polars can deserialize it.
+    """Rewrite every `Array` in a dtype tree to a `List`, so Polars can deserialize it.
 
-    The declared dtype is restored by a cast after the decode. Recursive because an array can sit at any depth, and the panic it causes fires wherever it sits.
+    A cast after the decode restores the declared dtype. Recursive, because an array can sit at any depth and the panic it causes fires wherever it sits.
     """
     if isinstance(dtype, (pl.Array, pl.List)):
         return pl.List(_decodable(dtype.inner))
@@ -52,19 +57,19 @@ def _decodable(dtype: _Member) -> _Member:
 
 
 def _duration_encode(name: str) -> pl.Expr:
-    """Writes the duration's integer tick count, which is `to_physical` by definition."""
+    """Write the duration's integer tick count, which is `to_physical` by definition."""
     return pl.col(name).to_physical().cast(pl.String)
 
 
 def _duration_decode(name: str, dtype: pl.DataType) -> pl.Expr:
-    """Reads the ticks back into the declared duration, which is what supplies the time unit."""
+    """Read the ticks back into the declared duration, which supplies the time unit."""
     return pl.col(name).cast(pl.Int64).cast(dtype)
 
 
 def _cell(name: str, encoded: pl.Expr) -> pl.Expr:
-    """Keeps a null row an empty cell.
+    """Keep a null row an empty cell.
 
-    Left alone, a JSON encoder writes the text `{"column":null}` for a null list and `null` for a null struct, so a null would read differently in three columns of the same file. `str.json_decode` returns a null for an empty cell either way, which is what lets the encoder be the side that decides.
+    Left alone, a JSON encoder writes the text `{"column":null}` for a null list and `null` for a null struct, so a null would read differently in three columns of the same file. `str.json_decode` returns a null for an empty cell either way, which lets the encoder be the side that decides.
     """
     return (
         pl.when(pl.col(name).is_null())
@@ -75,12 +80,12 @@ def _cell(name: str, encoded: pl.Expr) -> pl.Expr:
 
 
 def _nested_encode(name: str) -> pl.Expr:
-    """Writes a list or array as JSON, wrapped in a one-field struct named after the column."""
+    """Write a list or array as JSON, wrapped in a one-field struct named after the column."""
     return _cell(name, pl.struct(name).struct.json_encode())
 
 
 def _nested_decode(name: str, dtype: pl.DataType) -> pl.Expr:
-    """Reads the wrapper back and takes its one field."""
+    """Read the wrapper back and take its one field."""
     return (
         pl.col(name)
         .str.json_decode(pl.Struct({name: _decodable(dtype)}))
@@ -90,22 +95,28 @@ def _nested_decode(name: str, dtype: pl.DataType) -> pl.Expr:
 
 
 def _struct_encode(name: str) -> pl.Expr:
-    """Writes a struct as JSON. No wrapper: `json_encode` takes a struct directly, so the cell holds the object a reader expects."""
+    """Write a struct as JSON.
+
+    No wrapper: `json_encode` takes a struct directly, so the cell holds the object a reader expects.
+    """
     return _cell(name, pl.col(name).struct.json_encode())
 
 
 def _struct_decode(name: str, dtype: pl.DataType) -> pl.Expr:
-    """Reads the object back into the declared struct."""
+    """Read the object back into the declared struct."""
     return pl.col(name).str.json_decode(_decodable(dtype)).cast(dtype)
 
 
 def _binary_encode(name: str) -> pl.Expr:
-    """Writes the bytes as base64, whose alphabet holds no delimiter and no quote, so the cell never needs escaping."""
+    """Write the bytes as base64, whose alphabet holds no delimiter and no quote, so the cell never needs escaping."""
     return pl.col(name).bin.encode("base64")
 
 
 def _binary_decode(name: str, _dtype: pl.DataType) -> pl.Expr:
-    """Reads the bytes back. The declared dtype is unused: base64 decodes to `Binary` and nothing else."""
+    """Read the bytes back.
+
+    The declared dtype is unused: base64 decodes to `Binary` and nothing else.
+    """
     return pl.col(name).str.decode("base64")
 
 
@@ -126,7 +137,7 @@ _TOP_LEVEL_ONLY = (pl.Binary, pl.Duration)
 
 
 def _unsupported(dtype: _Member, *, nested: bool) -> bool:
-    """Reports whether any codec can carry this dtype, at the depth it sits."""
+    """Report whether any codec can carry this dtype, at the depth it sits."""
     if dtype.base_type() in _UNWRITABLE:
         return True
     if nested and dtype.base_type() in _TOP_LEVEL_ONLY:
@@ -139,18 +150,21 @@ def _unsupported(dtype: _Member, *, nested: bool) -> bool:
 
 
 def _phrase(dtype: pl.DataType, codec: _Codec) -> str:
-    """Renders one column's encoding for the log line."""
+    """Render one column's encoding for the log line."""
     return f"{dtype} as {codec.label}"
 
 
 def unwritable(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
-    """Finds the columns no codec can carry.
+    """Find the columns no codec can carry.
 
-    Args:
-        dtypes: The frame's columns and their dtypes.
+    Parameters
+    ----------
+    dtypes
+        The frame's columns and their dtypes.
 
-    Returns:
-        The offending columns, in the frame's own order, ready to hand `UnwritableDtypeError`.
+    Returns
+    -------
+    The offending columns, in the frame's own order, ready to hand `UnwritableDtypeError`.
     """
     return {
         name: dtype
@@ -160,17 +174,20 @@ def unwritable(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
 
 
 def encode[F: (pl.DataFrame, pl.LazyFrame)](frame: F) -> tuple[F, dict[str, str]]:
-    """Encodes every column CSV cannot hold, leaving the rest untouched.
+    """Encode every column CSV cannot hold, leaving the rest untouched.
 
     Takes a plan as readily as a frame, like `decode` below, and for the same reason: every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data.
 
-    A constrained type parameter rather than the union `decode` returns, because this one's caller has to narrow what it gets back: an eager frame is written through `write_csv` and a plan is streamed through `sink_csv`, and only a same-type-out promise saves that from a cast.
+    A constrained type parameter rather than the union `decode` returns, because this one's caller has to narrow what it gets back. An eager frame is written through `write_csv` and a plan is streamed through `sink_csv`, and only a same-type-out promise saves that from a cast.
 
-    Args:
-        frame: The frame or plan about to be written.
+    Parameters
+    ----------
+    frame
+        The frame or plan about to be written.
 
-    Returns:
-        What to write, of the type it arrived as, and the encoded columns mapped to what their cells now hold.
+    Returns
+    -------
+    What to write, of the type it arrived as, and the encoded columns mapped to what their cells now hold.
     """
     expressions: list[pl.Expr] = []
     encoded: dict[str, str] = {}
@@ -184,15 +201,18 @@ def encode[F: (pl.DataFrame, pl.LazyFrame)](frame: F) -> tuple[F, dict[str, str]
 
 
 def read_schema(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
-    """Builds what `read_csv` is told about the file.
+    """Build what `read_csv` is told about the file.
 
-    An encoded column is read as text and decoded afterwards; every other column is read as the schema declares it, which is what keeps a `Decimal` from arriving as a float and an `Enum` from arriving as a string.
+    An encoded column is read as text and decoded afterwards. Every other column is read as the schema declares it, which keeps a `Decimal` from arriving as a float and an `Enum` from arriving as a string.
 
-    Args:
-        dtypes: The columns the schema declares, and their dtypes.
+    Parameters
+    ----------
+    dtypes
+        The columns the schema declares, and their dtypes.
 
-    Returns:
-        A mapping to hand `read_csv` as `schema_overrides`. It is by name, so a column the file does not carry is ignored rather than fatal.
+    Returns
+    -------
+    A mapping to hand `read_csv` as `schema_overrides`. It is by name, so a column the file does not carry is ignored rather than fatal.
     """
     return {
         name: pl.String() if dtype.base_type() in _CODECS else dtype
@@ -203,16 +223,20 @@ def read_schema(dtypes: Mapping[str, pl.DataType]) -> dict[str, pl.DataType]:
 def decode(
     frame: pl.DataFrame | pl.LazyFrame, dtypes: Mapping[str, pl.DataType]
 ) -> tuple[pl.DataFrame | pl.LazyFrame, dict[str, str]]:
-    """Restores every encoded column to the dtype the schema declares.
+    """Restore every encoded column to the dtype the schema declares.
 
     Takes a scan as readily as a frame, and hands back whichever it was given. Every codec is an expression over `with_columns`, so nothing here executes and nothing here needs the data. The column names come off `collect_schema` rather than `columns`, which asks a `LazyFrame` the same question without the performance warning Polars attaches to the shorter spelling.
 
-    Args:
-        frame: The frame or scan `read_csv` and `scan_csv` return, with the encoded columns as text.
-        dtypes: The columns the schema declares, and their dtypes. Empty when the asset carries no schema, which leaves the frame as it was read.
+    Parameters
+    ----------
+    frame
+        The frame or scan `read_csv` and `scan_csv` return, with the encoded columns as text.
+    dtypes
+        The columns the schema declares, and their dtypes. Empty when the asset carries no schema, which leaves the frame as it was read.
 
-    Returns:
-        The decoded frame, of the type it arrived as, and the decoded columns mapped to what their cells held.
+    Returns
+    -------
+    The decoded frame, of the type it arrived as, and the decoded columns mapped to what their cells held.
     """
     expressions: list[pl.Expr] = []
     decoded: dict[str, str] = {}
@@ -229,5 +253,5 @@ def decode(
 
 
 def describe(columns: Mapping[str, str]) -> str:
-    """Renders the columns a codec touched as the clause a log line ends on."""
+    """Render the columns a codec touched as the clause a log line ends on."""
     return ", ".join(f"'{name}' ({phrase})" for name, phrase in columns.items())

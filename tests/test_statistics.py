@@ -1,8 +1,8 @@
 """The statistics pass, asserted through the metadata a materialization carries.
 
-The families and the duration rendering are never called directly. A data consumer meets them only as the tables on a materialization, so that is the one place they are asserted, and a pass that computed the same numbers somewhere unreachable would fail every test here.
+The families and the duration rendering are never called directly. A data consumer meets them only as the tables on a materialization, so that is the one place they are asserted. A pass that computed the same numbers somewhere unreachable would fail every test here.
 
-Statistics are opt-out, so almost every asset in this file declares nothing about them: the tables are what a materialization carries until someone turns them off.
+Statistics are opt-out, so almost every asset in this file declares nothing about them. A materialization carries the tables until someone turns them off.
 """
 
 import datetime as dt
@@ -27,7 +27,7 @@ class Shipment(dy.Schema):
 
     `Orders` already exercises `Int32`, `Decimal`, `String`, `Enum`, `Binary`, `Datetime`, `Duration` and a `List`. What it has no column of is `Float64`, `Date`, `Time`, `Categorical`, `Bool` and `Struct`, which is exactly this schema. Between the two, every dtype the four tables claim reaches a table, and both shapes that claim none reach nothing.
 
-    Every column is nullable so one row can be entirely null: a null is what separates `count` from `null_count`, and an all-null column is the case where a `min` does not exist.
+    Every column is nullable so one row can be entirely null. A null separates `count` from `null_count`, and an all-null column is the case where a `min` does not exist.
     """
 
     weight = dy.Float64(nullable=True)
@@ -96,7 +96,7 @@ def _shipment() -> pl.DataFrame:
 def _materialized(
     tmp_path: Path, asset: dg.AssetsDefinition
 ) -> dict[str, Mapping[str, dg.MetadataValue[Any]]]:
-    """Materializes one asset and returns every materialization it emitted, keyed by asset name."""
+    """Materialize one asset and return every materialization it emitted, keyed by asset name."""
     result = dg.materialize(
         [asset],
         resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
@@ -120,7 +120,7 @@ def _metadata(
 def _table(
     metadata: Mapping[str, dg.MetadataValue[Any]], family: str
 ) -> dict[str, dict[str, Any]]:
-    """Reads one family's table back as a row per column, keyed by column name."""
+    """Read one family's table back as a row per column, keyed by column name."""
     value = metadata[f"stats/{family}"]
     assert isinstance(value, dg.TableMetadataValue)
     rows = [dict(record.data) for record in value.records]
@@ -253,7 +253,7 @@ def test_a_temporal_column_reports_the_span_between_its_bounds(tmp_path: Path):
 
 
 def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
-    """`8d`, `1m 30s`, `2h 5m`. ISO-8601 is what a reader gets from the obvious call, and a span is the one cell nobody can read that way."""
+    """`8d`, `1m 30s`, `2h 5m`. The obvious call gives a reader ISO-8601, and a span is the one cell nobody can read that way."""
     fulfilled_in = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
@@ -308,7 +308,7 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
 
 # --- the string family ---
 def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
-    """The one rule the setting does not cover, so the whole row is asserted rather than the absence of one cell: a `min` here would print a real address permanently into a shared, exported event log."""
+    """The one rule the setting does not cover, so the whole row is asserted rather than the absence of one cell. A `min` here would print a real address permanently into a shared, exported event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert string["email"] == {
@@ -365,7 +365,7 @@ def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
 def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
     tmp_path: Path,
 ):
-    """Opt-out, on by default: the asset declares nothing and the tables are there."""
+    """Opt-out, on by default. The asset declares nothing and the tables are there."""
     assert _families(_metadata(tmp_path, _orders))
 
 

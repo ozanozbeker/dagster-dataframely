@@ -12,7 +12,7 @@ deps=["other"], ins={"raw": dg.AssetIn(["upstream_frame"])}
   orders_quarantine <- ['other', 'upstream_frame']
 ```
 
-That is not merely untidy. It says the quarantine is an independent child of the upstream tables, reachable and materializable on its own, and that is false: the two are outs of one step and neither can execute without the other.
+That is not merely untidy. It says the quarantine is an independent child of the upstream tables, reachable and materializable on its own. That is false: the two are outs of one step, and neither can execute without the other.
 
 `internal_asset_deps` is the only lever, and it refuses a partial map. Naming the quarantine alone fails:
 
@@ -21,7 +21,7 @@ Invalid asset dependencies: `{AssetKey(['other']), AssetKey(['upstream'])}` spec
 inputs, but are not specified in `internal_asset_deps`.
 ```
 
-So the decorator has to state the valid out's input set too, and that set is Dagster's to derive: six coercible `deps` forms, an `AssetsDefinition` among them contributing every key it owns, `dg.AssetIn(key_prefix=)` composing with the *parameter* name, and `context` dropped by position.
+So the decorator has to state the valid out's input set too, and that set is Dagster's to derive. Six coercible `deps` forms, an `AssetsDefinition` among them contributing every key it owns, `dg.AssetIn(key_prefix=)` composing with the *parameter* name, and `context` dropped by position.
 
 ## Decision
 
@@ -31,7 +31,7 @@ So the decorator has to state the valid out's input set too, and that set is Dag
 
 `internal_asset_deps` is keyed by output name, so a quarantine that named its own key or `key_prefix` costs nothing extra.
 
-**The edge is asset-grained, and that is a claim about rows this package knowingly does not make.** No row in the quarantine came from the valid table; `Schema.filter` splits one frame into two siblings. Column-lineage tooling reading the quarantine will trace its columns back through the valid table. Accepted, because the shape it replaces makes the worse claim.
+**The edge is asset-grained, and that is a claim about rows this package knowingly does not make.** No row in the quarantine came from the valid table. `Schema.filter` splits one frame into two siblings. Column-lineage tooling reading the quarantine will trace its columns back through the valid table. Accepted, because the shape it replaces makes the worse claim.
 
 ## Consequences
 
@@ -54,16 +54,16 @@ Automation is unmoved. No condition can sit on the quarantine, since `automation
 
 ## Alternatives rejected
 
-**Re-derive the valid out's inputs in the decorator.** One pass, no discarded object. Rejected because it reimplements Dagster's input resolution, and its failure mode is silent: a map missing a key is still a valid map, and `internal_asset_deps` is exactly what Dagster validates inputs against, so the mistake surfaces as `Invalid asset dependencies` on a user's definition naming a key they never wrote.
+**Re-derive the valid out's inputs in the decorator.** One pass, no discarded object. Rejected because it reimplements Dagster's input resolution, and its failure mode is silent. A map missing a key is still a valid map, and `internal_asset_deps` is exactly what Dagster validates inputs against, so the mistake surfaces as `Invalid asset dependencies` on a user's definition naming a key they never wrote.
 
 **Build once and reconstruct.** `AssetsDefinition.__init__` does take `asset_deps`. Rejected because it is not `@public` and takes 23 parameters, so reconstruction means transcribing all 23, and a Dagster release adding a 24th drops it silently. That is `_rebuild`'s hazard without the property that makes `_rebuild` safe.
 
-**`map_asset_specs` with `spec.replace_attributes(deps=...)`.** Rejected with evidence: dropping the shared inputs from the quarantine spec turns them into `Nothing` inputs and the rebuild dies on `@op 'c' decorated function has parameter 'upstream' that is one of the input_defs of type 'Nothing'`. A no-op map is fine, so the API is not the problem; expressing this is.
+**`map_asset_specs` with `spec.replace_attributes(deps=...)`.** Rejected with evidence: dropping the shared inputs from the quarantine spec turns them into `Nothing` inputs and the rebuild dies on `@op 'c' decorated function has parameter 'upstream' that is one of the input_defs of type 'Nothing'`. A no-op map is fine, so the API is not the problem. Expressing this is.
 
 **Keep the quarantine's parents and add the valid asset on top.** The honest shape at row level. Rejected on legibility: every upstream table then draws two edges into the same pair of assets, which is the reading the change exists to remove.
 
 **A flag to turn the edge off.** Rejected: declaring `quarantine=dg.AssetOut()` is already the whole consent, and the cases that might want it do not survive. A quarantine in another group or ownership domain is exactly where the edge earns its keep, and an automation condition downstream of the quarantine still fires on the quarantine's own materialization.
 
-**Two `@dg.asset`s, or a `@dg.graph_multi_asset`.** Two assets is two ops, so the decorated function runs once per table, measured. Any non-determinism then means the quarantine holds rows the run that wrote the valid table never rejected, and the two tables stop being one split of one frame. `graph_multi_asset` keeps one compute but cannot express this: it has no `internal_asset_deps`, no `deps`, no `description`, and eight of the fourteen parameters the decorator forwards are absent, and ADR-0002's direct invocation goes with it.
+**Two `@dg.asset`s, or a `@dg.graph_multi_asset`.** Two assets is two ops, so the decorated function runs once per table, measured. Any non-determinism then means the quarantine holds rows the run that wrote the valid table never rejected, and the two tables stop being one split of one frame. `graph_multi_asset` keeps one compute but cannot express this. It has no `internal_asset_deps`, no `deps` and no `description`, eight of the fourteen parameters the decorator forwards are absent, and ADR-0002's direct invocation goes with it.
 
 The surface question this raised, whether `quarantine=` should take a package-owned container instead of `dg.AssetOut`, is filed as #91. It changes nothing here: the map is keyed by output name.

@@ -79,7 +79,7 @@ runtime-evaluated-decorators = [
 ]
 
 [lint.pydocstyle]
-convention = "google"
+convention = "numpy"
 
 [format]
 docstring-code-format = true

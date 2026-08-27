@@ -2,7 +2,7 @@
 
 Specs come off the schema, never off a run's `FailureInfo`. A rule that rejected nothing still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
 
-How many specs there are is `check_granularity`'s to decide, because a 40-column schema contributes around 120 rules and a check list that long is one nobody reads. One grouping answers that question on both sides: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
+`check_granularity` decides how many specs there are. A 40-column schema contributes around 120 rules, and nobody reads a check list that long. One grouping answers the question on both sides: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
 """
 
 from dataclasses import dataclass, field
@@ -36,11 +36,16 @@ from dagster_dataframely._settings import (
 class _RuleSet:
     """The rules one check reports for, and how that check introduces itself.
 
-    Attributes:
-        name: The asset-check name.
-        description: What the check says it covers.
-        rules: The rules it reports for, in the schema's own order.
-        collapsed: Whether the check stands for a set of rules rather than for one rule of its own. It is what the result's metadata shape follows, so a rule set holding a single rule still reports as a set when its siblings do.
+    Attributes
+    ----------
+    name
+        The asset-check name.
+    description
+        What the check says it covers.
+    rules
+        The rules it reports for, in the schema's own order.
+    collapsed
+        Whether the check stands for a set of rules rather than for one rule of its own. The result's metadata shape follows it, so a rule set holding a single rule still reports as a set when its siblings do.
     """
 
     name: str
@@ -50,7 +55,7 @@ class _RuleSet:
 
 
 def _single_rule_set(schema: type[dy.Schema], rule_name: str) -> _RuleSet:
-    """Builds the rule set for a check that is one rule's own, at any granularity."""
+    """Build the rule set for a check that is one rule's own, at any granularity."""
     return _RuleSet(
         check_name(rule_name), check_description(schema, rule_name), [rule_name]
     )
@@ -61,19 +66,24 @@ def _rule_sets(
     check_granularity: Granularity | None,
     multi_column_rules: MultiColumnRules | None,
 ) -> list[_RuleSet]:
-    """Groups a schema's rules under the checks that report for them.
+    """Group a schema's rules under the checks that report for them.
 
     The one place the settings are read, so the specs and the results cannot resolve them differently.
 
-    At `column` granularity a column's rules land together whatever shape they are, which is what makes a wide `Struct` bearable: Dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one rule set.
+    At `column` granularity a column's rules land together whatever shape they are. That is what makes a wide `Struct` bearable: Dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten checks here and one rule set.
 
-    Args:
-        schema: The schema to read rules from.
-        check_granularity: How far the rules collapse, or `None` to resolve it through the settings chain.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity, or `None` to resolve it through the settings chain. Read nowhere else: the other two granularities have no second place to put them.
+    Parameters
+    ----------
+    schema
+        The schema to read rules from.
+    check_granularity
+        How far the rules collapse, or `None` to resolve it through the settings chain.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity, or `None` to resolve it through the settings chain. Read nowhere else, because the other two granularities have no second place to put them.
 
-    Returns:
-        One rule set per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no rule sets at any granularity, because a check reporting for nothing would pass forever.
+    Returns
+    -------
+    One rule set per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no rule sets at any granularity, because a check reporting for nothing would pass forever.
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
@@ -133,21 +143,31 @@ def check_specs(
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
-    """Builds the schema's check specs, plus the shape check.
+    """Build the schema's check specs, plus the shape check.
 
-    Args:
-        schema: The schema the checks are derived from.
-        asset: The asset key the checks hang off. Build it once and pass the same key to the asset's out, so the two cannot drift.
-        check_granularity: How far the rules collapse: one check per rule, per rule-bearing column, or one for the whole schema. Changing it on an asset that has already run orphans check history, because the old names stop being reported and the new ones start empty. Unset resolves through the settings chain.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity. Unset resolves through the settings chain.
+    Parameters
+    ----------
+    schema
+        The schema the checks are derived from.
+    asset
+        The asset key the checks hang off. Build it once and pass the same key to the asset's out, so the two cannot drift.
+    check_granularity
+        How far the rules collapse: one check per rule, per rule-bearing column, or one for the whole schema. Changing it on an asset that has already run orphans check history, because the old names stop being reported and the new ones start empty. Unset resolves through the settings chain.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity. Unset resolves through the settings chain.
 
-    Returns:
-        The shape check's spec first, then one spec per rule set.
+    Returns
+    -------
+    The shape check's spec first, then one spec per rule set.
 
-    Raises:
-        InvalidSettingError: A setting resolved to a value outside its vocabulary.
-        ReservedColumnError: A user column sits inside the reserved namespace.
-        CheckNameCollisionError: Two rules rewrite to the same check name.
+    Raises
+    ------
+    InvalidSettingError
+        A setting resolved to a value outside its vocabulary.
+    ReservedColumnError
+        A user column sits inside the reserved namespace.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
     """
     validate_namespace(schema)
     rule_sets: list[_RuleSet] = _rule_sets(
@@ -180,18 +200,24 @@ def _rejected_rows(
     counts: dict[str, int],
     limit: int,
 ) -> dict[str, list[Row]]:
-    """Samples the rows each rule rejected, bounded per rule.
+    """Sample the rows each rule rejected, bounded per rule.
 
-    Per rule rather than per check, because a check can stand for a hundred of them: a bound shared across a rule set would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
+    Per rule rather than per check, because a check can stand for a hundred of them. A bound shared across a rule set would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
 
-    Args:
-        schema: The schema the rules belong to.
-        failure: What `Schema.filter` reported.
-        counts: Failure count per rule, which the caller already asked for. Taken rather than read off `failure` again, because `counts()` is an aggregate over the invalid rows rather than a lookup.
-        limit: How many rows to keep per rule. Zero samples nothing and never touches the frame.
+    Parameters
+    ----------
+    schema
+        The schema the rules belong to.
+    failure
+        What `Schema.filter` reported.
+    counts
+        Failure count per rule, which the caller already asked for. Taken rather than read off `failure` again, because `counts()` is an aggregate over the invalid rows rather than a lookup.
+    limit
+        How many rows to keep per rule. Zero samples nothing and never touches the frame.
 
-    Returns:
-        Up to `limit` rows per rule that rejected anything, keyed by the rule's own name. Rules that rejected nothing are absent, so a caller iterates what failed rather than what exists.
+    Returns
+    -------
+    Up to `limit` rows per rule that rejected anything, keyed by the rule's own name. Rules that rejected nothing are absent, so a caller iterates what failed rather than what exists.
     """
     if not limit or not counts:
         return {}
@@ -212,7 +238,7 @@ def _rejected_rows(
 def _rule_metadata(
     rule_name: str, rule: Rule, failed: int, sampled: list[Row]
 ) -> dict[str, str | int | dg.TableMetadataValue]:
-    """Builds the metadata of a check that reports for one rule."""
+    """Build the metadata of a check that reports for one rule."""
     metadata: dict[str, str | int | dg.TableMetadataValue] = {
         "dy_rule": rule_name,
         # The expression, not the bound: tightening `min` must not rename the check and orphan its history.
@@ -226,13 +252,13 @@ def _rule_metadata(
 def _collapsed_metadata(
     rules: dict[str, Rule], failed: dict[str, int], sampled: dict[str, list[Row]]
 ) -> dict[str, dg.TableMetadataValue]:
-    """Builds the metadata of a check that reports for several rules.
+    """Build the metadata of a check that reports for several rules.
 
-    One row per member rule, which is what collapsing would otherwise cost: the check says whether anything failed, and this says which rules and by how much.
+    One row per member rule, which is what collapsing would otherwise cost. The check says whether anything failed, and this says which rules and by how much.
 
     A single total is deliberately absent. Failure counts are per rule and one row can break several, so summing them would state a row count that is not one.
 
-    The sample carries `dy_rule` for the same reason the counts do: a rule set stands for several rules, so a invalid row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
+    The sample carries `dy_rule` for the same reason the counts do: a rule set stands for several rules, so an invalid row has to name the one that put it there. The column is safe to prepend because a user column cannot sit inside the reserved namespace.
     """
     metadata: dict[str, dg.TableMetadataValue] = {
         "dy_rules": dg.MetadataValue.table(
@@ -266,23 +292,32 @@ def rule_results(  # noqa: PLR0913 - every setting the specs were derived with h
     multi_column_rules: MultiColumnRules | None = None,
     max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
-    """Builds one result per check out of what the filter rejected.
+    """Build one result per check out of what the filter rejected.
 
-    Severity is the run's outcome rather than the rule's: when nothing is written, no failure is a warning.
+    Severity is the run's outcome rather than the rule's. When nothing is written, no failure is a warning.
 
     The whole `FailureInfo` rather than its counts, because a check reports two things about a rule and they have to come from the same object: how many rows it rejected, and which rows those were.
 
-    Args:
-        schema: The schema the results report against.
-        failure: What `Schema.filter` reported.
-        asset_key: The asset the results hang off. Stated explicitly because the abort path yields results on their own, with no materialization to infer it from.
-        severity: Severity for every failing result in this run.
-        check_granularity: How far the rules collapse. Pass what the specs were derived with; the decorator does, so a run cannot report against a check list it did not declare.
-        multi_column_rules: Where the rules no single column owns land at `column` granularity.
-        max_failure_samples: How many invalid rows each rule shows. Unset resolves through the settings chain.
+    Parameters
+    ----------
+    schema
+        The schema the results report against.
+    failure
+        What `Schema.filter` reported.
+    asset_key
+        The asset the results hang off. Stated explicitly because the abort path yields results on their own, with no materialization to infer it from.
+    severity
+        Severity for every failing result in this run.
+    check_granularity
+        How far the rules collapse. Pass what the specs were derived with. The decorator does, so a run cannot report against a check list it did not declare.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity.
+    max_failure_samples
+        How many invalid rows each rule shows. Unset resolves through the settings chain.
 
-    Returns:
-        One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
+    Returns
+    -------
+    One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
     """
     counts: dict[str, int] = failure.counts()
     rules: dict[str, Rule] = validation_rules(schema)

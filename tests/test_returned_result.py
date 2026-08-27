@@ -2,7 +2,7 @@
 
 `@dg.asset` accepts one, and it is what Dagster's own docs teach for attaching metadata, so refusing it cost parity with the decorator this one is modelled on (#77). The result's `value` is the frame to validate; its metadata, data version and tags fold into the materialization the package yields for the valid out.
 
-Every shape is asserted twice where both can see it, once by calling and once through `dg.materialize`. Metadata survives either route, but a data version and tags are event-level: a call hands back the `dg.MaterializeResult` carrying them and a run is where they become event tags, so both are worth pinning.
+Every shape is asserted twice where both can see it, once by calling and once through `dg.materialize`. Metadata survives either route, but a data version and tags are event-level. A call hands back the `dg.MaterializeResult` carrying them, and a run is where they become event tags, so both are worth pinning.
 """
 
 import re
@@ -36,7 +36,7 @@ _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 def _call(asset: dg.AssetsDefinition) -> _Yielded:
-    """Calls the asset and drains what comes back."""
+    """Call the asset and drain what comes back."""
     return list(asset())  # pyrefly: ignore[bad-argument-type]
 
 
@@ -265,7 +265,7 @@ _REFUSALS = [
 
 
 def _refusing(fn: Callable[[], object]) -> dg.AssetsDefinition:
-    """Declares the asset under the one name every message above expects.
+    """Declare the asset under the one name every message above expects.
 
     The decorated functions are annotated nowhere, because there is nothing to annotate them as: every one of them returns what the decorator's own type says it cannot.
     """
@@ -319,7 +319,7 @@ def test_an_abort_with_no_quarantine_still_raises_its_own_error():
 
 
 def test_the_frame_guard_names_every_route_out():
-    """Giving up the schema used to be the whole of the advice, which is wrong for anyone who wanted metadata on a validated table. It is now the last of three, and right for the one reader it is left for: an asset that writes its own storage and never holds a frame."""
+    """Giving up the schema used to be the whole of the advice, which is wrong for anyone who wanted metadata on a validated table. It is now the last of three, and right for the one reader it is left for: an asset that writes its own storage and never holds a frame at all."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
         _call(_refusing(lambda: None))
     message = str(raised.value)

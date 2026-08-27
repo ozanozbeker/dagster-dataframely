@@ -1,8 +1,8 @@
 """The three-tier settings chain, asserted at the one call every setting resolves through.
 
-`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it, and a fake one covers the tier a shipped setting cannot reach: its own default is valid by construction.
+`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it. A fake one covers the tier a shipped setting cannot reach, because a shipped default is valid by construction.
 
-A flag is here for the tier a choice cannot exercise: the environment arrives as a string whatever the shape holds, so a flag is the one that has to parse it rather than match it. A count is here for the tier neither of those can exercise: its vocabulary is a range, so it is the only shape with something to reject in a tier a type checker has already narrowed. A directory is here for the tier none of the three has: a package default of `None`, which is a value this shape means something by rather than the absence of one.
+Each extra shape covers a tier the ones before it cannot reach. A flag has to parse the environment tier rather than match it, because the environment arrives as a string whatever the shape holds. A count's vocabulary is a range, so it is the only shape with something left to reject in a tier a type checker has already narrowed. A directory ships a package default of `None`, and that is a value this shape means something by rather than the absence of one.
 """
 
 import importlib
@@ -32,14 +32,14 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 _TEMP_DIR_ENV = "DAGSTER_DATAFRAMELY_TEMP_DIR"
 
-# The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow: it is what a user without one gets.
+# The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. That is what a user without one gets.
 _WRONG: Any = "per_column"
 
 # The same, for the shape whose vocabulary a type checker narrows to `int`.
 _FRACTION: Any = 2.5
 _YES: Any = True
 
-# The same, for the two-valued shape. It is the environment tier's own spelling, which is what makes it the word somebody writes into the argument by mistake.
+# The same, for the two-valued shape. It is the environment tier's own spelling, which makes it the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
 
 # The same, for the shape that holds a path. A `Path` is what a user reaches for, and the shape holds the string spelling instead.
@@ -84,7 +84,7 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 
 
 def test_every_setting_names_its_environment_variable_after_itself():
-    """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously machine surface, and it is derived rather than transcribed so the two cannot drift."""
+    """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously machine surface. It is derived rather than transcribed, so the name and the setting cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert MULTI_COLUMN_RULES.env_var == "DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES"
     assert STATISTICS.env_var == _STATISTICS_ENV
@@ -107,7 +107,7 @@ def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
 def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The case a truthiness test would get wrong, which is the one that matters: with the tier below saying on, the setting would be impossible to turn off."""
+    """The case a truthiness test would get wrong, and the one that matters. With the tier below saying on, the setting would be impossible to turn off."""
     monkeypatch.setenv(_STATISTICS_ENV, "true")
 
     assert STATISTICS.resolve(argument=False) is False
@@ -131,7 +131,7 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
 def test_a_flag_rejects_a_word_from_the_argument_tier():
     """The one shape where an unvalidated argument is silently the *opposite* of what was written.
 
-    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment tier spells the same instruction exactly that way, which is what makes the mistake reachable rather than hypothetical.
+    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment tier spells the same instruction exactly that way, which makes the mistake reachable rather than hypothetical.
     """
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
@@ -156,7 +156,7 @@ def test_a_count_reads_the_environment_tier_as_a_number(
 def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Zero is what turns a sample off, so the tier test cannot be truthiness: with the tier below saying 5, the setting would be impossible to turn off."""
+    """Zero turns a sample off, so the tier test cannot be truthiness. With the tier below saying 5, the setting would be impossible to turn off."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "5")
 
     assert ROW_SAMPLE.resolve(0) == 0
@@ -232,7 +232,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 ):
     """`DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
 
-    Reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off, which is the failure it exists to prevent and the one nobody would see until the disk filled.
+    Reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off. That is the failure the setting exists to prevent, and nobody would see it until the disk filled.
     """
     monkeypatch.setenv(_TEMP_DIR_ENV, "   ")
 
@@ -246,7 +246,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """A `Path` is the plausible wrong value here, and it is wrong for the same reason a word is wrong in a count: every tier of this setting spells a path as a string, because the environment tier can spell it no other way."""
+    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every tier of this setting spells a path as a string, because the environment tier can spell it no other way."""
     with pytest.raises(InvalidSettingError) as raised:
         TEMP_DIR.resolve(_PATH_OBJECT)
 
@@ -313,7 +313,7 @@ def test_the_error_names_the_setting_the_value_and_the_tier_order():
 def test_no_module_offers_a_global_default_setter():
     """There is deliberately no fourth tier.
 
-    Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control: the same asset would derive different checks depending on which module happened to be imported first.
+    Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control. The same asset would derive different checks depending on which module happened to be imported first.
     """
     modules = [
         importlib.import_module(f"dagster_dataframely.{module.name}")
