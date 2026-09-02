@@ -11,7 +11,8 @@ Docstrings follow [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.ht
 
 ### Examples use markdown fences, not doctest prompts
 
-**This overrides the global rule.** [Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and asks for ` ```{python} ` executable cells, which it runs at build time and embeds the output of.
+**This overrides the global rule.**
+[Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and asks for ` ```{python} ` executable cells, which it runs at build time and embeds the output of.
 Doctest is not its syntax.
 
 The fences say ` ```python ` for now rather than ` ```{python} `, because ruff's `docstring-code-format` only reaches the plain spelling.

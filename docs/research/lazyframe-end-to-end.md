@@ -295,7 +295,8 @@ plain @dg.asset      sink_parquet(temp) | <promote: rename>
 The saving is one write, not the write and the read it looks like, and it is paid for with an architecture boundary.
 
 **The read-back is structural and cannot go.** `Schema.filter` collects internally, `statistics_metadata` runs its aggregates over a frame, and `sample_rows` reads rows off one.
-So the frame is resident on a clean run whatever happens to the file, and promoting removes only the second write. 2 writes and 1 read becomes 1 write and 1 read.
+So the frame is resident on a clean run whatever happens to the file, and promoting removes only the second write.
+2 writes and 1 read becomes 1 write and 1 read.
 
 **What the saving is not.**
 It is the *output's* size, not the plan's intermediates.

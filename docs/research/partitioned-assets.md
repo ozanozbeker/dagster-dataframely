@@ -203,8 +203,7 @@ def rollup(orders: dict[str, pl.DataFrame]) -> None: ...
 
 The obvious annotation, `orders: pl.DataFrame`, fails Dagster's type check after the frames have already been read.
 Ecosystem prior art exports `DataFramePartitions` for this, and this package does not, for now.
-The alias would be public surface, and its lazy twin (`dict[str, pl.LazyFrame]`) depends on [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27), which is unresolved: naming one before the other is decided fixes half a pair.
-[#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26) owns the public surface and the README, and should carry the annotation as documentation there.
+The alias would be public surface, and its lazy twin (`dict[str, pl.LazyFrame]`) depends on [#27](https://github.com/ozanozbeker/dagster-dataframely/issues/27), which is unresolved: naming one before the other is decided fixes half a pair. [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26) owns the public surface and the README, and should carry the annotation as documentation there.
 Both shapes are covered in `tests/test_parquet_io_manager.py`, so the decision can be revisited against evidence rather than memory.
 
 > **Reversed by [#35](https://github.com/ozanozbeker/dagster-dataframely/issues/35).**
