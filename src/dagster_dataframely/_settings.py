@@ -272,7 +272,7 @@ class _Directory(_Setting[str | None]):
         return value
 
 
-#: How many checks a schema's rules become. Definition-time: see `dataframely_asset` for what changing it costs a check's history.
+#: How many checks a schema's rules become. Definition-time: see `dy_asset` for what changing it costs a check's history.
 CHECK_GRANULARITY = _Choice[Granularity](
     name="check_granularity", default="rule", allowed=("rule", "column", "schema")
 )
@@ -291,5 +291,8 @@ MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 #: How many of the valid output's rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what was rejected and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
 
-#: Which disk a lazy plan is staged on: `dataframely_asset` stages a lazy return before validating it. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a staged frame bigger than what the pod has spare fills it.
+#: Which disk a lazy plan is staged on: `dy_asset` stages a lazy return before validating it. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a staged frame bigger than what the pod has spare fills it.
 TEMP_DIR = _Directory(name="temp_dir", default=None)
+
+#: Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two tiers rather than three: the decorator takes no argument for it, because a root is meaningless to a warehouse and ADR-0006 defers the location override until somebody asks for one. Unset, a quarantined asset that reaches the fallback raises rather than choosing a directory on the operator's behalf.
+QUARANTINE_DIR = _Directory(name="quarantine_dir", default=None)

@@ -1,6 +1,6 @@
 """What a schema-backed asset runs after its decorated function: check the shape, stage, filter, then one of six exits.
 
-The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine out splits four exits into six. It is the consent to partial data, and its absence is the refusal.
+The asset's declared shape is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine splits four exits into six. It is the consent to partial data, and its absence is the refusal.
 
 The sixth exit is the skip, and it is the one the asset's shape does not decide. A decorated function that returns `None` says this partition has no source data and never will, which is neither a failure nor an empty table. Nothing is validated and nothing materializes, so the partition stays unmaterialized rather than going green with zero rows (#95).
 
@@ -18,6 +18,7 @@ import polars as pl
 from dagster_dataframely._checks import rule_results
 from dagster_dataframely._frames import shape_problems, staging
 from dagster_dataframely._naming import SHAPE_CHECK, check_name, validation_rules
+from dagster_dataframely._quarantine import QuarantineWriter
 from dagster_dataframely._samples import SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
@@ -36,6 +37,21 @@ from dagster_dataframely.errors import (
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
+#: Where the invalid rows went, as the writer rendered it. `address` rather than `path`, because the answer can be a database table. Dagster's own word, from `TableMetadataSet.extract_storage_address`.
+_ADDRESS_KEY = "dy_quarantine_address"
+
+#: How many rows were held back.
+_REJECTED_COUNT_KEY = "dy_rejected_count"
+
+#: Which rule sets rejected how many rows together.
+_REJECTED_RULES_KEY = "dy_rejected_rules"
+
+#: A bounded sample of the rows that were held back, rule columns included.
+_REJECTED_SAMPLE_KEY = "dy_rejected_sample"
+
+#: What the four rejection keys hold, spelled out because Dagster's own metadata union is wider than anything built here.
+type Rejection = Mapping[str, str | int | dg.TableMetadataValue]
+
 
 def _require_frame(frame: object, asset: str) -> None:
     """Reject a return value neither the shape check nor the skip can read.
@@ -46,13 +62,13 @@ def _require_frame(frame: object, asset: str) -> None:
 
     Dagster's own error rather than the package's. This is a wiring mistake, not a data one.
 
-    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dataframely_asset` takes the frame off it before `process` sees anything (#77), so on that path this guard sees only what the result carried.
+    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dy_asset` takes the frame off it before `process` sees anything (#77), so on that path this guard sees only what the result carried.
 
     The message names four routes. Sending the reader to a plain `@dg.asset` was the whole of the old advice, which made it wrong for anyone who wanted metadata on a validated table. It is right for the one case it still closes: an asset that writes its own storage and never holds a frame at all. That reader gets told what they keep, since `schema_metadata` fills a plain asset's Columns tab and nothing about it needs the decorator.
     """
     if frame is None or isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. `dataframely_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the shape check reads its columns and dtypes before anything is written. `dy_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
@@ -137,7 +153,7 @@ def _check_results(  # noqa: PLR0913 - every setting the specs were derived with
 
 
 def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
-    """Build the frame the quarantine out materializes.
+    """Build the frame the writer is handed.
 
     `FailureInfo.details()` rather than `invalid()`: the invalid rows plus a rule column for every rule, reading `valid` / `invalid` / `unknown`. Attribution has to be here because check-metadata samples are bounded. Without it the per-row detail exists nowhere at volume.
 
@@ -164,6 +180,28 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
     return details.rename(renames).with_columns(
         pl.col(name).cast(pl.String) for name in renames.values()
     )
+
+
+def _addressed(
+    checks: list[dg.AssetCheckResult], address: str
+) -> list[dg.AssetCheckResult]:
+    """Copy the quarantine's address onto every check result.
+
+    For the exits that raise. There is no materialization to carry the address on those, and a reader looking at a failed run still has to be told where its evidence went. A run that materializes carries the address once, on the table, rather than once per check.
+
+    Rebuilt rather than mutated, because `dg.AssetCheckResult` is a tuple. Every field is named, so a seventh added upstream would silently drop; `tests/test_upstream_characterization.py` pins the six and fails there instead.
+    """
+    return [
+        dg.AssetCheckResult(
+            passed=check.passed,
+            asset_key=check.asset_key,
+            check_name=check.check_name,
+            metadata={**(check.metadata or {}), _ADDRESS_KEY: address},
+            severity=check.severity,
+            description=check.description,
+        )
+        for check in checks
+    ]
 
 
 def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue:
@@ -199,7 +237,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     frame: pl.DataFrame | pl.LazyFrame | None,
     *,
     valid_key: dg.AssetKey,
-    quarantine_key: dg.AssetKey | None = None,
+    quarantine_writer: QuarantineWriter | None = None,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
     max_failure_samples: int | None = None,
@@ -211,9 +249,11 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
 
     Three phases and six exits. The skip takes the first exit and runs no phase at all. Otherwise the shape check runs first, so a wrong-shaped frame never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which keeps the peak at the frame's size rather than the plan's. An eager one bypasses that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`. It is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
-    Which of the other five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_key` is the whole policy. With it, invalid rows are written next door and the run stays green. Without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the valid out is skipped rather than materialized empty.
+    Which of the other five a run reaches is decided by the asset's shape, never by an argument's value. `quarantine_writer` is the whole policy. With it, invalid rows are written next door and the run stays green. Without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the table is skipped rather than materialized empty.
 
-    **The skip still reports every check, and it has to.** A check spec is a non-optional op output whatever `is_required` the out carries, so a step that returns without answering one dies on `did not return an output for non-optional output`. The rules therefore run over `Schema.create_empty()` and report what that says, which is a pass for every one of them. That is computed rather than asserted: each rule was evaluated, over zero rows, and none was violated. Dagster records the evaluations with no `target_materialization_data`, so a passing check on a skipped partition does not attach itself to some earlier run's materialization (#95).
+    **This writes the quarantine and never learns where it went.** The writer is called with the invalid rows and hands back an address: no root, no path, no IO manager, no context (ADR-0001). The decorator builds the writer, which is the one place the execution context is read; a hand-wirer builds their own, or reaches for `delegating_writer` and `file_writer`.
+
+    **The skip still reports every check, and it has to.** A check spec is a non-optional op output whatever `output_required` the asset carries, so a step that returns without answering one dies on `did not return an output for non-optional output`. The rules therefore run over `Schema.create_empty()` and report what that says, which is a pass for every one of them. That is computed rather than asserted: each rule was evaluated, over zero rows, and none was violated. Dagster records the evaluations with no `target_materialization_data`, so a passing check on a skipped partition does not attach itself to some earlier run's materialization (#95).
 
     Parameters
     ----------
@@ -222,9 +262,9 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     frame
         Whatever the decorated function returned, or `None` to skip.
     valid_key
-        The asset key the validated frame materializes under. Read it off the `AssetsDefinition` or resolve it with `context.asset_key_for_output(...)` rather than building it by hand. An out that declares `key_prefix` has a key its output name does not spell, and a key no out owns fails the step on the first yield with `Asset key ... not found in AssetsDefinition`. The decorator takes the first route, which is what leaves it callable outside a run (ADR-0002). The second needs one.
-    quarantine_key
-        The asset key the invalid rows materialize under, or `None` when the asset declares no quarantine.
+        The asset key the validated frame materializes under. `context.asset_key` is the whole of it on a single-asset step, which is what `dg.asset` builds. A key the asset does not own fails the step on the first yield with `Asset key ... not found in AssetsDefinition`, so build it from the definition rather than by hand. The decorator resolves it where the asset is declared, which is what leaves it callable outside a run (ADR-0002).
+    quarantine_writer
+        What puts the invalid rows somewhere a reader can open them, or `None` when the asset declares no quarantine. It is called once, with the quarantine frame, on each of the two exits a declared quarantine can reach with rows to hold: the partial one and the one where nothing survived. Its return value is reported as the quarantine's address. Passing `None` is the third of those exits, where there is nowhere to route the rows and the run aborts instead.
     check_granularity
         How far the rules collapse. Pass the same value the check specs were derived with. The decorator resolves it once at definition time and hands the resolved value to both, so a run cannot report against a check list it did not declare.
     multi_column_rules
@@ -234,13 +274,13 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     statistics
         Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
     row_sample
-        How many of the valid output's rows reach its materialization metadata. Unset resolves through the settings chain, which ships five.
+        How many rows reach the materialization metadata, of what was written and of what was held back. Unset resolves through the settings chain, which ships five.
     temp_dir
         Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields
     ------
-    A `MaterializeResult` per out that survived its outcome, then every check result standalone. Nothing is bundled onto a materialization, deliberately. Direct invocation satisfies a check output only from a standalone `AssetCheckResult`, which is what makes an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed. The skip yields check results and nothing else.
+    The valid table's `MaterializeResult` where the run wrote one, then every check result standalone. Nothing is bundled onto a materialization, deliberately. Direct invocation satisfies a check output only from a standalone `AssetCheckResult`, which is what makes an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed. The quarantine is written rather than yielded, so it never appears here: it is evidence of a run, not an out.
 
     Raises
     ------
@@ -298,11 +338,11 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     # --- Phase 3: the row filter ---
     # Eager either way by now, which is what `filter` would have done anyway: it collects internally, and `row_count` needs the length.
     result, failure = schema.filter(materialized, cast=False)
-    # Annotated because `filter` returns Dataframely's phantom `dy.DataFrame[Schema]`, and the out is declared as a plain Polars frame.
+    # Annotated because `filter` returns Dataframely's phantom `dy.DataFrame[Schema]`, and the asset is declared as a plain Polars frame.
     valid: pl.DataFrame = result
     rejected: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
-    aborting = bool(rejected) and (quarantine_key is None or not len(valid))
+    aborting = bool(rejected) and (quarantine_writer is None or not len(valid))
     checks = _check_results(
         schema,
         failure,
@@ -313,10 +353,17 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         max_failure_samples=failure_samples,
     )
 
-    def valid_result() -> dg.MaterializeResult[pl.DataFrame]:
-        """Build the valid out's materialization, where it is yielded rather than ahead of every exit.
+    def valid_result(
+        rejection: Rejection | None = None,
+    ) -> dg.MaterializeResult[pl.DataFrame]:
+        """Build the materialization, where it is yielded rather than ahead of every exit.
 
         Two of the five exits discard it, and the statistics are a pass over the whole frame, so building it early would charge an aborting run for a table nobody will see.
+
+        Parameters
+        ----------
+        rejection
+            What the run held back, on the one exit that both wrote a table and rejected rows. Absent on a clean run, where there is nothing to say.
         """
         return dg.MaterializeResult(
             asset_key=valid_key,
@@ -325,44 +372,39 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
                 "dagster/row_count": len(valid),
                 **statistics_metadata(valid, enabled=emit_statistics),
                 **sample_metadata(SAMPLE_KEY, sample_rows(valid, sampled_rows)),
+                **(rejection or {}),
             },
         )
 
     if not rejected:
-        # Exit: everything survived. The quarantine out is skipped rather than written empty, so an empty quarantine partition means something.
+        # Exit: everything survived. The writer is never called, so a clean run leaves no empty quarantine and an empty one means something.
         yield valid_result()
         yield from checks
         return
 
-    if quarantine_key is None:
+    if quarantine_writer is None:
         # Exit: data defect with nowhere to route it, so consent to partial data was never given.
         # Both halves are discarded and the last-known-good table survives, but every rule still reports, so the failed run says what failed and by how much.
         yield from checks
         raise ValidationAbortError(schema.__name__, rejected, failure.counts())
 
-    # Bound once: the frame is written and summarized, and `quarantine_frame` rebuilds it out of `details()` on every call.
+    # Bound once: the frame is written and sampled, and `quarantine_frame` rebuilds it out of `details()` on every call.
     invalid: pl.DataFrame = quarantine_frame(schema, failure)
-    quarantine_result = dg.MaterializeResult(
-        asset_key=quarantine_key,
-        value=invalid,
-        metadata={
-            "dagster/row_count": rejected,
-            "cooccurrence": _cooccurrence(failure.cooccurrence_counts()),
-            # Summarized like any other table, because it is one somebody reads. What the rejected values look like in aggregate is the question the checks and `cooccurrence` do not answer: those say which rules failed and how often, never what the rows that failed them hold.
-            **statistics_metadata(invalid, enabled=emit_statistics),
-            # No row sample, deliberately. These rows already reach the event log once, through the check that rejected each of them and with the rule attached. A second copy here would carry less and cost the same.
-        },
-    )
+    # Written before anything below can raise, so the rows that failed a run are readable whichever way it ends.
+    address: str = quarantine_writer(invalid)
+    rejection: Rejection = {
+        _ADDRESS_KEY: address,
+        _REJECTED_COUNT_KEY: rejected,
+        _REJECTED_RULES_KEY: _cooccurrence(failure.cooccurrence_counts()),
+        # Sized by the same setting as the valid output's sample, because one number governs how many real rows a run puts in the event log. Statistics are deliberately not computed: what the rejected values look like in aggregate is a question about a table nobody is going to consume.
+        **sample_metadata(_REJECTED_SAMPLE_KEY, sample_rows(invalid, sampled_rows)),
+    }
 
     if not len(valid):
-        # Exit: nothing survived. The rows are all inspectable next door, but the valid out is skipped so an empty table cannot replace a last-known-good snapshot.
-        yield quarantine_result
-        yield from checks
-        raise NothingSurvivedError(
-            schema.__name__, rejected, failure.counts(), quarantine_key.to_user_string()
-        )
+        # Exit: nothing survived. The rows are all written, but the table is skipped so an empty one cannot replace a last-known-good snapshot.
+        yield from _addressed(checks, address)
+        raise NothingSurvivedError(schema.__name__, rejected, failure.counts(), address)
 
-    # Exit: the middle case. The survivors are written, the rest are inspectable next door, and downstream proceeds on the data that is fine.
-    yield valid_result()
-    yield quarantine_result
+    # Exit: the middle case. The survivors are written, the rest are readable at the address the materialization names, and downstream proceeds on the data that is fine.
+    yield valid_result(rejection)
     yield from checks

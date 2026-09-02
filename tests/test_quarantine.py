@@ -1,12 +1,15 @@
-"""What a quarantine is called, and where it goes when no IO manager places it.
+"""What a quarantine is called, where it goes, and who puts it there.
 
-Both functions are pure, so most of this file needs no run. The three that do run cover the fallback end to end: a root equal to a `UPathIOManager`'s `base_dir` puts the file where that manager already looks, so a downstream asset reads it with no help from this package. Delegation (ADR-0006) is the usual path and belongs to #106; nothing here asserts it.
+Three surfaces, one naming rule. `quarantine_path` and `build_quarantine_spec` are pure, so most of this file needs no run. The writers are not, and the delegation tests are the only ones in the suite that care which IO manager is behind the asset.
+
+**Delegation is asserted against two managers, and it has to be** (ADR-0006). The whole claim is that nothing in the package knows where the rows are going, and one manager cannot show that. `PolarsParquetIOManager` is a `UPathIOManager` and `DuckDBPolarsIOManager` is a `DbIOManager`, which is one from each base class Dagster ships.
 
 The multi-partition spelling is asserted here against a literal and pinned against `UPathIOManager`'s own path in `test_upstream_characterization.py`. Two assertions rather than one: this file says what the rule is, that one says whose rule it is.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 import dagster as dg
 import polars as pl
@@ -14,9 +17,24 @@ import pytest
 from polars.testing import assert_frame_equal
 from upath import UPath
 
-from dagster_dataframely import build_quarantine_spec
-from dagster_dataframely.wiring import quarantine_frame, quarantine_path
-from tests.scenario import Orders, mixed_orders, storage
+from dagster_dataframely import build_quarantine_spec, dy_asset
+from dagster_dataframely.errors import NothingSurvivedError
+from dagster_dataframely.wiring import (
+    file_writer,
+    process,
+    quarantine_frame,
+    quarantine_path,
+)
+from tests.scenario import (
+    WAREHOUSE_SCHEMA,
+    Orders,
+    cooccurring_orders,
+    hopeless_orders,
+    mixed_orders,
+    storage,
+    tables,
+    warehouse,
+)
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 _ORDERS = dg.AssetKey(["orders"])
@@ -294,3 +312,206 @@ def test_a_multi_partitioned_file_lands_where_the_manager_looks(tmp_path: Path):
     )
 
     assert_frame_equal(loaded, written)
+
+
+# --- the delegating writer ---
+_DAY = "2026-08-01"
+_ONE_DAY = dg.StaticPartitionsDefinition([_DAY])
+
+#: What `DbIOManager` needs to delete a partition before rewriting it, and what a user already declares for their own partitioned table. It is forwarded because the borrowed context copies definition metadata, never because anything here reads it.
+_PARTITION_EXPR = {"partition_expr": "ordered_at"}
+
+#: The two exits that reject rows and have somewhere to put them. The third rejecting exit has no writer by definition, so there is nothing for it to place.
+_REJECTING = [
+    pytest.param(mixed_orders, 3, False, id="partial"),
+    pytest.param(hopeless_orders, 2, True, id="nothing survived"),
+]
+
+
+def _delegating(
+    frame: Callable[[], pl.DataFrame],
+    *,
+    partitioned: bool,
+    partition_expr: bool = True,
+) -> dg.AssetsDefinition:
+    """Declare the asset the delegation tests run.
+
+    Prefixed with the warehouse schema, because `DbIOManager` addresses a table as `<schema>.<name>` off the key's last part and reads the schema off its own configuration.
+    """
+
+    @dy_asset(
+        Orders,
+        name="orders",
+        key_prefix=WAREHOUSE_SCHEMA,
+        quarantine=True,
+        partitions_def=_ONE_DAY if partitioned else None,
+        metadata=_PARTITION_EXPR if partition_expr else None,
+    )
+    def orders() -> pl.DataFrame:
+        return frame()
+
+    return orders
+
+
+def _run(
+    asset: dg.AssetsDefinition,
+    resources: dict[str, Any],
+    *,
+    partitioned: bool,
+    aborts: bool,
+) -> None:
+    """Materialize the asset, tolerating the abort that is the point of one of the exits."""
+    result = dg.materialize(
+        [asset],
+        resources=resources,
+        partition_key=_DAY if partitioned else None,
+        raise_on_error=False,
+    )
+
+    assert result.success is not aborts
+
+
+@pytest.mark.parametrize(("frame", "rejected", "aborts"), _REJECTING)
+@pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
+def test_a_filesystem_manager_puts_the_quarantine_beside_the_table(
+    tmp_path: Path,
+    frame: Callable[[], pl.DataFrame],
+    rejected: int,
+    aborts: bool,
+    partitioned: bool,
+):
+    """A parquet file beside the table, with no configuration. The path is the manager's own answer to the quarantine's asset key, and the layout it gives a partition comes along with it."""
+    _run(
+        _delegating(frame, partitioned=partitioned),
+        storage(tmp_path),
+        partitioned=partitioned,
+        aborts=aborts,
+    )
+    leaf = (
+        f"orders_quarantine/{_DAY}.parquet"
+        if partitioned
+        else "orders_quarantine.parquet"
+    )
+
+    assert pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height == rejected
+
+
+@pytest.mark.parametrize(("frame", "rejected", "aborts"), _REJECTING)
+@pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
+def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
+    tmp_path: Path,
+    frame: Callable[[], pl.DataFrame],
+    rejected: int,
+    aborts: bool,
+    partitioned: bool,
+):
+    """The case a root cannot express. A warehouse stores tables, so the invalid rows belong in one beside the table they came from rather than in a file somewhere else.
+
+    The partitioned runs are also where `partition_expr` is forwarded off the definition metadata: without it `DbIOManager` refuses, which the test below asserts.
+    """
+    _run(
+        _delegating(frame, partitioned=partitioned),
+        warehouse(tmp_path),
+        partitioned=partitioned,
+        aborts=aborts,
+    )
+    written = tables(tmp_path)
+
+    assert "orders_quarantine" in written
+    assert written["orders_quarantine"].height == rejected
+    assert "dy_rule__amount__min" in written["orders_quarantine"].columns
+
+
+def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):
+    """ADR-0004 promised the rows survive a run that fails, and delegation keeps that promise: the writer is called inside the asset body, before anything raises."""
+    with pytest.raises(NothingSurvivedError):
+        dg.materialize(
+            [_delegating(hopeless_orders, partitioned=False)],
+            resources=storage(tmp_path),
+        )
+
+    assert (tmp_path / WAREHOUSE_SCHEMA / "orders_quarantine.parquet").exists()
+
+
+def test_a_partitioned_database_asset_fails_with_the_managers_own_error(tmp_path: Path):
+    """`partition_expr` is `DbIOManager`'s requirement, not this package's, and the user already has to declare it for their own partitioned table. The failure is left as upstream words it, because a guard here would state the requirement twice."""
+    result = dg.materialize(
+        [_delegating(mixed_orders, partitioned=True, partition_expr=False)],
+        resources=warehouse(tmp_path),
+        partition_key=_DAY,
+        raise_on_error=False,
+    )
+    (failure,) = result.get_step_failure_events()
+
+    assert not result.success
+    assert "partition_expr" in str(failure.step_failure_data.error)
+
+
+def test_the_address_is_the_key_the_manager_resolved(tmp_path: Path):
+    """What the run reports is the asset key, not a path. The manager's own `path` or `Query` goes nowhere, because the borrowed context is not a real output, so the package says the one thing it knows (ADR-0006)."""
+    result = dg.materialize(
+        [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
+    )
+    (event,) = result.get_asset_materialization_events()
+    metadata = event.step_materialization_data.materialization.metadata
+
+    assert metadata["dy_quarantine_address"] == dg.MetadataValue.text(
+        f"{WAREHOUSE_SCHEMA}/orders_quarantine"
+    )
+
+
+def test_the_managers_own_metadata_does_not_reach_the_materialization(tmp_path: Path):
+    """The risk the clone carries. A cloned context reaches the same `add_output_metadata` the real output does, and `dagster-polars` calls it with the path and row count of whatever it just wrote.
+
+    It rebinds the mapping on the object it was called on, so the quarantine's numbers land on the clone and the step reads the original. The frame here splits 3 valid against 1 held back, so a leak would be visible as a row count of 1.
+    """
+    result = dg.materialize(
+        [_delegating(cooccurring_orders, partitioned=False)],
+        resources=storage(tmp_path),
+    )
+    (event,) = result.get_asset_materialization_events()
+    metadata = event.step_materialization_data.materialization.metadata
+
+    assert result.success
+    assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
+    assert "orders_quarantine" not in str(metadata.get("path", ""))
+
+
+# --- the file writer ---
+def test_the_file_writer_writes_where_the_path_rule_says(tmp_path: Path):
+    """Asserted through `process` with no run at all, which is the whole point of a writer: no context, no manager, no instance."""
+    events = list(
+        process(
+            Orders,
+            mixed_orders(),
+            valid_key=_ORDERS,
+            quarantine_writer=file_writer(_ORDERS, tmp_path),
+        )
+    )
+    (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
+    path = tmp_path / "orders_quarantine.parquet"
+
+    assert (materialization.metadata or {})["dy_quarantine_address"] == str(path)
+    assert_frame_equal(pl.read_parquet(path), _invalid_rows())
+
+
+def test_the_file_writer_creates_the_directories_it_needs(tmp_path: Path):
+    """A prefix is a directory on disk, and nothing else in the run will have made it."""
+    key = dg.AssetKey(["sales", "eu", "orders"])
+
+    file_writer(key, tmp_path)(_invalid_rows())
+
+    assert (tmp_path / "sales" / "eu" / "orders_quarantine.parquet").exists()
+
+
+def test_the_file_writer_puts_a_partition_under_the_leaf(tmp_path: Path):
+    file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
+
+    assert (tmp_path / "orders_quarantine" / "2026-01-02.parquet").exists()
+
+
+def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(tmp_path: Path):
+    """Built at one exit and called at another, so a writer that made its directory eagerly would leave an empty one on every clean run."""
+    file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
+
+    assert list(tmp_path.iterdir()) == []

@@ -6,7 +6,7 @@ A decorated function returns the frame to validate, or a `dg.MaterializeResult` 
 
 Two halves, and neither reads without the other. The unwrap runs between calling the decorated function and handing the frame to `process`. The fold runs over what `process` yields. `process` itself is untouched by both, so a hand-wired asset still hands it a frame and its own guard still says so.
 
-The unwrap takes `value`. The fold takes `metadata`, `data_version` and `tags`. That is four of the six fields. The other two are refused here, because the decorator decides the asset keys from the outs it declares and the check results from the schema's rules.
+The unwrap takes `value`. The fold takes `metadata`, `data_version` and `tags`. That is four of the six fields. The other two are refused here, because the decorator decides the asset key from what it was declared with and the check results from the schema's rules.
 """
 
 import dagster as dg
@@ -21,7 +21,7 @@ from dagster_dataframely.errors import (
 #: A `dg.MaterializeResult` a decorated function returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would accept neither.
 ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.LazyFrame]
 
-#: Everything a decorated function is allowed to return. A static promise only. `unwrap` and the staging decision both read the object that arrives, never the annotation it was declared under, so a wrongly annotated function still behaves as whatever it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it. This decorator cannot: `dagster_type` describes what the out stores, validation is eager, and the out holds a `DataFrame` however the decorated function arrived at it.
+#: Everything a decorated function is allowed to return. A static promise only. `unwrap` and the staging decision both read the object that arrives, never the annotation it was declared under, so a wrongly annotated function still behaves as whatever it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it. This decorator cannot: `dagster_type` describes what the asset stores, validation is eager, and the asset holds a `DataFrame` however the decorated function arrived at it.
 #:
 #: `None` is the skip, and it is a value rather than an exception on purpose. The decorator cannot tell a source file that is legitimately absent from a path that is misconfigured, so it never catches one to decide. The author writes the test that returns `None` (#95).
 DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None
@@ -41,7 +41,7 @@ def unwrap(
     returned
         Whatever the decorated function returned, frame or result or `None` alike.
     asset
-        The valid out's asset key, rendered, for the messages.
+        The asset key, rendered, for the messages.
 
     Returns
     -------
@@ -73,11 +73,11 @@ def fold(
     *,
     valid_key: dg.AssetKey,
 ) -> AssetYield:
-    """Carry the returned result's remaining three fields onto the valid out's materialization.
+    """Carry the returned result's remaining three fields onto the asset's materialization.
 
     Three, because the unwrap already took `value`. Whatever it still holds is the frame `process` has since validated, so nothing here reads it.
 
-    The valid out only. The quarantine keeps the tags and the data version Dagster gives it, on the same reasoning that keeps `automation_condition` and `freshness_policy` off the quarantine out: one returned result describes the table the decorated function produced, not the rows the schema rejected.
+    The table only. Nothing reaches the quarantine, which materializes no event to carry a tag or a data version: it is evidence of a run rather than an asset (ADR-0004).
 
     The two metadata mappings combine with the package's own keys last, so a returned `dagster/row_count` loses to the one this package counted. The decorator already uses that precedence for definition metadata, and for the same reason: those keys are this package's surface, and a collision is a mistake.
 
@@ -94,7 +94,7 @@ def fold(
 
     Yields
     ------
-    The same results in the same order, with the valid out's materialization rebuilt.
+    The same results in the same order, with the materialization rebuilt.
     """
     if returned_result is None:
         yield from results

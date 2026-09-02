@@ -1,11 +1,10 @@
-"""What a partitioned `@dataframely_asset` actually does, asserted rather than assumed.
+"""What a partitioned `@dy_asset` actually does, asserted rather than assumed.
 
 Partitioning is forwarded, not designed around (#25). The risk was never that the mechanics are wrong. It is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
 
 Static partitions throughout, except where a test says otherwise. They name the frame each partition gets, which makes the fixture readable. A date would only obscure it.
 """
 
-import inspect
 from pathlib import Path
 
 import dagster as dg
@@ -13,7 +12,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dataframely_asset
+from dagster_dataframely import dy_asset
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -30,9 +29,7 @@ _QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
 _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 
 
-@dataframely_asset(
-    schema=Orders, name="orders", quarantine=dg.AssetOut(), partitions_def=_PARTITIONS
-)
+@dy_asset(Orders, name="orders", quarantine=True, partitions_def=_PARTITIONS)
 def _orders() -> pl.DataFrame:
     # Reached through `.get()` rather than through a `context` parameter, which this decorated function is free to declare (ADR-0002). Both work inside a run, and covering the accessor here is what keeps a Dagster release that broke it visible.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
@@ -80,16 +77,10 @@ def _row_counts(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, object]:
 
 
 # --- the quarantine cannot escape its asset's partitioning ---
-def test_both_outs_carry_the_assets_partitioning():
+def test_the_asset_carries_its_partitioning():
     assert {spec.key: spec.partitions_def for spec in _orders.specs} == {
-        _GOOD_KEY: _PARTITIONS,
-        _QUARANTINE_KEY: _PARTITIONS,
+        _GOOD_KEY: _PARTITIONS
     }
-
-
-def test_an_out_cannot_declare_partitioning_of_its_own():
-    """Structural rather than enforced: `partitions_def` lives on the `multi_asset`, and `dg.AssetOut` has no such parameter, so there is no spelling in which a quarantine escapes its asset's partitioning and becomes an unpartitioned pile of bad rows."""
-    assert "partitions_def" not in inspect.signature(dg.AssetOut.__init__).parameters
 
 
 # --- validation runs per partition, on that partition's frame ---
@@ -104,9 +95,10 @@ def test_each_partition_materializes_its_own_frame(tmp_path: Path):
 
 
 def test_the_quarantine_lands_under_the_partition_that_produced_it(tmp_path: Path):
+    """The borrowed output context carries the step's own partition key, so a backfill of one partition rewrites one quarantine and leaves the others alone."""
     result = _materialize(tmp_path, "mixed")
 
-    assert _partitions(result) == {_GOOD_KEY: "mixed", _QUARANTINE_KEY: "mixed"}
+    assert _partitions(result) == {_GOOD_KEY: "mixed"}
     assert pl.read_parquet(tmp_path / "orders_quarantine" / "mixed.parquet").height == 3
 
 
@@ -123,7 +115,7 @@ def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
     _materialize(tmp_path, "clean")
     counts = _row_counts(_materialize(tmp_path, "mixed"))
 
-    assert counts == {_GOOD_KEY: 3, _QUARANTINE_KEY: 3}
+    assert counts == {_GOOD_KEY: 3}
 
 
 # --- a partition whose frame drifts ---
@@ -233,7 +225,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
     """
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
-    @dataframely_asset(schema=Orders, name="daily_orders", partitions_def=daily)
+    @dy_asset(Orders, name="daily_orders", partitions_def=daily)
     def daily_orders() -> pl.DataFrame:
         return clean_orders()
 
@@ -258,10 +250,10 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 
 # --- backfill policy ---
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
-    """`backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage. `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write. So the decorator leaves it alone rather than rejecting a policy it cannot know the manager for."""
+    """`backfill_policy` forwards like every other `dg.asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage. `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write. So the decorator leaves it alone rather than rejecting a policy it cannot know the manager for."""
 
-    @dataframely_asset(
-        schema=Orders,
+    @dy_asset(
+        Orders,
         name="ranged",
         partitions_def=_PARTITIONS,
         backfill_policy=dg.BackfillPolicy.single_run(),
@@ -304,7 +296,7 @@ _DEPARTED = dg.MultiPartitionKey({"month": "2026-02", "distributor": "departed"}
 _REPORTS_KEY = dg.AssetKey(["reports"])
 
 
-@dataframely_asset(schema=Orders, name="reports", partitions_def=_GRID)
+@dy_asset(Orders, name="reports", partitions_def=_GRID)
 def _reports() -> pl.DataFrame | None:
     keys = dg.AssetExecutionContext.get().partition_key.keys_by_dimension
     if keys == {"month": "2026-02", "distributor": "departed"}:

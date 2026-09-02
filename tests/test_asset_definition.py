@@ -1,4 +1,4 @@
-"""Definition-time behaviour of `@dataframely_asset`, asserted with no execution.
+"""Definition-time behaviour of `@dy_asset`, asserted with no execution.
 
 These tests assert against the `AssetsDefinition` the decorator returns. Everything a user sees before the asset has ever run is on it: the keys, the check specs, and the definition metadata that fills the Columns tab.
 """
@@ -13,13 +13,12 @@ import polars as pl
 import pytest
 from dagster._config.field_utils import Shape
 
-from dagster_dataframely import dataframely_asset
+from dagster_dataframely import dy_asset
 from dagster_dataframely.errors import (
     CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
     InvalidSettingError,
-    QuarantineSettingError,
     ReservedColumnError,
 )
 from tests.scenario import Orders
@@ -51,7 +50,7 @@ _RULES = [
 ]
 
 
-@dataframely_asset(schema=Orders, group_name="sales")
+@dy_asset(Orders, group_name="sales")
 def orders() -> pl.DataFrame:
     """The decorated function's own docstring, which `Orders`'s outranks."""
     return pl.DataFrame()
@@ -61,12 +60,12 @@ def _specs_by_name(asset: dg.AssetsDefinition) -> dict[str, dg.AssetCheckSpec]:
     return {spec.name: spec for spec in asset.check_specs}
 
 
-def test_the_door_produces_a_multi_asset_with_one_out():
+def test_the_door_produces_one_asset():
     assert orders.keys == {dg.AssetKey(["orders"])}
     assert orders.group_names_by_key == {dg.AssetKey(["orders"]): "sales"}
 
 
-def test_the_out_is_not_required():
+def test_the_output_is_not_required():
     """The shape check and the abort paths both end the step without yielding the output."""
     (spec,) = orders.specs
     assert spec.skippable
@@ -75,7 +74,7 @@ def test_the_out_is_not_required():
 def test_a_key_prefix_carries_the_checks_with_it():
     """The key is built once and handed to both surfaces, so the checks cannot lag it."""
 
-    @dataframely_asset(schema=Orders, key_prefix="sales")
+    @dy_asset(Orders, key_prefix="sales")
     def prefixed() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -86,7 +85,7 @@ def test_a_key_prefix_carries_the_checks_with_it():
 
 
 def test_a_sequence_key_prefix_nests():
-    @dataframely_asset(schema=Orders, key_prefix=["warehouse", "sales"])
+    @dy_asset(Orders, key_prefix=["warehouse", "sales"])
     def nested() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -96,7 +95,7 @@ def test_a_sequence_key_prefix_nests():
 def test_name_overrides_the_function_name():
     """A private-looking function can back a public asset key."""
 
-    @dataframely_asset(schema=Orders, name="orders", key_prefix="sales")
+    @dy_asset(Orders, name="orders", key_prefix="sales")
     def _orders_impl() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -106,7 +105,7 @@ def test_name_overrides_the_function_name():
 def test_upstream_dependencies_bind_as_ordinary_parameters():
     """`functools.wraps` is what carries the signature through the wrapper."""
 
-    @dataframely_asset(schema=Orders)
+    @dy_asset(Orders)
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return raw_orders
 
@@ -122,14 +121,14 @@ class _Warehouse(dg.ConfigurableResource[None]):
     dsn: str
 
 
-def test_every_forwarded_multi_asset_parameter_reaches_the_definition():
-    """Twelve of the fourteen at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: one changes the asset key rather than landing unchanged, and the other cannot share an op with `backfill_policy`."""
+def test_every_forwarded_dg_asset_parameter_reaches_the_definition():
+    """Twelve at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: one changes the asset key rather than landing unchanged, and the other cannot share an op with `backfill_policy`."""
     partitions = dg.StaticPartitionsDefinition(["a", "b"])
     retry = dg.RetryPolicy(max_retries=2)
     backfill = dg.BackfillPolicy.single_run()
 
-    @dataframely_asset(
-        schema=Orders,
+    @dy_asset(
+        Orders,
         ins={"raw": dg.AssetIn(key=dg.AssetKey(["upstream_frame"]))},
         deps=["upstream"],
         description="Explicit description.",
@@ -171,20 +170,20 @@ def test_every_forwarded_multi_asset_parameter_reaches_the_definition():
 def test_pool_reaches_the_underlying_op():
     """Separate because a pool and a `backfill_policy` cannot both sit on one op."""
 
-    @dataframely_asset(schema=Orders, pool="limited")
+    @dy_asset(Orders, pool="limited")
     def pooled() -> pl.DataFrame:
         return pl.DataFrame()
 
     assert pooled.op.pool == "limited"
 
 
-def test_asset_level_parameters_reach_the_out():
-    """All eight at once. Seven land on the `AssetOut` because `@dg.multi_asset` has no per-out vocabulary for them. `group_name` lands there because Dagster refuses it on the `multi_asset` as soon as an out names one, which leaves the quarantine free to claim its own. Same names as `@dg.asset` uses, because the decorator is designed for one table."""
+def test_the_asset_shaping_parameters_reach_the_definition():
+    """The eight that describe the table rather than the op. Same names as `@dg.asset` uses, and forwarded to it unchanged."""
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
-    @dataframely_asset(
-        schema=Orders,
+    @dy_asset(
+        Orders,
         io_manager_key="warehouse",
         group_name="sales",
         metadata={"sla_hours": 4},
@@ -200,7 +199,7 @@ def test_asset_level_parameters_reach_the_out():
     (spec,) = routed.specs
     key = dg.AssetKey(["routed"])
 
-    assert routed.node_def.output_dict["routed"].io_manager_key == "warehouse"
+    assert routed.node_def.output_dict["result"].io_manager_key == "warehouse"
     assert spec.group_name == "sales"
     assert routed.metadata_by_key[key]["sla_hours"] == 4
     assert spec.tags["layer"] == "silver"
@@ -213,8 +212,8 @@ def test_asset_level_parameters_reach_the_out():
 def test_user_metadata_cannot_displace_the_packages_own():
     """The decorator exists to fill the Columns tab, so a colliding user key loses."""
 
-    @dataframely_asset(
-        schema=Orders,
+    @dy_asset(
+        Orders,
         metadata={_COLUMN_SCHEMA_KEY: "mine", "own": "kept"},
     )
     def collides() -> pl.DataFrame:
@@ -244,7 +243,7 @@ class _Blank(dy.Schema):
 
 
 def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
-    @dataframely_asset(schema=_Documented)
+    @dy_asset(_Documented)
     def postal_codes() -> pl.DataFrame:
         """The decorated function's own docstring, which the schema outranks."""
         return pl.DataFrame()
@@ -254,7 +253,7 @@ def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
 
 
 def test_an_explicit_description_outranks_the_schema_docstring():
-    @dataframely_asset(schema=_Documented, description="Said at the call site.")
+    @dy_asset(_Documented, description="Said at the call site.")
     def explicit() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -266,7 +265,7 @@ def test_an_explicit_description_outranks_the_schema_docstring():
 def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
     """The last source is Dagster's, not the package's. With nothing to fill the gap, the decorated function's docstring lands, exactly as it did before."""
 
-    @dataframely_asset(schema=_Undocumented)
+    @dy_asset(_Undocumented)
     def undocumented() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -280,7 +279,7 @@ def test_the_base_schemas_docstring_never_reaches_an_asset():
 
     assert dy.Schema.__doc__ is not None
 
-    @dataframely_asset(schema=_Undocumented, name="inherits_nothing")
+    @dy_asset(_Undocumented, name="inherits_nothing")
     def inherits_nothing() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -291,7 +290,7 @@ def test_the_base_schemas_docstring_never_reaches_an_asset():
 def test_an_empty_description_counts_as_absent_too():
     """The same emptiness rule on both sources. Neither can say "no description at all", because Dagster's fallback takes over the moment the package has nothing."""
 
-    @dataframely_asset(schema=_Documented, description="")
+    @dy_asset(_Documented, description="")
     def empty() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -301,7 +300,7 @@ def test_an_empty_description_counts_as_absent_too():
 
 
 def test_a_whitespace_only_schema_docstring_counts_as_absent():
-    @dataframely_asset(schema=_Blank)
+    @dy_asset(_Blank)
     def blank() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -313,7 +312,7 @@ def test_a_whitespace_only_schema_docstring_counts_as_absent():
 def test_a_multi_line_schema_docstring_arrives_dedented():
     """Raw `__doc__` keeps its source indentation, which the catalog renders as a code block."""
 
-    @dataframely_asset(schema=Orders)
+    @dy_asset(Orders)
     def dedented() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -324,33 +323,6 @@ def test_a_multi_line_schema_docstring_arrives_dedented():
         spec.description
     )
     assert spec.description == spec.description.strip()
-
-
-def test_the_quarantine_inherits_the_resolved_description():
-    """It is what already happens at every call site that passes `description=Schema.__doc__` by hand, so filling the description does not move the quarantine."""
-
-    @dataframely_asset(schema=_Documented, quarantine=dg.AssetOut())
-    def inherited() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    assert inherited.descriptions_by_key == {
-        dg.AssetKey(["inherited"]): "Postal codes, one row per code.",
-        dg.AssetKey(["inherited_quarantine"]): "Postal codes, one row per code.",
-    }
-
-
-def test_the_quarantine_can_describe_itself_instead():
-    @dataframely_asset(
-        schema=_Documented,
-        quarantine=dg.AssetOut(description="The codes that failed a rule."),
-    )
-    def owned() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    assert owned.descriptions_by_key == {
-        dg.AssetKey(["owned"]): "Postal codes, one row per code.",
-        dg.AssetKey(["owned_quarantine"]): "The codes that failed a rule.",
-    }
 
 
 # --- checks ---
@@ -427,12 +399,12 @@ _RULE_BEARING_COLUMNS = {rule.split("|")[0] for rule in _RULES if "|" in rule}
 _MULTI_COLUMN_RULES = [rule for rule in _RULES if "|" not in rule]
 
 
-@dataframely_asset(schema=Orders, name="by_column", check_granularity="column")
+@dy_asset(Orders, name="by_column", check_granularity="column")
 def by_column() -> pl.DataFrame:
     return pl.DataFrame()
 
 
-@dataframely_asset(schema=Orders, name="by_schema", check_granularity="schema")
+@dy_asset(Orders, name="by_schema", check_granularity="schema")
 def by_schema() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -461,11 +433,11 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
             {f"field_{n}": dy.String(nullable=False) for n in range(10)}, nullable=True
         )
 
-    @dataframely_asset(schema=Addresses, name="by_rule")
+    @dy_asset(Addresses, name="by_rule")
     def by_rule() -> pl.DataFrame:
         return pl.DataFrame()
 
-    @dataframely_asset(schema=Addresses, name="collapsed", check_granularity="column")
+    @dy_asset(Addresses, name="collapsed", check_granularity="column")
     def collapsed() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -495,8 +467,8 @@ def test_multi_column_rules_bucket_into_the_schema_check_by_default():
 def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
     """The setting is for a schema whose cross-column rules are the ones worth their own history."""
 
-    @dataframely_asset(
-        schema=Orders,
+    @dy_asset(
+        Orders,
         name="per_rule",
         check_granularity="column",
         multi_column_rules="per_rule",
@@ -517,7 +489,7 @@ def test_the_multi_column_bucket_cannot_be_collided_with_by_a_user_column():
         table_id = dy.String(primary_key=True)
         schema = dy.String(nullable=False)
 
-    @dataframely_asset(schema=Tables, name="tables", check_granularity="column")
+    @dy_asset(Tables, name="tables", check_granularity="column")
     def tables() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -539,9 +511,7 @@ def test_a_schema_with_no_rules_gets_the_shape_check_and_nothing_else(granularit
     class Blob(dy.Schema):
         payload = dy.String(nullable=True)
 
-    @dataframely_asset(
-        schema=Blob, name=f"blob_{granularity}", check_granularity=granularity
-    )
+    @dy_asset(Blob, name=f"blob_{granularity}", check_granularity=granularity)
     def blob() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -586,7 +556,7 @@ def test_a_granularity_outside_the_vocabulary_raises_at_the_door():
 
     with pytest.raises(InvalidSettingError) as raised:
 
-        @dataframely_asset(schema=Orders, name="misconfigured", check_granularity=wrong)
+        @dy_asset(Orders, name="misconfigured", check_granularity=wrong)
         def _misconfigured() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -599,7 +569,7 @@ def test_the_environment_variable_sets_the_house_granularity(
     """One export in a code location's environment, and every asset in it collapses."""
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "schema")
 
-    @dataframely_asset(schema=Orders, name="house_style")
+    @dy_asset(Orders, name="house_style")
     def house_style() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -679,7 +649,7 @@ class Measurements(dy.Schema):
     )
 
 
-@dataframely_asset(schema=Measurements)
+@dy_asset(Measurements)
 def measurements() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -777,7 +747,7 @@ class Ledger(dy.Schema):
     posted_at = dy.Datetime(primary_key=True)
 
 
-@dataframely_asset(schema=Ledger)
+@dy_asset(Ledger)
 def ledger() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -800,284 +770,35 @@ def test_a_schema_with_no_primary_key_states_no_table_constraint():
 
 
 # --- the quarantine ---
-@dataframely_asset(schema=Orders, quarantine=dg.AssetOut(), group_name="sales")
-def quarantined() -> pl.DataFrame:
-    return pl.DataFrame()
+def test_a_quarantine_adds_nothing_to_the_graph():
+    """It is evidence of a run, not an out. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
 
-
-_QUARANTINE_KEY = dg.AssetKey(["quarantined_quarantine"])
-
-
-def test_declaring_a_quarantine_adds_a_second_out():
-    """Its presence alone is the failure policy. There is no flag to disagree with it."""
-    assert quarantined.keys == {dg.AssetKey(["quarantined"]), _QUARANTINE_KEY}
-
-
-def test_the_quarantine_out_is_not_required_either():
-    """The clean run skips it, and the nothing-survived path skips the valid one."""
-    assert all(spec.skippable for spec in quarantined.specs)
-
-
-def test_the_quarantine_key_is_a_sibling_that_inherits_the_prefix():
-    """The two sit next to each other with no configuration."""
-
-    @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=dg.AssetOut())
-    def prefixed_quarantine() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    assert prefixed_quarantine.keys == {
-        dg.AssetKey(["sales", "prefixed_quarantine"]),
-        dg.AssetKey(["sales", "prefixed_quarantine_quarantine"]),
-    }
-
-
-def test_an_explicit_key_overrides_the_sibling_completely():
-    """The sensitive-data case, at zero cost: a different key, group, owner set and IO manager."""
-
-    @dataframely_asset(
-        schema=Orders,
-        key_prefix="sales",
-        group_name="sales",
-        io_manager_key="warehouse",
-        quarantine=dg.AssetOut(
-            key=dg.AssetKey(["restricted", "orders"]),
-            group_name="restricted",
-            owners=["team:security"],
-            io_manager_key="vault",
-        ),
-    )
-    def routed_quarantine() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    key = dg.AssetKey(["restricted", "orders"])
-    spec = {s.key: s for s in routed_quarantine.specs}[key]
-
-    assert key in routed_quarantine.keys
-    assert spec.group_name == "restricted"
-    assert list(spec.owners) == ["team:security"]
-    assert (
-        routed_quarantine.node_def.output_dict[
-            "routed_quarantine_quarantine"
-        ].io_manager_key
-        == "vault"
-    )
-
-
-def test_the_quarantine_inherits_the_io_manager_key_when_it_names_none():
-    """One declaration stores both tables together, and routing the invalid rows elsewhere stays a one-word change."""
-
-    @dataframely_asset(
-        schema=Orders, io_manager_key="warehouse", quarantine=dg.AssetOut()
-    )
-    def shared_storage() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    outputs = shared_storage.node_def.output_dict
-
-    assert outputs["shared_storage"].io_manager_key == "warehouse"
-    assert outputs["shared_storage_quarantine"].io_manager_key == "warehouse"
-
-
-def test_the_quarantine_inherits_the_group_when_it_names_none():
-    """Dagster refuses `group_name` on the `multi_asset` as soon as an out names one, so the decorator sets it per out and inherits it here explicitly."""
-    assert quarantined.group_names_by_key == {
-        dg.AssetKey(["quarantined"]): "sales",
-        _QUARANTINE_KEY: "sales",
-    }
-
-
-def test_the_quarantine_inherits_the_partitioning():
-    """It lives on the `multi_asset`, so a partitioned asset cannot produce an unpartitioned pile of bad rows."""
-    partitions = dg.StaticPartitionsDefinition(["a", "b"])
-
-    @dataframely_asset(
-        schema=Orders, partitions_def=partitions, quarantine=dg.AssetOut()
-    )
-    def partitioned() -> pl.DataFrame:
-        return pl.DataFrame()
-
-    assert all(spec.partitions_def == partitions for spec in partitioned.specs)
-
-
-@pytest.mark.parametrize(
-    "setting",
-    [
-        dg.AssetOut(automation_condition=dg.AutomationCondition.eager()),
-        dg.AssetOut(
-            freshness_policy=dg.FreshnessPolicy.time_window(
-                fail_window=dt.timedelta(hours=24)
-            )
-        ),
-        dg.AssetOut(code_version="v1"),
-    ],
-    ids=["automation_condition", "freshness_policy", "code_version"],
-)
-def test_a_setting_that_cannot_differ_between_the_outs_raises_at_definition_time(
-    setting: dg.AssetOut,
-):
-    """`can_subset` is absent, so one step always produces both tables. A condition or a policy that differs between them cannot be true of either, and inheriting silently would discard something the engineer wrote."""
-    with pytest.raises(QuarantineSettingError) as raised:
-
-        @dataframely_asset(schema=Orders, quarantine=setting)
-        def contested() -> pl.DataFrame:
-            return pl.DataFrame()
-
-    assert "One step always produces both tables" in str(raised.value)
-
-
-def test_the_doors_own_schedule_and_freshness_policy_stay_on_the_valid_out():
-    """The `AssetOut` cannot contest these, but the decorator's own values do not reach the quarantine either.
-
-    A freshness policy there would fail forever on a healthy pipeline, because a clean run skips the quarantine by design. A condition there would request a step the valid out's condition already requests, since neither out can execute alone.
+    `build_quarantine_spec` is what gives a quarantine a node, and the user declares it.
     """
-    condition = dg.AutomationCondition.eager()
-    freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
-    @dataframely_asset(
-        schema=Orders,
-        automation_condition=condition,
-        freshness_policy=freshness,
-        quarantine=dg.AssetOut(),
-    )
-    def scheduled() -> pl.DataFrame:
+    @dy_asset(Orders, quarantine=True)
+    def kept() -> pl.DataFrame:
         return pl.DataFrame()
 
-    specs = {spec.key: spec for spec in scheduled.specs}
-    valid = specs[dg.AssetKey(["scheduled"])]
-    bad = specs[dg.AssetKey(["scheduled_quarantine"])]
-
-    assert valid.automation_condition == condition
-    assert valid.freshness_policy == freshness
-    assert bad.automation_condition is None
-    assert bad.freshness_policy is None
-
-
-def test_the_quarantine_setting_error_names_the_setting_and_the_door():
-    with pytest.raises(QuarantineSettingError) as raised:
-
-        @dataframely_asset(schema=Orders, quarantine=dg.AssetOut(code_version="v1"))
-        def contested() -> pl.DataFrame:
-            return pl.DataFrame()
-
-    assert "code_version" in str(raised.value)
-    assert "dataframely_asset" in str(raised.value)
-
-
-def _quarantine_columns() -> dict[str, dg.TableColumn]:
-    return _columns_of(quarantined, _QUARANTINE_KEY)
-
-
-def test_the_quarantine_mirrors_the_schemas_columns_keeping_dtype_and_prose():
-    columns = _quarantine_columns()
-    amount = columns["amount"]
-
-    assert list(columns)[: len(Orders.columns())] == list(Orders.columns())
-    assert amount.type == "Decimal(precision=10, scale=2)"
-    assert amount.description == "Line total in account currency."
-    assert amount.tags == {"owner": "finance", "pii": "False"}
-
-
-def test_the_quarantine_mirror_carries_no_constraint():
-    """These rows are here precisely because they violate them. The primary key above all: the invalid rows are exactly where a duplicate key ends up."""
-    assert all(
-        column.constraints == dg.TableColumnConstraints()
-        for column in _quarantine_columns().values()
-    )
-    assert _catalog(quarantined, _QUARANTINE_KEY).constraints == dg.TableConstraints(
-        other=[]
-    )
-
-
-def test_the_quarantine_declares_a_string_rule_column_for_every_rule():
-    """Named byte-identically to the asset checks, so an engineer carries the string across by eye."""
-    columns = _quarantine_columns()
-    rule_columns = {
-        name: columns[name] for name in columns if name.startswith("dy_rule__")
-    }
-    expected = {f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES}
-
-    assert set(rule_columns) == expected
-    assert expected <= set(_specs_by_name(quarantined))
-    assert all(column.type == "String" for column in rule_columns.values())
-
-
-def test_each_rule_column_is_described_as_the_outcome_of_its_rule():
-    assert _quarantine_columns()["dy_rule__amount__min"].description == (
-        "Outcome of rule 'amount|min': 'valid' / 'invalid' / 'unknown'."
-    )
-
-
-def test_no_quarantine_means_one_out():
-    assert orders.keys == {dg.AssetKey(["orders"])}
-
-
-# --- the quarantine's place in the graph ---
-def test_the_quarantine_hangs_off_the_valid_asset_alone():
-    """A `multi_asset` gives every out every input by default, so both tables would otherwise fan off the same parents and read as unrelated (ADR-0003). Asserted whole, so a parent leaking onto the quarantine fails here."""
-
-    @dataframely_asset(
-        schema=Orders,
-        quarantine=dg.AssetOut(),
-        deps=["ledger"],
-        ins={"raw": dg.AssetIn(key=dg.AssetKey(["upstream_frame"]))},
-    )
-    def connected(raw: pl.DataFrame) -> pl.DataFrame:
-        return raw
-
-    assert connected.asset_deps == {
-        dg.AssetKey(["connected"]): {
-            dg.AssetKey(["ledger"]),
-            dg.AssetKey(["upstream_frame"]),
-        },
-        dg.AssetKey(["connected_quarantine"]): {dg.AssetKey(["connected"])},
-    }
-
-
-def test_an_asset_with_no_parents_of_its_own_still_gets_the_edge():
-    """The empty set is what `internal_asset_deps` needs for the valid out here, and the one input Dagster could have refused."""
-    assert quarantined.asset_deps == {
-        dg.AssetKey(["quarantined"]): set(),
-        _QUARANTINE_KEY: {dg.AssetKey(["quarantined"])},
-    }
-
-
-@pytest.mark.parametrize(
-    ("quarantine", "expected"),
-    [
-        (dg.AssetOut(), dg.AssetKey(["sales", "wired_quarantine"])),
-        (dg.AssetOut(key_prefix=["dlq"]), dg.AssetKey(["dlq", "wired_quarantine"])),
-        (
-            dg.AssetOut(key=dg.AssetKey(["restricted", "rows"])),
-            dg.AssetKey(["restricted", "rows"]),
-        ),
-    ],
-    ids=["derived", "own_prefix", "named"],
-)
-def test_the_edge_arrives_however_the_quarantine_key_was_decided(
-    quarantine: dg.AssetOut, expected: dg.AssetKey
-):
-    """`internal_asset_deps` is keyed by output name rather than by asset key, so a quarantine that named its own key costs nothing extra. The three ways it can be decided, as in ADR-0002's own test."""
-
-    @dataframely_asset(schema=Orders, key_prefix="sales", quarantine=quarantine)
-    def wired() -> pl.DataFrame:
+    @dy_asset(Orders, quarantine=False)
+    def refused() -> pl.DataFrame:
         return pl.DataFrame()
 
-    assert wired.asset_deps[expected] == {dg.AssetKey(["sales", "wired"])}
-
-
-def test_an_asset_without_a_quarantine_keeps_the_wiring_dagster_gave_it():
-    """Nothing is rewired where there is no second out to rewire, which leaves the single-out case built once."""
-
-    @dataframely_asset(schema=Orders, deps=["ledger"])
-    def lone(raw_orders: pl.DataFrame) -> pl.DataFrame:
-        return raw_orders
-
-    assert lone.asset_deps == {
-        dg.AssetKey(["lone"]): {
-            dg.AssetKey(["ledger"]),
-            dg.AssetKey(["raw_orders"]),
-        }
+    assert kept.keys == {dg.AssetKey(["kept"])}
+    assert len(kept.node_def.output_dict) == len(refused.node_def.output_dict)
+    assert {spec.name for spec in kept.check_specs} == {
+        spec.name for spec in refused.check_specs
     }
+
+
+def test_a_quarantine_needs_no_resource_declared():
+    """The manager is borrowed off the step, never read off `context.resources`. Declaring it would be validated at bind time, so every direct invocation would then have to supply a manager it has no use for."""
+
+    @dy_asset(Orders, quarantine=True)
+    def kept() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert kept.op.required_resource_keys == frozenset()
 
 
 # --- definition-time errors ---
@@ -1088,7 +809,7 @@ def test_a_user_column_in_the_reserved_namespace_raises():
 
     with pytest.raises(ReservedColumnError) as raised:
 
-        @dataframely_asset(schema=Reserved)
+        @dy_asset(Reserved)
         def reserved() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -1106,7 +827,7 @@ def test_the_reserved_column_error_reads_as_plural_for_several_columns():
 
     with pytest.raises(ReservedColumnError) as raised:
 
-        @dataframely_asset(schema=Reserved)
+        @dy_asset(Reserved)
         def reserved() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -1126,7 +847,7 @@ def test_two_rules_colliding_after_the_rewrite_raise_and_name_both():
 
     with pytest.raises(CheckNameCollisionError) as raised:
 
-        @dataframely_asset(schema=Colliding)
+        @dy_asset(Colliding)
         def colliding() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -1142,7 +863,7 @@ def test_a_collection_is_refused_at_the_boundary():
         orders: dy.LazyFrame[Orders]
 
     with pytest.raises(CollectionNotSupportedError) as raised:
-        dataframely_asset(schema=OrderBook)  # pyrefly: ignore[bad-argument-type]
+        dy_asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
 
     assert "OrderBook" in str(raised.value)
 
@@ -1151,7 +872,7 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
     """The Collection guard exists because `dy.Collection` is the plausible wrong reach. It was deliberately not generalised into a type check on `schema=`."""
     with pytest.raises(Exception) as raised:  # noqa: PT011 - breadth is the point
 
-        @dataframely_asset(schema=42)  # pyrefly: ignore[bad-argument-type]
+        @dy_asset(42)  # pyrefly: ignore[bad-argument-type]
         def nonsense() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -1159,14 +880,10 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
 
 
 # --- the underlying op ---
-def _shipments(
-    prefix: str, *, quarantine: dg.AssetOut | None = None
-) -> dg.AssetsDefinition:
+def _shipments(prefix: str, *, quarantine: bool = False) -> dg.AssetsDefinition:
     """Build the asset that used to collide with itself under a second prefix (#70)."""
 
-    @dataframely_asset(
-        schema=Orders, key_prefix=prefix, name="shipments", quarantine=quarantine
-    )
+    @dy_asset(Orders, key_prefix=prefix, name="shipments", quarantine=quarantine)
     def shipments() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -1179,9 +896,7 @@ def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
     Asserted against a live `@dg.asset` rather than a spelled-out string, so the parity holds through an upstream change to how the identifier is built.
     """
 
-    @dataframely_asset(
-        schema=Orders, key_prefix=["warehouse", "sales"], name="shipments"
-    )
+    @dy_asset(Orders, key_prefix=["warehouse", "sales"], name="shipments")
     def attached() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -1191,12 +906,8 @@ def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
     assert attached.op.name == plain.op.name
 
 
-@pytest.mark.parametrize(
-    "quarantine", [None, dg.AssetOut()], ids=["one_out", "two_outs"]
-)
-def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
-    quarantine: dg.AssetOut | None,
-):
+@pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
+def test_two_assets_sharing_a_name_under_different_prefixes_coexist(quarantine: bool):
     """Dagster tolerates a repeated op name only where the two definitions compare equal. Two of these never do, because every check output name embeds its own asset key, so the collision was always fatal rather than sometimes."""
     definitions = dg.Definitions(
         assets=[
@@ -1236,29 +947,6 @@ def test_a_downstream_asset_binds_to_the_node_that_owns_its_key():
 
 
 # --- the decorator's own contract with dagster ---
-# Parameters `dg.multi_asset` has that the decorator deliberately does not forward.
-_NOT_FORWARDED = {
-    "outs",  # decorator-owned: the decorator builds both outs from the schema
-    "check_specs",  # decorator-owned: derived from the schema, never contested
-    "specs",  # decorator-owned: the alternative spelling of `outs`
-    "can_subset",  # deliberately absent (#4): a subset executes but saves nothing
-    "internal_asset_deps",  # decorator-owned: it is what hangs the quarantine off the valid asset
-    # Refused by `multi_asset` outright when any out names one, so it lands on the
-    # outs, which is what leaves the quarantine free to claim a group of its own.
-    "group_name",
-}
-_DECORATOR_OWNED = {
-    "schema",
-    "key_prefix",
-    "quarantine",
-    "check_granularity",
-    "multi_column_rules",
-    "max_failure_samples",
-    "statistics",
-    "row_sample",
-    "temp_dir",
-}
-
 # The decorator-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
 # one of them: it is `dg.asset` vocabulary that the decorator happens to own the meaning of.
 _NO_DG_ASSET_COUNTERPART = {
@@ -1272,37 +960,23 @@ _NO_DG_ASSET_COUNTERPART = {
     "temp_dir",
 }
 
-# Not forwarded to `multi_asset`, which has no per-out vocabulary. These land on the valid `dg.AssetOut` instead. Seven of them are absent from `multi_asset`'s signature entirely; `group_name` is the exception, and is here because Dagster refuses it on the `multi_asset` as soon as an out names one.
-_ASSET_LEVEL = {
-    "io_manager_key",
-    "group_name",
-    "metadata",
-    "tags",
-    "owners",
-    "kinds",
-    "automation_condition",
-    "freshness_policy",
-}
-
-# `@dg.multi_asset` is the mechanism, but `@dg.asset` is the vocabulary: this decorator is designed for a single table. Parameters `dg.asset` has that the decorator deliberately does not, each for a reason that is not "nobody thought about it".
+# Parameters `dg.asset` has that the decorator deliberately does not, each for a reason that is not "nobody thought about it".
 _NOT_ON_THE_DECORATOR = {
     "check_specs",  # decorator-owned: derived from the schema, never contested
     "key",  # decorator-owned: `key_prefix` plus `name` already say it, once
     "output_required",  # decorator-owned: the shape check and abort paths must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
     "is_virtual",  # a virtual asset has no compute, so there is nothing to decorate
-    "io_manager_def",  # not settable per out; the forwarded `resource_defs` covers it
+    "io_manager_def",  # the forwarded `resource_defs` covers it, keyed rather than positional
 }
 
 
 def test_the_door_speaks_dg_assets_vocabulary():
-    """The interface is designed for one table, so anything `@dg.asset` can say about an asset should be sayable here under the same name.
+    """`dg.asset` is both the mechanism and the vocabulary, so anything it can say about an asset is sayable here under the same name.
 
-    Asserted in both directions, like the `multi_asset` characterization test: nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is silently missing here.
+    Asserted in both directions, so the parameter list neither breaks silently nor silently lags a new Dagster feature (#15): nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is missing here without a line above saying why.
     """
-    decorator = (
-        set(inspect.signature(dataframely_asset).parameters) - _NO_DG_ASSET_COUNTERPART
-    )
+    decorator = set(inspect.signature(dy_asset).parameters) - _NO_DG_ASSET_COUNTERPART
     upstream = set(inspect.signature(dg.asset).parameters) - {"compute_fn", "kwargs"}
 
     assert decorator <= upstream, f"no longer on dg.asset: {decorator - upstream}"
@@ -1311,24 +985,26 @@ def test_the_door_speaks_dg_assets_vocabulary():
     )
 
 
-def test_the_forwarded_parameter_list_matches_multi_assets_signature():
-    """Asserted in both directions, so the curated list neither breaks silently nor silently lags a new Dagster feature (#15)."""
-    forwarded = (
-        set(inspect.signature(dataframely_asset).parameters)
-        - _DECORATOR_OWNED
-        - _ASSET_LEVEL
-    )
-    # `kwargs` is `multi_asset`'s varargs catch-all, not a parameter to forward.
-    upstream = set(inspect.signature(dg.multi_asset).parameters) - {"kwargs"}
+def test_the_schema_is_the_one_positional_parameter_and_is_required():
+    """It is the whole reason the decorator exists, so it reads as `@dy_asset(Orders, ...)` rather than as one keyword among thirty, and no default can make it optional."""
+    parameters = inspect.signature(dy_asset).parameters
+    positional = [
+        name
+        for name, parameter in parameters.items()
+        if parameter.kind is inspect.Parameter.POSITIONAL_ONLY
+    ]
 
-    assert forwarded <= upstream, f"no longer on multi_asset: {forwarded - upstream}"
-    assert upstream - forwarded == _NOT_FORWARDED
+    assert positional == ["schema"]
+    assert parameters["schema"].default is inspect.Parameter.empty
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for name, parameter in parameters.items()
+        if name != "schema"
+    )
 
 
 def test_the_surfaces_the_package_owns_are_not_parameters():
     """Statically unpassable, so no runtime guard is needed."""
-    parameters = set(inspect.signature(dataframely_asset).parameters)
+    parameters = set(inspect.signature(dy_asset).parameters)
 
-    assert parameters.isdisjoint(
-        {"outs", "check_specs", "specs", "can_subset", "internal_asset_deps"}
-    )
+    assert parameters.isdisjoint({"check_specs", "key", "output_required"})

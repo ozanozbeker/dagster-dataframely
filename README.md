@@ -43,7 +43,7 @@ None
 If you have metadata, tags or a data version to attach, return the result rather than the bare frame.
 That's the route this package prefers, and [Attaching your own metadata](#attaching-your-own-metadata) explains why.
 
-`@dg.multi_asset` is the mechanism underneath, but the vocabulary is `@dg.asset`'s.
+`@dg.asset` is the mechanism underneath, and the vocabulary.
 Anything `@dg.asset` lets you say about one asset, you can say here under the same name, and a test asserts that in both directions.
 
 ## Quick start
@@ -373,8 +373,8 @@ Reach for `add_asset_metadata` with `asset_key=` instead.
 
 ## Partitioning
 
-`partitions_def` forwards to the underlying `multi_asset` verbatim, so partitioning needed no code here and has no setting of its own.
-Both outs carry it, which is what stops the quarantine escaping its asset's partitioning.
+`partitions_def` forwards to the underlying `dg.asset` verbatim, so partitioning needed no code here and has no setting of its own.
+The quarantine is written under the same partition key, which is what stops it escaping its asset's partitioning.
 Validation runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the shape check without touching any other partition's file.
 
 **A root asset reaches its own partition key through a declared `context`.**
@@ -895,99 +895,54 @@ The docstring isn't decoration: it becomes that check's description in the catal
 
 ## Hand-wiring (and how the package works under the hood)
 
-The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_table_schema`, `quarantine_frame`, `process`, `check_name` and the `AssetYield` type they produce.
-Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or an out arrangement the decorator doesn't offer.
+The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `process`, `check_name` and the `AssetYield` type they produce.
+Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
 The asset is then yours to declare, out of the same parts.
 
 They sit in their own namespace rather than the root because the decorator is the happy path, and if you never hand-wire you shouldn't have to read past `quarantine_frame` to find it.
 
-The four arrangements below descend.
-The first is what the decorator builds, each one after it gives up a piece, and the last is what you'd be writing if this package didn't exist.
+The three arrangements below descend.
+The first is close to what the decorator builds, each one after it gives up a piece, and the last is what you'd be writing if this package didn't exist.
 `orders_frame()` stands in for whatever produces your frame, since none of them care where it came from.
 
-### The decorator is a `@dg.multi_asset` and `process`
+### The decorator is a `@dg.asset`, a writer and `process`
 
-Two outs and a `quarantine_key=` are the whole of the quarantine: somewhere to write the invalid rows, and the instruction to send them there.
-
-```python
-@dg.multi_asset(
-    outs={
-        "orders": dg.AssetOut(
-            metadata=dd.wiring.schema_metadata(Orders), is_required=False
-        ),
-        "orders_quarantine": dg.AssetOut(
-            metadata=dd.wiring.schema_metadata(Orders)
-            | {"dagster/column_schema": dd.wiring.quarantine_table_schema(Orders)},
-            is_required=False,
-        ),
-    },
-    internal_asset_deps={
-        "orders": set(),
-        "orders_quarantine": {dg.AssetKey("orders")},
-    },
-    check_specs=dd.wiring.check_specs(Orders, asset="orders"),
-)
-def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
-    yield from dd.wiring.process(
-        Orders,
-        orders_frame(),
-        valid_key=context.asset_key_for_output("orders"),
-        quarantine_key=context.asset_key_for_output("orders_quarantine"),
-    )
-```
-
-With `quarantine_key` passed, the middle exit opens: the survivors go to the first out, the invalid rows and their rule columns go to the second, the checks drop to `WARN`, and the run stays green.
-The checks stay on the valid asset, which is why `check_specs` names it and not the quarantine.
-
-The quarantine's own metadata is two entries rather than one call, because the package has no public helper that builds the pair.
-`schema_metadata` carries the live schema class for the CSV reader, which both tables need, and `quarantine_table_schema` overrides the Columns tab with one that states no constraints: these rows are here precisely for breaking them, so a `not null` on a column full of nulls would be a claim about every row in the table.
-
-`is_required=False` matters on both outs: the shape check and both abort paths end the step without yielding either, and a clean run skips the quarantine.
-
-`internal_asset_deps` is what hangs the quarantine off the valid table instead of off the asset's own parents, which is what a `multi_asset` gives every out by default.
-It takes the whole map: name only the quarantine and Dagster refuses it, because every input the valid out still holds has to be accounted for.
-This asset has no inputs, hence the empty set.
-
-Resolve both keys with `asset_key_for_output` rather than building them by hand.
-An out that declares `key_prefix` has an asset key its output name doesn't spell, and results yielded against a key no out owns fail the step on the first yield with `Asset key ... not found in AssetsDefinition`.
-`internal_asset_deps` is the one place you can't do that.
-It's read at definition time, where there's no context, so the key you spell there has to carry the out's prefix itself.
-Get it wrong and the code location fails to load:
-
-```text
-Invalid asset dependencies: {AssetKey(['orders'])} specified in `internal_asset_deps` argument
-for multi-asset 'orders' on key 'orders_quarantine'. Each specified asset key must be associated
-with an input to the asset or produced by this asset.
-```
-
-### Give up the quarantine and a plain `@dg.asset` will do
-
-One out needs no out arrangement, so the schema's metadata and check specs go straight on the asset:
+The schema's metadata and check specs go straight on the asset, and `process` does the rest:
 
 ```python
 @dg.asset(
     metadata=dd.wiring.schema_metadata(Orders),
     check_specs=dd.wiring.check_specs(Orders, asset="orders"),
+    output_required=False,
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
-    yield from dd.wiring.process(Orders, orders_frame(), valid_key=context.asset_key)
+    yield from dd.wiring.process(
+        Orders,
+        orders_frame(),
+        valid_key=context.asset_key,
+        quarantine_writer=dd.wiring.delegating_writer(context),
+    )
 ```
 
-That is still the Columns tab, one check per rule, and the row filter.
+That is the Columns tab, one check per rule, the row filter, and the invalid rows written next door.
 `context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve.
 
-Add `output_required=False` if you want to hand `process` a `None` frame and skip: the out is optional on that path, and the checks are answered whether or not it materializes.
-Leave it off and every path that doesn't raise yields the one out.
+`output_required=False` is what lets the shape check, both abort paths and the skip end the step without yielding.
+Leave it off and every path that doesn't raise has to yield the output.
 
-What you gave up is where the invalid rows land.
-`process` writes them to a second out and this asset has only one, so rejected rows abort the run exactly as they do when the decorator is passed no quarantine.
+`quarantine_writer` is the whole of the failure policy.
+`delegating_writer(context)` borrows the IO manager the asset is already bound to and hands it the invalid rows under the key `<name>_quarantine`, so they land beside the table wherever that manager puts things.
+Pass nothing instead and invalid rows abort the run, exactly as they do when the decorator is given `quarantine=False`.
+
+`delegating_writer` needs a real step to borrow from, so it raises under direct invocation.
+`file_writer(context.asset_key, root, partition_key)` is the fallback the decorator reaches for there, and you can reach for it on the same terms.
 
 An asset that writes its own storage and never holds a frame can still take `schema_metadata` on its own, for the Columns tab alone.
 `process` is the part that needs a frame; the metadata isn't.
 
 ### Split the checks off entirely
 
-Both arrangements above hand their frame to `process`, and `process` is what fuses the write and the checks into one step.
+The arrangement above hands its frame to `process`, and `process` is what fuses the write and the checks into one step.
 Pull them apart and the asset goes back to being an ordinary one that returns a frame; the checks become a `@dg.multi_asset_check` of their own, reading the table back through the IO manager:
 
 ```python
