@@ -39,8 +39,8 @@ class Orders(dy.Schema):
     Every column and rule here earns its place by being awkward somewhere:
 
     - `Decimal` crashes `TableRecord` emission unless coerced (#23).
-    - `Duration` has no readable Polars string form (#23) and no naive CSV encoding (#22).
-    - `Binary` and `List` have no CSV encoding at all (#22).
+    - `Duration` has no readable Polars string form (#23).
+    - `Binary` is the one member of the string statistics family with no string form to read, so it is the one the cast has to exempt (#23).
     - The composite primary key is the case where a per-column `unique` constraint would be false, and `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both have to be exercised.
     - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, so both paths of the description fallback run (#17).
     - `email` names its check and `note` leaves it anonymous, so both paths of the check-name renderer run (#20).

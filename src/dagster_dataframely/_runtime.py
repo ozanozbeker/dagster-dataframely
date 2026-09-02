@@ -44,7 +44,7 @@ def _require_frame(frame: object, asset: str) -> None:
 
     `None` is no longer that mistake. It is the skip, so the forgotten return annotation and the deliberate skip are now the same object and this guard cannot tell them apart. That trade is taken knowingly: the skip has to be spelled as a value for a decorated function to reach it at all, and `None` is the only value every early return already produces. What a forgotten `return` costs is a run that quietly materializes nothing, which the missing partition makes visible.
 
-    Dagster's own error rather than the package's. This is a wiring mistake, not a data one, which is the line `_ParquetIOManager` already draws.
+    Dagster's own error rather than the package's. This is a wiring mistake, not a data one.
 
     A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dataframely_asset` takes the frame off it before `process` sees anything (#77), so on that path this guard sees only what the result carried.
 

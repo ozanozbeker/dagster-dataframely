@@ -91,7 +91,7 @@ def _clean() -> pl.DataFrame:
 
 
 def test_a_materialization_carries_a_sample_of_the_rows_it_wrote(tmp_path: Path):
-    """The display key is short and unprefixed, like `stats/*` and unlike the machine carrier: the difference in length is the signal."""
+    """The display key is short and unprefixed, like `stats/*`: every key on a materialization is one a reader is meant to read."""
     metadata = _materialized(_materialize(tmp_path, _clean), _GOOD_KEY)
     sampled = _records(metadata["sample"])
 

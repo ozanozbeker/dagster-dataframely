@@ -422,8 +422,7 @@ def test_no_module_routes_through_describe():
         f"{source.name}:{number}"
         for source in sources
         for number, line in enumerate(source.read_text().splitlines(), start=1)
-        # `_csv_codecs.describe` is the package's own, naming encoded columns in a log line. The call barred here is the frame method of the same name.
-        if ".describe(" in line.replace("_csv_codecs.describe(", "")
+        if ".describe(" in line
     ]
 
     assert sources

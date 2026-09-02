@@ -112,7 +112,7 @@ def _quarantine_out(
     `dg.AssetOut` is already the typed container for everything quarantine-specific, so the decorator takes one rather than growing a second two-valued container that could disagree with it. What it costs is a rule per setting that also exists on the decorator:
 
     - `key`, `key_prefix`, `owners`, `tags`, `description` and `kinds` are free and the passed value wins. The sensitive-data case is exactly this: invalid rows to a different key and ownership domain.
-    - `metadata` is free too, but `dagster/column_schema` and `dagster_dataframely/schema` are applied over it, exactly as on the valid out. The Columns tab is what the decorator is for and the carrier is how a CSV read finds its dtypes, so a colliding user key loses.
+    - `metadata` is free too, but `dagster/column_schema` is applied over it, exactly as on the valid out. The decorator exists to fill the Columns tab, so a colliding user key loses.
     - `io_manager_key` and `group_name` are inherited when unset, so one declaration stores both tables beside each other, and moving the invalid rows elsewhere stays a one-word change.
     - The three in `_CONTESTED_SETTINGS` raise.
 
@@ -162,7 +162,7 @@ def _description(schema: type[dy.Schema], description: str | None) -> str | None
 
     What the decorator was passed wins, then the schema's own docstring. Returning `None` leaves Dagster's fallback to the decorated function's docstring standing, so the package fills the gap rather than closing it.
 
-    The schema outranks it because the schema is what describes the table, whereas the function's docstring describes the code that fills it. This is the opposite precedence from `metadata`, where the package's own two keys are applied over the user's. Those keys are this package's surface and a collision is a mistake, while a description is prose the author owns.
+    The schema outranks it because the schema is what describes the table, whereas the function's docstring describes the code that fills it. This is the opposite precedence from `metadata`, where the package's own key is applied over the user's. That key is this package's surface and a collision is a mistake, while a description is prose the author owns.
 
     Empty is absent on both sources, and neither can express "no description at all", because Dagster's own fallback takes over as soon as this returns nothing.
 
@@ -404,7 +404,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
                 key=key,
                 # The shape check, both abort paths and the skip all end the step without yielding.
                 is_required=False,
-                # The package's two keys are applied last, so a user cannot accidentally displace the Columns tab or the schema carrier.
+                # The package's own key is applied last, so a user cannot accidentally displace the Columns tab.
                 metadata={**(metadata or {}), **schema_metadata(schema)},
                 io_manager_key=io_manager_key,
                 tags=tags,

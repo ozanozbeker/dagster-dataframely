@@ -21,10 +21,7 @@ _ROOT = Path(__file__).parent.parent
 _PUBLIC = {
     # The decorator.
     "dataframely_asset",
-    # The IO managers.
-    "DataframelyCSVIOManager",
-    "DataframelyParquetIOManager",
-    # The two namespaces, rather than their eighteen names.
+    # The two namespaces, rather than their nineteen names.
     "errors",
     "wiring",
     # The types, so a caller can annotate what it passes the decorator. Here rather than
@@ -46,8 +43,8 @@ _WIRING = {
     "table_schema",
 }
 
-# What `dd.errors` imports to build its messages. Named rather than skipped, so a fourth one is a decision somebody makes here rather than a name that quietly became reachable as `dd.errors.<it>`.
-_ERROR_IMPORTS = {"Mapping", "Sequence", "pl"}
+# What `dd.errors` imports to build its messages. Named rather than skipped, so a third one is a decision somebody makes here rather than a name that quietly became reachable as `dd.errors.<it>`.
+_ERROR_IMPORTS = {"Mapping", "Sequence"}
 
 # What `dd.errors` puts in reach, spelled out for the reason the root's list is.
 _ERRORS = {
@@ -61,7 +58,6 @@ _ERRORS = {
     "QuarantineSettingError",
     "ReservedColumnError",
     "SchemaShapeError",
-    "UnwritableDtypeError",
     "ValidationAbortError",
 }
 
@@ -83,7 +79,7 @@ def test_nothing_public_leaks_past_any_export_list():
 
     A submodule with a public name, or a third-party name imported at the root, is reachable as `dd.<name>` whatever `__all__` says, and a user will come to depend on whatever is reachable. The same assertion catches the other side: a name left in `__all__` after its import moved away is a `from dagster_dataframely import *` that fails.
 
-    `dd.errors` is held to the same standard, minus the three names it imports to build its messages. Those are listed rather than eliminated. The alternatives are two. One is `from __future__ import annotations` plus a `TYPE_CHECKING` block, which is what Polars does and which would make this the one module in the package with stringified annotations. The other is spelling them `_pl` and `_Mapping` at seven sites in the module a user reads tracebacks from. Neither is worth paying to hide a name nobody will type, and listing them keeps the guarantee that matters: a fourth import fails this test.
+    `dd.errors` is held to the same standard, minus the two names it imports to build its messages. Those are listed rather than eliminated. The alternatives are two. One is `from __future__ import annotations` plus a `TYPE_CHECKING` block, which is what Polars does and which would make this the one module in the package with stringified annotations. The other is spelling them `_Mapping` and `_Sequence` at six sites in the module a user reads tracebacks from. Neither is worth paying to hide a name nobody will type, and listing them keeps the guarantee that matters: a third import fails this test.
 
     `dd.wiring` imports nothing but what it re-exports, so it is held to the standard exactly.
     """
@@ -99,7 +95,7 @@ def test_nothing_public_leaks_past_any_export_list():
 def test_only_errors_and_wiring_have_public_module_names():
     """One responsibility per module and no promise about any of them, so the tree stays free to change.
 
-    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Ten error names and eight wiring names would be three quarters of it, and neither set is what a user reaches for to get work done. Polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
+    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Eleven error names and eight wiring names would be nineteen of a namespace of twenty-two, and neither set is what a user reaches for to get work done. Polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
 
     What each costs is the freedom to rename that one file. `errors` is a leaf holding one class per failure, so it has nothing to split along. `wiring` re-exports rather than defines, so everything behind it stays free to move.
     """

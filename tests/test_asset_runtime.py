@@ -5,7 +5,7 @@ Everything here is asserted against what Dagster ends up holding: the materializ
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 import dagster as dg
 import polars as pl
@@ -137,45 +137,8 @@ def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
     )
 
 
-def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
-    """Parquet is self-describing and needs nothing from the definition, but CSV cannot be read back without the schema (#22). This asserts the channel works before anything depends on it, in-process, where the class is the same object rather than a name."""
-    seen: dict[str, object] = {}
-
-    class Spy(dg.IOManager):
-        @override
-        def handle_output(self, context: dg.OutputContext, obj: object) -> None:
-            seen["write"] = dict(context.definition_metadata or {}).get(
-                "dagster_dataframely/schema"
-            )
-
-        @override
-        def load_input(self, context: dg.InputContext) -> pl.DataFrame:
-            upstream = context.upstream_output
-            assert upstream is not None
-            seen["read"] = dict(upstream.definition_metadata or {}).get(
-                "dagster_dataframely/schema"
-            )
-            return clean_orders()
-
-    @dataframely_asset(schema=Orders, name="orders")
-    def carrier_source() -> pl.DataFrame:
-        return clean_orders()
-
-    @dg.asset(name="reader")
-    def reader(orders: pl.DataFrame) -> None:
-        pass
-
-    result = dg.materialize([carrier_source, reader], resources={"io_manager": Spy()})
-
-    assert result.success
-    assert set(seen) == {"write", "read"}
-    assert all(
-        getattr(carrier, "instance", None) is Orders for carrier in seen.values()
-    )
-
-
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
-    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one, the same line `_ParquetIOManager` draws.
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one.
 
     `None` is exempt, and is the skip (#95). It is the one wiring mistake this guard gave up catching, because the skip has to be spelled as a value and `None` is the only value a bare `return` produces.
     """

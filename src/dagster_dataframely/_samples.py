@@ -12,7 +12,7 @@ Its own module rather than `_metadata`'s or `_statistics`', for the reason `_sta
 import dagster as dg
 import polars as pl
 
-#: The valid output's materialization display key. Short and unprefixed, like `stats/*` and unlike the fully qualified schema carrier: the difference in length tells a reader which keys are for them.
+#: The valid output's materialization display key. Short and unprefixed, like `stats/*`: every key on a materialization is one a reader is meant to read.
 SAMPLE_KEY = "sample"
 
 #: What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's own field rather than exporting a name for it.

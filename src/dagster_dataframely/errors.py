@@ -1,6 +1,6 @@
 """The package's exception family, all subclassing `DagsterDataframelyError` so they can be caught together.
 
-**The one module in this package with a public name.** Every other module is underscore-private so the file tree stays free to change. Ten error names in the root would be ten of its twenty-four: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move. Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
+**The one module in this package with a public name.** Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root would be eleven of its twenty-two: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move. Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
 
 `errors` rather than `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
 
@@ -8,8 +8,6 @@ Every message names the schema, the culprit and the fix, because the message is 
 """
 
 from collections.abc import Mapping, Sequence
-
-import polars as pl
 
 __all__ = [
     "CheckNameCollisionError",
@@ -22,7 +20,6 @@ __all__ = [
     "QuarantineSettingError",
     "ReservedColumnError",
     "SchemaShapeError",
-    "UnwritableDtypeError",
     "ValidationAbortError",
 ]
 
@@ -288,31 +285,4 @@ class QuarantineSettingError(DagsterDataframelyError):
         """
         super().__init__(
             f"The quarantine's `dg.AssetOut` sets `{setting}`. One step always produces both tables, so a `{setting}` that differs between them cannot be true of either. Pass it to `dataframely_asset` instead, where it covers both."
-        )
-
-
-class UnwritableDtypeError(DagsterDataframelyError):
-    """A column holds a dtype the bound IO manager cannot write.
-
-    Raised from `handle_output` before the write. Left to Polars, the same frame fails with a `ComputeError` from inside the writer, or with a Rust panic.
-    """
-
-    def __init__(self, extension: str, columns: Mapping[str, pl.DataType]) -> None:
-        """Name the culprits and the fix.
-
-        Dagster's wrapping `DagsterExecutionHandleOutputError` already names the step, so naming the asset again here would only repeat it.
-
-        Parameters
-        ----------
-        extension
-            The file extension being written, e.g. `.parquet`.
-        columns
-            The offending column names, mapped to their dtypes.
-        """
-        culprits: str = ", ".join(
-            f"'{name}' ({dtype})" for name, dtype in columns.items()
-        )
-        plural, pronoun = ("", "it") if len(columns) == 1 else ("s", "them")
-        super().__init__(
-            f"Column{plural} {culprits} cannot be written to {extension}. Convert or drop {pronoun} in the asset body. This IO manager never casts on your behalf."
         )

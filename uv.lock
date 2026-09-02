@@ -277,7 +277,6 @@ dependencies = [
     { name = "dagster" },
     { name = "dataframely" },
     { name = "polars" },
-    { name = "pydantic" },
     { name = "universal-pathlib" },
 ]
 
@@ -299,7 +298,6 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.13.20" },
     { name = "dataframely", specifier = ">=3.0.0" },
     { name = "polars", specifier = ">=1.44.1" },
-    { name = "pydantic", specifier = ">=2" },
     { name = "universal-pathlib", specifier = ">=0.2.0" },
 ]
 
