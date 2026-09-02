@@ -4,7 +4,7 @@ Reach for these when the decorator's shape is not the shape you need: a schema a
 
 **A namespace, not an implementation.** Every name is defined in a private module and re-exported here. The file tree stays free to change while the import path stays put. `__init__.py` has the same shape for the same reason.
 
-**Its own module rather than seven more names in the root.** The root is the happy path, and so is the decorator. Somebody who never hand-wires should not have to read past `check_specs` and `quarantine_frame` to find it. Hand-wiring is supported, not recommended, and one name in the root instead of seven is what that distinction looks like from outside. `errors` is the other module with a public name, for the same reason.
+**Its own module rather than nine more names in the root.** The root is the happy path, and so is the decorator. Somebody who never hand-wires should not have to read past `check_specs` and `quarantine_frame` to find it. Hand-wiring is supported, not recommended, and one name in the root instead of nine is what that distinction looks like from outside. `errors` is the other module with a public name, for the same reason.
 
 Examples
 --------
@@ -44,6 +44,7 @@ from dagster_dataframely._metadata import (
     table_schema,
 )
 from dagster_dataframely._naming import check_name
+from dagster_dataframely._quarantine import quarantine_path
 from dagster_dataframely._runtime import AssetYield, process, quarantine_frame
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "check_specs",
     "process",
     "quarantine_frame",
+    "quarantine_path",
     "quarantine_table_schema",
     "schema_metadata",
     "table_schema",

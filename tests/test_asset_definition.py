@@ -12,9 +12,6 @@ import dataframely as dy
 import polars as pl
 import pytest
 from dagster._config.field_utils import Shape
-from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
-from dagster._core.remote_representation.external_data import RepositorySnap
-from dagster._serdes import deserialize_value, serialize_value
 
 from dagster_dataframely import dataframely_asset
 from dagster_dataframely.errors import (
@@ -28,7 +25,6 @@ from dagster_dataframely.errors import (
 from tests.scenario import Orders
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
-_SCHEMA_CARRIER_KEY = "dagster_dataframely/schema"
 
 # Every rule `Orders` declares, in the order Dataframely reports them. Spelled out rather than derived so that a rule silently disappearing is a failure here.
 _RULES = [
@@ -215,15 +211,11 @@ def test_asset_level_parameters_reach_the_out():
 
 
 def test_user_metadata_cannot_displace_the_packages_own():
-    """The Columns tab and the schema carrier are what the decorator is for, so a colliding user key loses rather than quietly breaking the IO manager's read path."""
+    """The decorator exists to fill the Columns tab, so a colliding user key loses."""
 
     @dataframely_asset(
         schema=Orders,
-        metadata={
-            _COLUMN_SCHEMA_KEY: "mine",
-            _SCHEMA_CARRIER_KEY: "mine",
-            "own": "kept",
-        },
+        metadata={_COLUMN_SCHEMA_KEY: "mine", "own": "kept"},
     )
     def collides() -> pl.DataFrame:
         return pl.DataFrame()
@@ -232,7 +224,6 @@ def test_user_metadata_cannot_displace_the_packages_own():
 
     assert definition_metadata["own"] == "kept"
     assert isinstance(definition_metadata[_COLUMN_SCHEMA_KEY], dg.TableSchema)
-    assert definition_metadata[_SCHEMA_CARRIER_KEY].instance is Orders
 
 
 # --- the description ---
@@ -808,14 +799,6 @@ def test_a_schema_with_no_primary_key_states_no_table_constraint():
     )
 
 
-def test_the_schema_carrier_holds_the_live_class_under_an_explicit_label():
-    """Deriving the label instead would yield the metaclass name, `SchemaMeta`."""
-    carrier = orders.metadata_by_key[dg.AssetKey(["orders"])][_SCHEMA_CARRIER_KEY]
-
-    assert carrier.value == "Orders"
-    assert carrier.instance is Orders
-
-
 # --- the quarantine ---
 @dataframely_asset(schema=Orders, quarantine=dg.AssetOut(), group_name="sales")
 def quarantined() -> pl.DataFrame:
@@ -1021,14 +1004,6 @@ def test_the_quarantine_declares_a_string_rule_column_for_every_rule():
 def test_each_rule_column_is_described_as_the_outcome_of_its_rule():
     assert _quarantine_columns()["dy_rule__amount__min"].description == (
         "Outcome of rule 'amount|min': 'valid' / 'invalid' / 'unknown'."
-    )
-
-
-def test_the_quarantine_carries_the_schema_carrier_too():
-    """The carrier is a dtype lookup by name, not a claim that these rows conform. A quarantine frame carries every column the schema declares at the dtype it declares, so an IO manager that needs the schema to read a file back reads this table exactly as it reads the valid one."""
-    assert (
-        quarantined.metadata_by_key[_QUARANTINE_KEY][_SCHEMA_CARRIER_KEY].instance
-        is Orders
     )
 
 
@@ -1357,22 +1332,3 @@ def test_the_surfaces_the_package_owns_are_not_parameters():
     assert parameters.isdisjoint(
         {"outs", "check_specs", "specs", "can_subset", "internal_asset_deps"}
     )
-
-
-def test_the_code_location_snapshot_degrades_the_schema_carrier():
-    """The carrier holds a live class, which cannot be serialized. Dagster must drop the instance rather than refuse to build the snapshot (#15, characterization test).
-
-    `RepositorySnap` and `serialize_value` are private paths; they are what a code location actually runs on load, and there is no public equivalent.
-    """
-    definitions = dg.Definitions(assets=[orders])
-    snapshot = RepositorySnap.from_def(definitions.get_repository_def())
-
-    restored = deserialize_value(serialize_value(snapshot), RepositorySnap)
-    (node,) = [
-        n for n in restored.asset_nodes if n.asset_key == dg.AssetKey(["orders"])
-    ]
-    carrier = node.metadata[_SCHEMA_CARRIER_KEY]
-
-    assert isinstance(carrier, ObjectMetadataValue)
-    assert carrier.value == "Orders"
-    assert carrier.instance is None

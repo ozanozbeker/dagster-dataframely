@@ -1,10 +1,6 @@
-"""What the validation path and the write path both do to a frame on its way to disk.
+"""What the validation path does to a frame before it decides anything about it.
 
-Two callers share this module so they cannot disagree. `dataframely_asset` compares a frame against its schema before filtering. The CSV manager runs the same comparison for an asset that attached a schema by hand. Sharing one comparison stops two shape checks drawing the line differently.
-
-Both stage lazy frames, too. `process` stages a lazy decorated function before validating it, and the manager stages a lazy output before promoting it. One shared prefix lets an operator sweeping a filled disk find every staging file this package makes with a single glob.
-
-Nothing belongs here that only one of the two callers needs.
+Comparing a frame against its schema and staging a lazy one are both about the frame alone. Neither reads a schema's rules, a check's name or an asset's context. Every other step in `_runtime` needs all three, so these two sit apart from it.
 """
 
 import tempfile
@@ -15,7 +11,7 @@ from pathlib import Path
 import dataframely as dy
 import polars as pl
 
-# Spelled once, which is the guarantee: two staging paths cannot name their directories differently.
+# An operator sweeping a filled disk finds every staging file this package makes with a single glob.
 _STAGING_PREFIX = "dagster_dataframely_"
 
 
@@ -58,7 +54,7 @@ def staging(temp_dir: str | None) -> Iterator[Path]:
     Parameters
     ----------
     temp_dir
-        Where the directory goes, or `None` for wherever `tempfile` puts things. The caller resolves it rather than this function, because the two callers resolve at different moments. The decorator reads the setting where the asset is declared. The IO manager reads it where the output is written.
+        Where the directory goes, or `None` for wherever `tempfile` puts things. The caller resolves it rather than this function, because the decorator reads the setting where the asset is declared and hands the answer down.
 
     Yields
     ------

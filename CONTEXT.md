@@ -9,8 +9,9 @@ The terms below are the ones this package had to add, plus the few it kept getti
 
 ### The asset
 
-**Decorator**: `@dataframely_asset`, which turns the function it decorates into an asset validated against a schema.
-_Avoid_: door, front door
+**Decorator**: `@dy_asset`, which turns the function it decorates into an asset validated against a schema.
+`dy` because it is Dataframely's own import alias and already the package's reserved prefix.
+_Avoid_: dataframely_asset, door, front door
 
 **Decorated function**: The function the decorator wraps.
 Upstream assets bind into it as parameters, it may declare `context`, and it returns the frame to validate or a returned result carrying one.
@@ -24,11 +25,18 @@ _Avoid_: good rows, the good table, the good out
 **Invalid rows**: The rows `Schema.filter` removed, each having failed at least one rule.
 _Avoid_: rejected rows, bad rows, failed rows
 
-**Quarantine**: The sibling asset invalid rows materialize into.
-Sibling in the definition, since one decorator declares both as outs of one op.
-Downstream in the graph, where its only parent is the valid asset, because it cannot exist without it.
+**Quarantine**: The parquet file invalid rows are written to.
+A file and not an asset: it is evidence of a run, and it holds no place in the graph unless a quarantine spec gives it one.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
-_Avoid_: reject table, dead-letter asset
+_Avoid_: reject table, dead-letter asset, quarantine asset, sibling
+
+**Root**: The directory a quarantine is written under, with the asset key and partition spelling the rest of the path.
+One per deployment through the setting, or one per asset by naming it on the declaration.
+_Avoid_: quarantine dir, base dir, output dir
+
+**Quarantine spec**: A user-declared `dg.AssetSpec` that stands for a quarantine in the graph.
+It has no compute, because the decorator already wrote the file.
+_Avoid_: quarantine asset, sibling, external asset
 
 **Rule column**: A column of the quarantine carrying one rule's outcome per row, reading `valid`, `invalid` or `unknown`.
 Dataframely's own term, from `FailureInfo.details()`.
@@ -43,7 +51,7 @@ _Avoid_: wrapped frame, enriched result
 **Fold**: What a returned result's remaining fields do to the materialization the package built.
 _Avoid_: merge, enrich
 
-**Hand-wiring**: Building a `@dg.multi_asset` from the package's exported parts instead of using the decorator.
+**Hand-wiring**: Building a `@dg.asset` from the package's exported parts instead of using the decorator.
 _Avoid_: the kit
 
 ### Validation
@@ -66,20 +74,15 @@ _Avoid_: pill, chip, badge
 
 ### Storage
 
-**Staging**: The local temporary file a lazy frame streams to before it is validated or promoted.
+**Staging**: The local temporary file a lazy frame streams to before it is validated.
 "Land" stays available for where a rule or a dtype ends up, but never for a row or a file: a row is written, a file is staged.
 _Avoid_: landing, spill, scratch
-
-**Promote**: Moving a staged file to its destination, once the plan that wrote it has succeeded.
-
-**Carrier**: The definition-metadata entry that takes the live schema class from the asset to the IO manager.
-_Avoid_: sidecar, schema handle
 
 ### Reporting
 
 **Sample**: A bounded set of real rows copied into the Dagster event log, either of what a rule rejected or of what the asset wrote.
 
-**Statistics**: The per-dtype-family summary a materialization carries, one table per family present in the frame.
+**Statistics**: The per-dtype-family summary the valid materialization carries, one table per family present in the frame.
 _Avoid_: profile, skim
 
 ### Configuration

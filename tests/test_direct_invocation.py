@@ -14,13 +14,14 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely import dataframely_asset
 from dagster_dataframely.errors import SchemaShapeError
 from tests.scenario import (
     Orders,
     clean_orders,
     cooccurring_orders,
     mixed_orders,
+    storage,
     wrong_dtype_orders,
 )
 
@@ -89,7 +90,7 @@ def _checks(events: _Yielded) -> dict[dg.AssetCheckKey, bool]:
 def _run(tmp_path: Path, asset: dg.AssetsDefinition) -> dg.ExecuteInProcessResult:
     return dg.materialize(
         [asset],
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     )
 
 

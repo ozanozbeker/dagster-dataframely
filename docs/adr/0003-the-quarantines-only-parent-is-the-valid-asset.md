@@ -1,6 +1,6 @@
 # 3. The quarantine's only parent is the valid asset
 
-Accepted, 2026-08-13.
+Accepted, 2026-08-13. Superseded by [ADR-0004](0004-the-quarantine-is-a-file-not-an-asset.md): there is no sibling out, so there is nothing to hang off the valid asset.
 
 ## Context
 

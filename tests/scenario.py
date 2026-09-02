@@ -5,13 +5,32 @@ It covers the cases the whole effort needs: the dtypes a round trip or a metadat
 Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants than as fixture indirection. `Orders` also has to be importable at class-definition time to decorate an asset.
 
 `POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the shape check loudly in every runtime test, instead of being silently rebuilt to match.
+
+`storage` is here for the same reason the frames are: every run test needs somewhere to write, and only a handful care which manager writes it. It builds `dagster-polars`' parquet manager, which ADR-0004 makes this package's recommendation, so a test that merely needs storage exercises what a user will actually run.
 """
 
 import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 
 import dataframely as dy
 import polars as pl
+from dagster_polars import PolarsParquetIOManager
+
+
+def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
+    """Build the resources a run needs when all it needs is somewhere to write.
+
+    Parameters
+    ----------
+    tmp_path
+        The directory the run writes under.
+
+    Returns
+    -------
+    The `resources` mapping to hand `dg.materialize`.
+    """
+    return {"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))}
 
 
 class Orders(dy.Schema):
@@ -20,8 +39,8 @@ class Orders(dy.Schema):
     Every column and rule here earns its place by being awkward somewhere:
 
     - `Decimal` crashes `TableRecord` emission unless coerced (#23).
-    - `Duration` has no readable Polars string form (#23) and no naive CSV encoding (#22).
-    - `Binary` and `List` have no CSV encoding at all (#22).
+    - `Duration` has no readable Polars string form (#23).
+    - `Binary` is the one member of the string statistics family with no string form to read, so it is the one the cast has to exempt (#23).
     - The composite primary key is the case where a per-column `unique` constraint would be false, and `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both have to be exercised.
     - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, so both paths of the description fallback run (#17).
     - `email` names its check and `note` leaves it anonymous, so both paths of the check-name renderer run (#20).

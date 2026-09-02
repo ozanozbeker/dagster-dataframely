@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely import dataframely_asset
 from dagster_dataframely.errors import (
     MaterializeResultFieldError,
     MaterializeResultValueError,
@@ -28,6 +28,7 @@ from tests.scenario import (
     cooccurring_orders,
     hopeless_orders,
     mixed_orders,
+    storage,
 )
 
 _VALID = dg.AssetKey(["orders"])
@@ -52,7 +53,7 @@ def _results(events: _Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.Data
 def _materialize(tmp_path: Path, asset: dg.AssetsDefinition):
     return dg.materialize(
         [asset],
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     )
 
 
@@ -102,8 +103,11 @@ def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: P
     assert metadata["dagster/row_count"].value == 3
 
 
-def test_the_packages_own_key_wins_a_collision(tmp_path: Path):
-    """The precedence the decorator already uses for definition metadata, applied to the returned result. `dagster/row_count` specifically: Dagster reads it, and a decorated function that overwrote it would make the catalog state a count nothing counted."""
+def test_the_packages_own_key_wins_a_collision():
+    """The precedence the decorator already uses for definition metadata, applied to the returned result. `dagster/row_count` specifically: Dagster reads it, and a decorated function that overwrote it would make the catalog state a count nothing counted.
+
+    Asserted on the call rather than through a run. An IO manager that counts the rows itself writes the same key last, so a run's materialization cannot tell the package's precedence from the manager's.
+    """
 
     @dataframely_asset(schema=Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -112,10 +116,8 @@ def test_the_packages_own_key_wins_a_collision(tmp_path: Path):
         )
 
     called = _results(_call(orders))[_VALID].metadata or {}
-    ran = _metadata(_materialize(tmp_path, orders), _VALID)
 
     assert called["dagster/row_count"] == 3
-    assert ran["dagster/row_count"].value == 3
 
 
 def test_a_returned_data_version_and_tags_reach_the_valid_result():

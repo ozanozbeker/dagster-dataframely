@@ -16,8 +16,8 @@ import polars as pl
 import pytest
 
 import dagster_dataframely
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
-from tests.scenario import Orders, clean_orders, mixed_orders
+from dagster_dataframely import dataframely_asset
+from tests.scenario import Orders, clean_orders, mixed_orders, storage
 
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
@@ -99,7 +99,7 @@ def _materialized(
     """Materialize one asset and return every materialization it emitted, keyed by asset name."""
     result = dg.materialize(
         [asset],
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     )
     return {
         event.asset_key.to_user_string(): (
@@ -422,8 +422,7 @@ def test_no_module_routes_through_describe():
         f"{source.name}:{number}"
         for source in sources
         for number, line in enumerate(source.read_text().splitlines(), start=1)
-        # `_csv_codecs.describe` is the package's own, naming encoded columns in a log line. The call barred here is the frame method of the same name.
-        if ".describe(" in line.replace("_csv_codecs.describe(", "")
+        if ".describe(" in line
     ]
 
     assert sources

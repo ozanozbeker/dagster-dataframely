@@ -1,17 +1,11 @@
 """What the asset definition declares about its data, before it has ever run.
 
-The asset body owns what the data is. The IO manager owns where and how it was written. A schema says what the data is, so it lives here and the IO manager never emits it.
+The asset body owns what the data is. The IO manager owns where and how it was written. A schema says what the data is, so it lives here and no IO manager has to emit it.
 """
 
 import dagster as dg
 import dataframely as dy
 
-# Absent from `dagster`; see `_carrier` for why it is reached for here.
-from dagster._core.definitions.metadata.metadata_value import (
-    ObjectMetadataValue,
-)
-
-from dagster_dataframely._carrier import SCHEMA_CARRIER_KEY, carrier
 from dagster_dataframely._naming import check_name, validation_rules
 from dagster_dataframely._rendering import column_constraints, table_constraints
 
@@ -107,12 +101,10 @@ def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     )
 
 
-def schema_metadata(
-    schema: type[dy.Schema],
-) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
+def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Build the definition metadata a schema-backed asset declares.
 
-    Two entries: the Columns tab, and the carrier that takes the live schema class to the IO manager on both the write and the read path.
+    One entry, the Columns tab. A mapping rather than the bare value because the decorator merges it over the user's `metadata`.
 
     Parameters
     ----------
@@ -139,31 +131,21 @@ def schema_metadata(
     out = dg.AssetOut(metadata=dd.wiring.schema_metadata(Orders))
     ```
     """
-    return {
-        _COLUMN_SCHEMA_KEY: table_schema(schema),
-        SCHEMA_CARRIER_KEY: carrier(schema),
-    }
+    return {_COLUMN_SCHEMA_KEY: table_schema(schema)}
 
 
-def quarantine_metadata(
-    schema: type[dy.Schema],
-) -> dict[str, dg.TableSchema | ObjectMetadataValue]:
-    """Build the definition metadata the quarantine out declares.
+def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
+    """Build the metadata a quarantine declares about its own shape.
 
-    Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking. Then the same carrier the valid out gets, because the two entries answer different questions and only the first is about conformance.
-
-    The carrier was withheld at first, on the reading that a table with a rule column for every rule is not schema-shaped. What reads it settles the question. The CSV manager takes dtypes off it, one per name, and a quarantine frame carries every column the schema declares at the dtype it declares. The rule columns sit beside them, and a dtype lookup by name never asks about a name it was not given. So `fulfilled_in`, `payload` and `tags` decode out of a quarantine exactly as they decode out of the valid table. That is the parity a reader would expect, and the earlier reading cost them it.
+    Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking.
 
     Parameters
     ----------
     schema
-        The schema whose invalid rows the out holds.
+        The schema whose invalid rows the quarantine holds.
 
     Returns
     -------
-    A mapping to hand to `dg.AssetOut(metadata=...)`.
+    A mapping to hand to `dg.AssetSpec(metadata=...)`.
     """
-    return {
-        _COLUMN_SCHEMA_KEY: quarantine_table_schema(schema),
-        SCHEMA_CARRIER_KEY: carrier(schema),
-    }
+    return {_COLUMN_SCHEMA_KEY: quarantine_table_schema(schema)}

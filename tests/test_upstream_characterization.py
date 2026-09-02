@@ -14,11 +14,17 @@ import dataframely as dy
 import polars as pl
 import pytest
 from dagster._annotations import is_public
-from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
-from dagster._serdes import deserialize_value, serialize_value
+from dagster._core.storage.upath_io_manager import (
+    coerce_to_relative_parts,
+    escape_dotdot_segments,
+    escape_leading_slash,
+)
+from dagster_polars import PolarsParquetIOManager
 from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
 from upath import UPath
+
+from dagster_dataframely.wiring import quarantine_path
 
 
 class Orders(dy.Schema):
@@ -425,22 +431,54 @@ def test_assets_definition_keys_still_holds_the_keys_dagster_derived():
     assert not is_public(dg.AssetsDefinition.keys_by_output_name)
 
 
-def test_object_metadata_value_carries_a_live_python_object():
-    """`ObjectMetadataValue` is still importable from its path and still carries a live object through `instance=`."""
-    # #17 hangs the schema class itself off the definition metadata, so the runtime recovers it from the asset instead of re-importing it.
-    # Marked `@public` upstream but absent from the `dagster` top level, and there is no `MetadataValue.object()` factory, so the import has to name a private module path.
-    carrier = ObjectMetadataValue(Orders.__name__, instance=Orders)
+def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
+    """An IO manager's metadata lands on the materialization after the step's, so a key both of them write reads as the manager's.
 
-    assert carrier.instance is Orders
-    assert carrier.value == Orders.__name__
+    `dagster-polars` counts the rows it writes and files them under `dagster/row_count`, the same key this package yields. The two agree on the number, so nothing is wrong, but a test asserting that count through a run would pass with the package's emission deleted. The row-count assertions therefore read the step's own yield instead, and this records why.
+    """
+
+    @dg.asset
+    def counted() -> dg.MaterializeResult[pl.DataFrame]:
+        return dg.MaterializeResult(
+            value=pl.DataFrame({"a": [1, 2, 3]}), metadata={"dagster/row_count": 999}
+        )
+
+    result = dg.materialize(
+        [counted],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+    )
+    recorded = next(
+        event.step_materialization_data.materialization.metadata
+        for event in result.get_asset_materialization_events()
+    )
+
+    assert result.success
+    assert recorded["dagster/row_count"].value == 3
 
 
-def test_definition_metadata_reaches_an_io_manager_on_both_paths(tmp_path: Path):
-    """Definition metadata still arrives at `OutputContext.definition_metadata` on the write and at `InputContext.upstream_output.definition_metadata` on the read, with a live object still the same object at both ends."""
-    # #22's CSV read path recovers the schema from there and from nowhere else: not from a sidecar file, and not from the data. Both ends are covered because the write is what a schema-shaped asset declares and the read is what makes the decode possible at all.
-    # `InputContext.definition_metadata` is what this test works around: it holds the `dg.AssetIn`'s own metadata, never the upstream asset's, so it is empty here.
-    carriers: dict[str, ObjectMetadataValue] = {}
-    on_the_input: dict[str, object] = {}
+def test_the_three_path_escapes_dagster_applies_are_still_importable():
+    """`quarantine_path` calls all three rather than restating them, so a quarantine and the table it came from are escaped by one implementation (#104).
+
+    None is exported from `dagster` and none is marked `@public`, which is why they are pinned here. What each protects against is a write outside the root: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks a `..` segment upward at write time.
+
+    `escape_dotdot_segments` is the pair `FilesystemIOManager.make_safe_partition_path` applies. The `UPathIOManager` base class applies only the first and documents overriding for the second, which is what this package does.
+    """
+    assert escape_leading_slash("/etc") == "%2Fetc"
+    assert escape_leading_slash("etc") == "etc"
+    assert escape_dotdot_segments("../etc") == "%2E%2E/etc"
+    assert escape_dotdot_segments("my..backup") == "my..backup"
+    assert coerce_to_relative_parts(UPath("/sales/orders")) == ("%2Fsales", "orders")
+    assert coerce_to_relative_parts(UPath("sales/orders")) == ("sales", "orders")
+
+
+def test_upath_io_manager_still_spells_a_multi_partition_key_by_dimension_name(
+    tmp_path: Path,
+):
+    """The one path rule `quarantine_path` restates instead of importing, because upstream keeps it in a closure inside `_get_paths_for_partitions` (#104).
+
+    Asserted as a derivation rather than as a literal. The quarantine's tail under its own leaf has to be the tail the manager writes under the asset's leaf, so upstream reordering the dimensions fails here rather than leaving a quarantine nobody can find.
+    """
+    written: dict[str, UPath] = {}
 
     class Probe(dg.UPathIOManager):
         extension = ".txt"
@@ -449,45 +487,35 @@ def test_definition_metadata_reaches_an_io_manager_on_both_paths(tmp_path: Path)
         def dump_to_path(
             self, context: dg.OutputContext, obj: str, path: UPath
         ) -> None:
-            carriers["write"] = context.definition_metadata["carrier"]
+            written["path"] = path
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(obj)
 
         @override
         def load_from_path(self, context: dg.InputContext, path: UPath) -> str:
-            upstream = context.upstream_output
-            assert upstream is not None
-            carriers["read"] = upstream.definition_metadata["carrier"]
-            on_the_input.update(context.definition_metadata)
             return path.read_text()
 
-    @dg.asset(
-        metadata={"carrier": ObjectMetadataValue(Orders.__name__, instance=Orders)}
+    grid = dg.MultiPartitionsDefinition(
+        {
+            "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+            "day": dg.StaticPartitionsDefinition(["2026-01-02"]),
+        }
     )
-    def upstream() -> str:
+    key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
+
+    @dg.asset(name="orders", partitions_def=grid)
+    def orders() -> str:
         return "written"
 
-    @dg.asset
-    def downstream(upstream: str) -> None:
-        pass
-
     result = dg.materialize(
-        [upstream, downstream],
+        [orders],
+        partition_key=key,
         resources={"io_manager": Probe(base_path=UPath(tmp_path))},
     )
+    quarantined = quarantine_path(dg.AssetKey(["orders"]), tmp_path, key)
 
     assert result.success
-    assert carriers["write"].instance is Orders
-    assert carriers["read"].instance is Orders
-    assert on_the_input == {}
-
-
-def test_an_object_metadata_value_degrades_to_its_label_across_process():
-    """Serializing an `ObjectMetadataValue` still keeps the label and drops the instance, rather than raising on an object that cannot be serialized."""
-    # #22 falls back to an inferred CSV read when the schema does not survive the trip, which is only a fallback because this degrades. Raising here would instead fail every run whose IO manager sits behind a process boundary.
-    restored = deserialize_value(
-        serialize_value(ObjectMetadataValue(Orders.__name__, instance=Orders)),
-        ObjectMetadataValue,
+    base = UPath(tmp_path)
+    assert quarantined.relative_to(base / "orders_quarantine") == (
+        written["path"].relative_to(base / "orders").with_suffix(".parquet")
     )
-
-    assert restored.instance is None
-    assert restored.value == Orders.__name__

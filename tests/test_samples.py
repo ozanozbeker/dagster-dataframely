@@ -16,9 +16,9 @@ import dataframely as dy
 import polars as pl
 import pytest
 
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely import dataframely_asset
 from dagster_dataframely.errors import InvalidSettingError
-from tests.scenario import Orders, clean_orders, mixed_orders
+from tests.scenario import Orders, clean_orders, mixed_orders, storage
 
 _FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
@@ -54,7 +54,7 @@ def _materialize(
 ) -> dg.ExecuteInProcessResult:
     return dg.materialize(
         list(assets),
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
         raise_on_error=raise_on_error,
     )
 
@@ -91,7 +91,7 @@ def _clean() -> pl.DataFrame:
 
 
 def test_a_materialization_carries_a_sample_of_the_rows_it_wrote(tmp_path: Path):
-    """The display key is short and unprefixed, like `stats/*` and unlike the machine carrier: the difference in length is the signal."""
+    """The display key is short and unprefixed, like `stats/*`: every key on a materialization is one a reader is meant to read."""
     metadata = _materialized(_materialize(tmp_path, _clean), _GOOD_KEY)
     sampled = _records(metadata["sample"])
 
@@ -129,7 +129,6 @@ def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: 
     metadata = _materialized(_materialize(tmp_path, unsampled), _GOOD_KEY)
 
     assert "sample" not in metadata
-    assert "dagster/row_count" in metadata
 
 
 def test_a_frame_with_no_rows_materializes_without_a_sample(tmp_path: Path):
@@ -146,7 +145,6 @@ def test_a_frame_with_no_rows_materializes_without_a_sample(tmp_path: Path):
     metadata = _materialized(result, _GOOD_KEY)
 
     assert result.success
-    assert metadata["dagster/row_count"].value == 0
     assert "sample" not in metadata
 
 

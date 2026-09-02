@@ -5,14 +5,14 @@ Everything here is asserted against what Dagster ends up holding: the materializ
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 import dagster as dg
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely import dataframely_asset
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import (
     DagsterDataframelyError,
@@ -27,6 +27,7 @@ from tests.scenario import (
     cooccurring_orders,
     hopeless_orders,
     mixed_orders,
+    storage,
     wrong_dtype_orders,
 )
 
@@ -46,9 +47,23 @@ def _materialize(
 ) -> dg.ExecuteInProcessResult:
     return dg.materialize(
         list(assets),
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
         raise_on_error=raise_on_error,
     )
+
+
+def _yielded(
+    events: AssetYield,
+) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
+    """The materialization each out produced, keyed by asset, as the step yielded it.
+
+    What a run records is this merged with whatever the IO manager adds, so a key both of them write reads as the manager's there.
+    """
+    return {
+        event.asset_key: event
+        for event in events
+        if isinstance(event, dg.MaterializeResult) and event.asset_key is not None
+    }
 
 
 def _evaluations(
@@ -76,12 +91,15 @@ def test_a_clean_frame_materializes_what_was_returned(tmp_path: Path):
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
 
-def test_a_clean_run_emits_row_count(tmp_path: Path):
-    """The valid count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package."""
-    result = _materialize(tmp_path, _raw_orders, orders)
-    metadata = _materialized(result)[dg.AssetKey(["orders"])]
+def test_a_clean_run_emits_row_count():
+    """The valid count specifically, so `dg.build_metadata_bounds_checks` needs no setting from this package.
 
-    assert metadata["dagster/row_count"].value == 3
+    Asserted on what the step yields rather than on what the run recorded. An IO manager may count the same rows itself, and `dagster-polars` does, so a run's materialization cannot say which of the two put the key there.
+    """
+    yielded = _yielded(orders(clean_orders()))  # pyrefly: ignore[bad-argument-type]
+    metadata = yielded[dg.AssetKey(["orders"])].metadata or {}
+
+    assert metadata["dagster/row_count"] == 3
 
 
 def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
@@ -119,45 +137,8 @@ def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
     )
 
 
-def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
-    """Parquet is self-describing and needs nothing from the definition, but CSV cannot be read back without the schema (#22). This asserts the channel works before anything depends on it, in-process, where the class is the same object rather than a name."""
-    seen: dict[str, object] = {}
-
-    class Spy(dg.IOManager):
-        @override
-        def handle_output(self, context: dg.OutputContext, obj: object) -> None:
-            seen["write"] = dict(context.definition_metadata or {}).get(
-                "dagster_dataframely/schema"
-            )
-
-        @override
-        def load_input(self, context: dg.InputContext) -> pl.DataFrame:
-            upstream = context.upstream_output
-            assert upstream is not None
-            seen["read"] = dict(upstream.definition_metadata or {}).get(
-                "dagster_dataframely/schema"
-            )
-            return clean_orders()
-
-    @dataframely_asset(schema=Orders, name="orders")
-    def carrier_source() -> pl.DataFrame:
-        return clean_orders()
-
-    @dg.asset(name="reader")
-    def reader(orders: pl.DataFrame) -> None:
-        pass
-
-    result = dg.materialize([carrier_source, reader], resources={"io_manager": Spy()})
-
-    assert result.success
-    assert set(seen) == {"write", "read"}
-    assert all(
-        getattr(carrier, "instance", None) is Orders for carrier in seen.values()
-    )
-
-
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
-    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one, the same line `_ParquetIOManager` draws.
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one.
 
     `None` is exempt, and is the skip (#95). It is the one wiring mistake this guard gave up catching, because the skip has to be spelled as a value and `None` is the only value a bare `return` produces.
     """
@@ -220,7 +201,7 @@ def _materialize_partition(
     return dg.materialize(
         [asset],
         partition_key="2026-01-02",
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     )
 
 
@@ -497,7 +478,7 @@ def test_an_eager_asset_on_the_quarantine_key_fires_only_when_rows_landed(
     )
     def triage(bad_rows: pl.DataFrame) -> None: ...
 
-    resources = {"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))}
+    resources = storage(tmp_path)
     definitions = dg.Definitions(assets=[quarantining, triage], resources=resources)
 
     def tick(cursor: Any) -> Any:
@@ -598,11 +579,12 @@ def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
     assert rejected_by_min["order_id"].to_list() == ["ORD-4"]
 
 
-def test_the_quarantine_emits_its_own_row_count(tmp_path: Path):
-    metadata = _materialized(_materialize(tmp_path, _quarantined))
+def test_the_quarantine_emits_its_own_row_count():
+    """On what the step yields, for the reason `test_a_clean_run_emits_row_count` gives."""
+    yielded = _yielded(_quarantined())  # pyrefly: ignore[bad-argument-type]
 
-    assert metadata[_GOOD_KEY]["dagster/row_count"].value == 3
-    assert metadata[_QUARANTINE_KEY]["dagster/row_count"].value == 3
+    assert (yielded[_GOOD_KEY].metadata or {})["dagster/row_count"] == 3
+    assert (yielded[_QUARANTINE_KEY].metadata or {})["dagster/row_count"] == 3
 
 
 def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
@@ -843,15 +825,25 @@ def _both_ways(
     return eager, lazy
 
 
+def _packaged(name: str) -> bool:
+    """Report whether a materialization's metadata key is this package's to compare.
+
+    The IO manager writes to the same mapping, and what it puts there is neither this package's nor stable between two runs: a path names the directory one run wrote to, and `dagster-polars`' own sample reads rows back off disk in whatever order the file gives them. Whitelisted rather than blacklisted, so a manager that grows a key does not quietly rejoin the comparison.
+    """
+    return name in {"dagster/row_count", "cooccurrence", "sample"} or name.startswith(
+        "stats/"
+    )
+
+
 def _reported(result: dg.ExecuteInProcessResult) -> object:
     """Everything the package itself told Dagster, in one comparable value.
 
-    `path` is dropped because it names the directory a run wrote to, and each of the two runs gets its own. Nothing else is normalised, `cooccurrence` included: every table this package emits is ordered by construction, so two runs of the same rows are equal value for value.
+    Nothing the package emits is normalised, `cooccurrence` included: every table it builds is ordered by construction, so two runs of the same rows are equal value for value.
     """
     return (
         {
             key.to_user_string(): {
-                name: value for name, value in metadata.items() if name != "path"
+                name: value for name, value in metadata.items() if _packaged(name)
             }
             for key, metadata in _materialized(result).items()
         },
