@@ -7,15 +7,23 @@ Nothing here is a fixture. A schema is a class and a frame is a value, so both r
 `POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the shape check loudly in every runtime test, instead of being silently rebuilt to match.
 
 `storage` is here for the same reason the frames are: every run test needs somewhere to write, and only a handful care which manager writes it. It builds `dagster-polars`' parquet manager, which ADR-0004 makes this package's recommendation, so a test that merely needs storage exercises what a user will actually run.
+
+`warehouse` is its opposite number, for the handful of tests that care that the manager is a database rather than a filesystem. Delegation is meant to place a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
 """
 
 import datetime as dt
 from decimal import Decimal
 from pathlib import Path
+from typing import NamedTuple
 
 import dataframely as dy
+import duckdb
 import polars as pl
+from dagster_duckdb_polars import DuckDBPolarsIOManager
 from dagster_polars import PolarsParquetIOManager
+
+#: The database schema `warehouse` writes into, and therefore the prefix the assets under it carry. `DbIOManager` addresses a table as `<schema>.<name>`, so the two have to agree.
+WAREHOUSE_SCHEMA = "analytics"
 
 
 def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
@@ -31,6 +39,79 @@ def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
     The `resources` mapping to hand `dg.materialize`.
     """
     return {"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))}
+
+
+def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
+    """Build the resources a run needs when it has to write into a database.
+
+    The other of the two base classes Dagster ships. `PolarsParquetIOManager` is a `UPathIOManager` and this is a `DbIOManager`, and between them they cover nearly every first-party manager, so a quarantine that lands natively on both is not support for two integrations (ADR-0006).
+
+    The schema is created here rather than by the manager, which assumes one exists.
+
+    Parameters
+    ----------
+    tmp_path
+        The directory the database file goes in.
+
+    Returns
+    -------
+    The `resources` mapping to hand `dg.materialize`.
+    """
+    database = tmp_path / "warehouse.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        connection.sql(f"CREATE SCHEMA IF NOT EXISTS {WAREHOUSE_SCHEMA}")
+    return {
+        "io_manager": DuckDBPolarsIOManager(
+            database=str(database), schema=WAREHOUSE_SCHEMA
+        )
+    }
+
+
+class Table(NamedTuple):
+    """What a warehouse test can ask about a table without reading its values back.
+
+    Values stay in the database on purpose. `Orders` carries a `Duration`, DuckDB stores that as an INTERVAL, and Polars refuses to import one without an unstable environment variable set. The placement tests care that the table exists, holds the right rows and carries the rule columns, and the parquet tests are where the values themselves are compared.
+
+    Attributes
+    ----------
+    columns
+        The table's column names, in the order DuckDB reports them.
+    height
+        How many rows it holds.
+    """
+
+    columns: list[str]
+    height: int
+
+
+def tables(tmp_path: Path) -> dict[str, Table]:
+    """Describe every table a `warehouse` run wrote, keyed by name.
+
+    Parameters
+    ----------
+    tmp_path
+        The same directory `warehouse` was given.
+
+    Returns
+    -------
+    One description per table in the warehouse schema.
+    """
+    # Interpolated rather than parameterized: an identifier cannot be bound, and every
+    # value here is this file's own literal or a name DuckDB itself reported.
+    with duckdb.connect(str(tmp_path / "warehouse.duckdb")) as connection:
+        columns: dict[str, list[str]] = {}
+        for name, column in connection.sql(
+            "select table_name, column_name from information_schema.columns "  # noqa: S608
+            f"where table_schema = '{WAREHOUSE_SCHEMA}' order by ordinal_position"
+        ).fetchall():
+            columns.setdefault(name, []).append(column)
+        heights = {
+            name: connection.sql(
+                f"select count(*) from {WAREHOUSE_SCHEMA}.{name}"  # noqa: S608
+            ).pl()["count_star()"][0]
+            for name in columns
+        }
+        return {name: Table(names, heights[name]) for name, names in columns.items()}
 
 
 class Orders(dy.Schema):

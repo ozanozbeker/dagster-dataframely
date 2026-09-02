@@ -49,9 +49,15 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 [dependency-groups]
 dev = [
   "dagster>=1.13.20",
+  # One manager from each base class Dagster ships: `dagster-polars` is a
+  # `UPathIOManager` and `dagster-duckdb-polars` is a `DbIOManager`. Between them the
+  # delegation tests cover nearly every first-party manager (ADR-0006). `duckdb` is
+  # transitive, and declared because the tests query the database directly.
+  "dagster-duckdb-polars>=0.27.12",
   "dagster-graphql>=1.13.20",
   "dagster-polars>=0.27.12",
   "dagster-webserver>=1.13.20",
+  "duckdb>=1.1",
   "prek>=0.5.1",
   "pyrefly>=1.2.0",
   "pytest>=9.1.1",

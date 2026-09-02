@@ -3,17 +3,20 @@
 These test upstream, not this package. Each one covers a shape that is private, unexported, or undocumented. Each carries a comment naming the decision that took the dependency, so a failure reads as "Dataframely changed" rather than "something broke".
 """
 
+import copy
 import datetime as dt
 import inspect
 import warnings
 from pathlib import Path
-from typing import override
+from typing import Any, override
 
 import dagster as dg
 import dataframely as dy
 import polars as pl
 import pytest
-from dagster._annotations import is_public
+from dagster._core.definitions.decorators.op_decorator import is_context_provided
+from dagster._core.errors import DagsterInvalidPropertyError
+from dagster._core.execution.plan.outputs import StepOutputHandle
 from dagster._core.storage.upath_io_manager import (
     coerce_to_relative_parts,
     escape_dotdot_segments,
@@ -243,20 +246,6 @@ def test_polars_renders_a_duration_in_its_own_friendly_style():
         spans.cast(pl.String)
 
 
-def test_every_asset_out_parameter_has_a_readable_attribute_of_the_same_name():
-    """`dg.AssetOut` is still readable back out of every one of its constructor parameters."""
-    # #19 rebuilds the quarantine's `AssetOut` from its attributes, because it is immutable and has no `_replace`. A parameter Dagster adds whose attribute is named differently would be dropped silently, taking the user's value with it, so the property the rebuild rests on is asserted rather than assumed.
-    # `kwargs` is the constructor's own catch-all, not a setting.
-    parameters = set(inspect.signature(dg.AssetOut.__init__).parameters) - {
-        "self",
-        "kwargs",
-    }
-    out = dg.AssetOut()
-
-    assert parameters
-    assert {name for name in parameters if not hasattr(out, name)} == set()
-
-
 def test_a_partitioned_asset_check_spec_is_still_in_preview():
     """`AssetCheckSpec(partitions_def=)` still warns `PreviewWarning`, and still warns nothing else."""
     # #31 waits on this warning disappearing entirely. It is the ticket's only trigger: `tests/test_partitions.py` pins the symptoms of not using the parameter, and those hold whether it is preview or GA, so nothing else in the suite notices upstream promoting it.
@@ -343,22 +332,31 @@ def _invoked(asset: dg.AssetsDefinition) -> list[object]:
 
 
 def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
-    """Calling a `multi_asset` directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
+    """Calling an asset directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
+
     # #72 unbundles every check result for exactly this reason (ADR-0002). A run flattens the two forms into one event stream, so nothing else in the suite can tell them apart, and the bundled form is what made a decorated asset untestable by calling it.
     # Undocumented: direct invocation is Dagster's own documented unit-testing path, but nothing says a bundled check leaves its output unsatisfied. The error names an output name no user wrote.
-    key = dg.AssetKey(["orders"])
-    spec = dg.AssetCheckSpec("dy_schema__dtypes", asset=key)
-    passed = dg.AssetCheckResult(check_name=spec.name, asset_key=key, passed=True)
-    outs = {"orders": dg.AssetOut(key=key, is_required=False)}
+    def spec(asset: dg.AssetKey) -> dg.AssetCheckSpec:
+        return dg.AssetCheckSpec("dy_schema__dtypes", asset=asset)
 
-    @dg.multi_asset(outs=outs, check_specs=[spec])
+    def result(asset: dg.AssetKey) -> dg.AssetCheckResult:
+        return dg.AssetCheckResult(
+            check_name="dy_schema__dtypes", asset_key=asset, passed=True
+        )
+
+    bundled_key = dg.AssetKey(["bundled_orders"])
+    standalone_key = dg.AssetKey(["standalone_orders"])
+
+    @dg.asset(name="bundled_orders", check_specs=[spec(bundled_key)])
     def bundled():
-        yield dg.MaterializeResult(asset_key=key, check_results=[passed])
+        yield dg.MaterializeResult(
+            asset_key=bundled_key, check_results=[result(bundled_key)]
+        )
 
-    @dg.multi_asset(outs=outs, check_specs=[spec], name="standalone_orders")
+    @dg.asset(name="standalone_orders", check_specs=[spec(standalone_key)])
     def standalone():
-        yield dg.MaterializeResult(asset_key=key)
-        yield passed
+        yield dg.MaterializeResult(asset_key=standalone_key)
+        yield result(standalone_key)
 
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
         _invoked(bundled)
@@ -375,7 +373,7 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 ):
     """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
 
-    # #77 documents that `dataframely_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the out stores, and validation is eager, so the out holds a `DataFrame` however the decorated function arrived at it.
+    # #77 documents that `dy_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and validation is eager, so the asset holds a `DataFrame` however the decorated function arrived at it.
     # Undocumented as a contrast, though each half is documented alone. What a reader carries over from `@dg.asset` is exactly the expectation this breaks.
     @dg.asset(name="mismatch")
     def mismatch() -> pl.DataFrame:
@@ -405,30 +403,6 @@ def test_materialize_result_still_takes_exactly_the_six_fields_the_fold_names():
         "value",
     }
     assert dg.MaterializeResult().value is not None
-
-
-def test_assets_definition_keys_still_holds_the_keys_dagster_derived():
-    """`AssetsDefinition.keys` still reports the key Dagster derived for an out that declared only a `key_prefix`, and still agrees with `keys_by_output_name`."""
-    # #72 resolves both of the decorator's keys off the finished definition rather than off the execution context (ADR-0002). It reads `keys` because it is `@public` and `keys_by_output_name` is not, which costs a set subtraction: with at most two outs, removing the valid key leaves exactly the quarantine.
-    # The `@public` split is the whole reason for the roundabout accessor, so it is asserted rather than left in a comment.
-    valid = dg.AssetKey(["sales", "orders"])
-
-    @dg.multi_asset(
-        outs={
-            "orders": dg.AssetOut(key=valid, is_required=False),
-            "orders_quarantine": dg.AssetOut(key_prefix="vault", is_required=False),
-        }
-    )
-    def orders():
-        yield dg.MaterializeResult(asset_key=valid)
-
-    derived = dg.AssetKey(["vault", "orders_quarantine"])
-
-    assert orders.keys == {valid, derived}
-    assert orders.keys - {valid} == {derived}
-    assert orders.keys_by_output_name["orders_quarantine"] == derived
-    assert is_public(dg.AssetsDefinition.keys)
-    assert not is_public(dg.AssetsDefinition.keys_by_output_name)
 
 
 def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
@@ -519,3 +493,128 @@ def test_upath_io_manager_still_spells_a_multi_partition_key_by_dimension_name(
     assert quarantined.relative_to(base / "orders_quarantine") == (
         written["path"].relative_to(base / "orders").with_suffix(".parquet")
     )
+
+
+# --- what the delegating writer borrows (ADR-0006) ---
+def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use(
+    tmp_path: Path,
+):
+    """The four private APIs the quarantine's placement rests on, asserted through one asset.
+
+    `get_step_execution_context` reaches the step, `StepOutputHandle` names its output, `get_output_context` hands back the context that output was going to be written under, and `get_io_manager` hands back the manager that was going to write it. Nothing else can reach a `DbIOManager`'s `resource_config`, which it reads its database and connection settings off at write time, and reconstructing that by hand is what delegation exists to avoid.
+
+    `get_io_manager` is one ADR-0006 did not name until it was amended, and it replaces reading `context.resources.io_manager`. That reading needed the asset to declare `required_resource_keys`, which Dagster validates at bind time, which would make every direct invocation supply a manager it has no use for.
+    """
+    borrowed: dict[str, Any] = {}
+
+    @dg.asset(name="orders", io_manager_key="warehouse", metadata={"owner": "finance"})
+    def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+        step = context.get_step_execution_context()
+        (output_name,) = [
+            name
+            for name, key in context.assets_def.keys_by_output_name.items()
+            if key == context.asset_key
+        ]
+        handle = StepOutputHandle(step.step.key, output_name)
+        original = step.get_output_context(handle)
+        borrowed["metadata"] = dict(original.definition_metadata or {})
+        borrowed["resource_config"] = original.resource_config
+        borrowed["manager"] = type(step.get_io_manager(handle)).__name__
+        return pl.DataFrame({"order_id": ["ORD-1"]})
+
+    result = dg.materialize(
+        [orders],
+        resources={"warehouse": PolarsParquetIOManager(base_dir=str(tmp_path))},
+    )
+
+    assert result.success
+    assert borrowed["metadata"]["owner"] == "finance"
+    assert borrowed["resource_config"] is not None
+    assert borrowed["manager"] == "PolarsParquetIOManager"
+
+
+def test_a_directly_invoked_asset_still_refuses_to_hand_over_a_step():
+    """How the decorator tells a run from a call, which is what decides whether the quarantine is delegated or written to a file.
+
+    A call has no step to borrow from, so `DagsterInvalidPropertyError` is the whole of the signal. Asked rather than tested for, because there is no predicate that answers it.
+    """
+
+    @dg.asset(name="orders")
+    def orders(context: dg.AssetExecutionContext) -> str:
+        with pytest.raises(DagsterInvalidPropertyError):
+            context.get_step_execution_context()
+        return "called"
+
+    assert orders(dg.build_asset_context()) == "called"
+
+
+def test_keys_by_output_name_still_omits_the_check_outputs():
+    """A check spec is an op output too, so the step has one more output per declared check and the asset's own has to be picked out by key. `keys_by_output_name` is the mapping that does it, and it carries no `@public`."""
+    key = dg.AssetKey(["orders"])
+
+    @dg.asset(name="orders", check_specs=[dg.AssetCheckSpec(name="probe", asset=key)])
+    def orders():
+        yield dg.MaterializeResult(asset_key=key)
+        yield dg.AssetCheckResult(check_name="probe", asset_key=key, passed=True)
+
+    assert orders.keys_by_output_name == {"result": key}
+    assert len(orders.op.output_defs) == 2
+
+
+def test_dagster_still_reads_the_context_parameter_off_the_first_name_alone():
+    """The decorator prepends a `context` parameter to a quarantined asset, and has to agree with Dagster about whether the decorated function already declared one. `is_context_provided` is upstream's own rule, imported rather than restated so the two cannot disagree."""
+
+    def declared(context: dg.AssetExecutionContext, raw: str) -> str: ...
+
+    def bare(raw: str) -> str: ...
+
+    assert is_context_provided(list(inspect.signature(declared).parameters.values()))
+    assert not is_context_provided(list(inspect.signature(bare).parameters.values()))
+    assert not is_context_provided([])
+
+
+def test_a_check_result_still_takes_exactly_the_six_fields_the_address_names():
+    """The abort exits rebuild every check result to carry the quarantine's address, naming each field, so a seventh added upstream would silently drop.
+
+    It also normalises what it is handed, where `dg.MaterializeResult` does not, which is why the two surfaces are read differently in the tests.
+    """
+    result = dg.AssetCheckResult(
+        passed=True, check_name="probe", asset_key=dg.AssetKey(["orders"])
+    )
+
+    assert set(result._fields) == {
+        "passed",
+        "asset_key",
+        "check_name",
+        "metadata",
+        "severity",
+        "description",
+    }
+    assert dg.AssetCheckResult(
+        passed=True,
+        check_name="probe",
+        asset_key=dg.AssetKey(["a"]),
+        metadata={"k": "v"},
+    ).metadata == {"k": dg.MetadataValue.text("v")}
+
+
+def test_an_output_context_still_clones_and_re_points_by_attribute():
+    """The fifth private API the delegating writer rests on: `OutputContext` keeps its asset key on `_asset_key` and offers no setter, so re-pointing a clone is an attribute write.
+
+    A shallow copy is what carries `resource_config`, `definition_metadata`, the partition and everything else no code here understands. Two properties make that safe, and both are asserted: the copy is a separate object, and `add_output_metadata` rebinds the mapping rather than mutating the one the original shares, so a manager writing onto the clone cannot reach the step's own output.
+    """
+    original = dg.build_output_context(
+        asset_key=dg.AssetKey(["analytics", "orders"]),
+        definition_metadata={"partition_expr": "ordered_at"},
+    )
+
+    clone = copy.copy(original)
+    clone._asset_key = dg.AssetKey(["analytics", "orders_quarantine"])
+    clone.add_output_metadata({"path": "somewhere"})
+
+    assert clone is not original
+    assert clone.asset_key.path == ["analytics", "orders_quarantine"]
+    assert original.asset_key.path == ["analytics", "orders"]
+    assert clone.definition_metadata == original.definition_metadata
+    assert "path" in clone.get_logged_metadata()
+    assert original.get_logged_metadata() == {}

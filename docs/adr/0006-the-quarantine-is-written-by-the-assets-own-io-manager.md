@@ -18,11 +18,13 @@ The rejected alternative in ADR-0004, "the IO manager writes the quarantine", wa
 
 **The quarantine is written through whatever IO manager the asset is already bound to, addressed by its own asset key.**
 
-`quarantine_key` suffixes the last part of the asset's key, leaving the prefix alone: `analytics/orders` becomes `analytics/orders_quarantine`. The package then hands that key, and the invalid rows, to `context.resources.io_manager`.
+`quarantine_key` suffixes the last part of the asset's key, leaving the prefix alone: `analytics/orders` becomes `analytics/orders_quarantine`. The package then hands that key, and the invalid rows, to the manager the step was already going to write through.
 
 Nothing in the package knows which manager that is. The quarantine's address is its asset key, and every asset-key-addressed manager already turns a key into its own location: `UPathIOManager` into a path, `DbIOManager` into `<schema>.<table>` off `asset_key.path[-1]`. So one suffix rule places the quarantine natively on every backend, and the partition layout comes along with it.
 
-**The output context is borrowed, not built.** `DbIOManager` backends read the database and connection settings off the output context at write time rather than off themselves, so a context assembled by hand needs per-manager knowledge, which is the thing this decision exists to avoid. Instead the step's real `OutputContext` is cloned and re-pointed at the quarantine's key. Copying fields is not interpreting them, and that is what keeps the write manager-blind.
+**The output context is cloned, not built.** `DbIOManager` backends read the database and connection settings off the output context at write time rather than off themselves, so a context assembled by hand needs a list of which fields matter, which is the per-manager knowledge this decision exists to avoid. Instead the step's real `OutputContext` is shallow-copied and its asset key re-pointed. Carrying a field is not interpreting it, and that is what keeps the write manager-blind.
+
+**The manager is borrowed off the same step**, not read off `context.resources`. Amended while building (#106). The prototype reached for `context.resources.io_manager`, which needs the asset to declare `required_resource_keys`, and Dagster validates that at bind time: every direct invocation would then have to supply a manager it has no use for, which breaks the fallback this decision depends on. `StepExecutionContext.get_io_manager` answers off the step output handle already in hand, so the asset's own `io_manager_key` is followed without anything in the package learning what it is.
 
 **`quarantine` becomes a bool, and nothing else.** ADR-0004 folded the flag and the location into `bool | str | Path` because `True` had to resolve to a root, and a `True` that resolved to nothing was an error invisible at the call site. That objection is gone: `True` now means "wherever this asset's manager puts things", which always resolves.
 
@@ -44,13 +46,19 @@ The abort case holds. `handle_output` is called inside the asset body before any
 
 The two managers tested are one from each base class Dagster ships. Between them `UPathIOManager` and `DbIOManager` cover nearly every first-party manager, so this is not support for two integrations.
 
+The matrix lifted into `tests/test_quarantine.py` when #106 landed, minus the artificial abort: a decorated asset runs its body before `process`, so the only exit that raises after writing is nothing-survived, and that is what proves the write happens first.
+
 ## Consequences
 
-**This reads `context.resources.io_manager`, which ADR-0002 and ADR-0004 refused.** The refusal bought a decorated asset that is callable in a test with no resources. That still works: direct invocation with no manager falls back to case 3, the root and the path rule. A test that wants the real placement passes a manager, which is what testing placement means.
+**Nothing reads `context.resources`, which ADR-0002 and ADR-0004 refused.** The refusal bought a decorated asset that is callable in a test with no resources, and borrowing the manager off the step keeps it whole: an asset declares no resource key, so a call binds with none. A call still has no step, so it falls back to case 3, the root and the path rule. A test that wants the real placement runs the asset, which is what testing placement means.
 
-**Three private Dagster APIs**: `get_step_execution_context`, `StepOutputHandle`, `get_output_context`. Pinned by characterization tests, as `_naming` pins Dataframely's. An import-time failure here breaks the whole code location, not just the quarantine, which is the loud failure and the right one.
+**A quarantined asset declares a `context` parameter** whether or not the decorated function asked for one, because the writer is built from the execution context and a wrapper cannot ask Dagster for a parameter it did not declare. Calling one therefore takes a `dg.build_asset_context()`. An asset without a quarantine keeps exactly the signature it was written with, so the common path is unchanged.
 
-**Metadata the manager emits is dropped.** It calls `add_output_metadata` on a context that is not a real output, so the manager's own `path` or `Query` goes nowhere. The package emits the quarantine's location itself, so a reader loses nothing, but the two are computed separately and could disagree.
+**Seven private Dagster APIs.** Four reach the step: `get_step_execution_context`, `StepOutputHandle`, `get_output_context` and `get_io_manager`. One re-points the clone: `OutputContext._asset_key`, which has no setter. Two serve the context parameter: `is_context_provided`, upstream's own rule for whether a decorated function asked for a context, and `DagsterInvalidPropertyError`, which is the whole of the signal that a call is not a run.
+
+All seven are pinned by characterization tests, as `_naming` pins Dataframely's. An import-time failure here breaks the whole code location, not just the quarantine, which is the loud failure and the right one.
+
+**Metadata the manager emits is dropped.** `add_output_metadata` rebinds the mapping on the object it is called on, and that object is the clone, which the step never reads. So the manager's own `path` or `Query` goes nowhere, and it cannot displace what the real output reports either. The package emits the quarantine's address itself, so a reader loses nothing, but the two are computed separately and could disagree.
 
 **A partitioned asset on a database manager needs `partition_expr`.** `DbIOManager` raises without it. The user already declares it for their own partitioned table, and it is forwarded automatically because the borrowed context carries definition metadata.
 

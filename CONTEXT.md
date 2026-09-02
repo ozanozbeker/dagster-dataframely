@@ -19,23 +19,40 @@ Dagster's own phrase, and explicit for one reason: it names the function by its 
 _Avoid_: transform, compute function (Dagster's, but there it names the wrapper this decorator builds)
 
 **Valid rows**: The rows `Schema.filter` kept.
-They materialize as the asset's main output.
+They are what the asset materializes.
 _Avoid_: good rows, the good table, the good out
 
 **Invalid rows**: The rows `Schema.filter` removed, each having failed at least one rule.
 _Avoid_: rejected rows, bad rows, failed rows
 
-**Quarantine**: The parquet file invalid rows are written to.
-A file and not an asset: it is evidence of a run, and it holds no place in the graph unless a quarantine spec gives it one.
+**Quarantine**: Where invalid rows are written, addressed by the asset key `<name>_quarantine`.
+Not an asset: it is evidence of a run, and it holds no place in the graph unless a quarantine spec gives it one.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
 _Avoid_: reject table, dead-letter asset, quarantine asset, sibling
 
-**Root**: The directory a quarantine is written under, with the asset key and partition spelling the rest of the path.
-One per deployment through the setting, or one per asset by naming it on the declaration.
+**Writer**: What puts the invalid rows somewhere and hands back an address.
+`process` takes one and learns nothing else about where the rows went.
+_Avoid_: sink, emitter, exporter
+
+**Delegating writer**: The writer that hands the rows to the IO manager the asset is already bound to.
+The default, and the reason a quarantine lands beside its table on any backend with no configuration.
+_Avoid_: borrowing writer, manager writer, passthrough
+
+**File writer**: The writer that puts the rows in a parquet file under the root.
+The fallback, for a decorated asset that is called rather than run.
+_Avoid_: local writer, fallback writer
+
+**Address**: Where a writer put the rows, rendered for a reader.
+An asset key under delegation and a path under the fallback, because the answer can be a database table.
+Dagster's own word, from `TableMetadataSet.extract_storage_address`.
+_Avoid_: location, destination, path
+
+**Root**: The directory the file writer writes under, with the asset key and partition spelling the rest of the path.
+One per deployment through the setting, and nowhere else: a root is meaningless to a warehouse, so there is no per-asset override (ADR-0006).
 _Avoid_: quarantine dir, base dir, output dir
 
 **Quarantine spec**: A user-declared `dg.AssetSpec` that stands for a quarantine in the graph.
-It has no compute, because the decorator already wrote the file.
+It has no compute, because the decorator already wrote the rows.
 _Avoid_: quarantine asset, sibling, external asset
 
 **Rule column**: A column of the quarantine carrying one rule's outcome per row, reading `valid`, `invalid` or `unknown`.
@@ -43,7 +60,7 @@ Dataframely's own term, from `FailureInfo.details()`.
 _Avoid_: outcome column
 
 **Returned result**: A `dg.MaterializeResult` a decorated function returns in place of a bare frame.
-Its `value` is the frame to validate; the rest folds into the valid out's materialization.
+Its `value` is the frame to validate; the rest folds into the asset's materialization.
 _Avoid_: wrapped frame, enriched result
 
 **Unwrap**: Taking the frame off a returned result, before anything is validated.
@@ -91,6 +108,7 @@ _Avoid_: profile, skim
 _Avoid_: knob, option
 
 **Tier**: One level of a setting's resolution order: the argument on the asset, then `DAGSTER_DATAFRAMELY_*`, then the package default.
+`quarantine_dir` has two: it takes no argument, because that would be the location override ADR-0006 defers.
 
 ### Naming
 

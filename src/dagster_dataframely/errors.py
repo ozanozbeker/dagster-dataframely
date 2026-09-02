@@ -17,7 +17,7 @@ __all__ = [
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
     "NothingSurvivedError",
-    "QuarantineSettingError",
+    "QuarantineRootError",
     "ReservedColumnError",
     "SchemaShapeError",
     "ValidationAbortError",
@@ -149,7 +149,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
 
         Two readers write this, and `value=` answers neither on its own. One wanted metadata on a table this package does write, and the `context` route is what they were reaching for. Sending them to build a returned result around a frame they were not returning anyway would answer a question they did not ask. The other manages their own storage and has no frame at any point, which is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
 
-        The `context` route carries `asset_key=` here rather than being named bare. A reader meets this message having already got the returned result wrong, so a second call that raises on any asset with a quarantine would be the worse of the two failures.
+        The `context` route is named bare. A decorated function produces one asset, so `add_asset_metadata` has one materialization to land on and needs no `asset_key=` to say which.
 
         Parameters
         ----------
@@ -157,7 +157,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
             The asset key, rendered, whose decorated function returned the result.
         """
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the Polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}}, asset_key=context.asset_key_for_output(<this asset's name>))` from a `context` parameter, since the bare call raises as soon as the asset declares a quarantine. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
+            f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the Polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
         )
 
 
@@ -237,7 +237,7 @@ class ValidationAbortError(DagsterDataframelyError):
         """
         plural = "" if rejected == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected {rejected} row{plural}, {_culprits(counts)}. Nothing was written, so the last-known-good table survives. Fix the rows upstream, route them to a sibling asset with `quarantine=dg.AssetOut()`, or drop them deliberately in the asset body. This package never discards rows on your behalf."
+            f"{schema_name} rejected {rejected} row{plural}, {_culprits(counts)}. Nothing was written, so the last-known-good table survives. Fix the rows upstream, keep them with `quarantine=True`, or drop them deliberately in the asset body. This package never discards rows on your behalf."
         )
 
 
@@ -248,7 +248,7 @@ class NothingSurvivedError(DagsterDataframelyError):
     """
 
     def __init__(
-        self, schema_name: str, rejected: int, counts: Mapping[str, int], key: str
+        self, schema_name: str, rejected: int, counts: Mapping[str, int], address: str
     ) -> None:
         """State the damage per rule and where every row went.
 
@@ -260,29 +260,31 @@ class NothingSurvivedError(DagsterDataframelyError):
             How many rows were rejected, which is all of them.
         counts
             Failure count per rule, for the rules that rejected anything.
-        key
-            The quarantine's asset key, rendered, so the message says where to look.
+        address
+            Where the writer put the rows, rendered, so the message says where to look. An asset key under delegation and a file path under the fallback, because the answer can be a database table.
         """
         plural = "" if rejected == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {key} with its per-rule outcome, and the valid output was skipped rather than written empty, so the last-known-good table survives."
+            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {address} with its per-rule outcome, and the valid output was skipped rather than written empty, so the last-known-good table survives."
         )
 
 
-class QuarantineSettingError(DagsterDataframelyError):
-    """The quarantine's `dg.AssetOut` sets something that cannot differ between the two outs.
+class QuarantineRootError(DagsterDataframelyError):
+    """A quarantined asset reached the fallback writer with no root to write under.
 
-    Raised at definition time. `can_subset` is absent, so one step always produces both tables. Inheriting the decorator's value silently would discard something the engineer wrote, and honouring theirs would state a schedule or a version for one half of a step.
+    Raised at run time, and only where there is no IO manager to delegate to, which is a decorated asset called directly rather than run. A run always has one, so this cannot reach a deployment.
+
+    Choosing a directory instead was considered and declined. The rows are evidence, and writing them somewhere nobody named is how evidence gets lost.
     """
 
-    def __init__(self, setting: str) -> None:
-        """Name the setting and the reason one step cannot hold two of it.
+    def __init__(self, asset: str) -> None:
+        """Name the asset and the one setting that answers.
 
         Parameters
         ----------
-        setting
-            The `dg.AssetOut` parameter that was set.
+        asset
+            The asset key, rendered, whose invalid rows had nowhere to go.
         """
         super().__init__(
-            f"The quarantine's `dg.AssetOut` sets `{setting}`. One step always produces both tables, so a `{setting}` that differs between them cannot be true of either. Pass it to `dataframely_asset` instead, where it covers both."
+            f"'{asset}' declares `quarantine=True` and was called with no IO manager to delegate to, so the invalid rows have nowhere to go. Set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` to the directory a called asset should write them under, or run the asset instead, where its own manager places them."
         )

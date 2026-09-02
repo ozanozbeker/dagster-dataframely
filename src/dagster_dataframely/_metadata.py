@@ -60,7 +60,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     )
 
 
-def quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
+def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Project the quarantine's shape onto its own Columns tab.
 
     The schema's columns mirrored, keeping dtype, description and tags but **no constraints**. These rows are here precisely because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row in the table. The primary key above all: that is why it is stated table-level on the valid table and nowhere here. The invalid rows are exactly where a duplicate key ends up.
@@ -113,7 +113,7 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 
     Returns
     -------
-    A mapping to hand to `dg.AssetOut(metadata=...)`.
+    A mapping to hand to `dg.asset(metadata=...)`.
 
     Examples
     --------
@@ -128,7 +128,8 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
         order_id = dy.String(primary_key=True)
 
 
-    out = dg.AssetOut(metadata=dd.wiring.schema_metadata(Orders))
+    @dg.asset(metadata=dd.wiring.schema_metadata(Orders))
+    def orders() -> None: ...
     ```
     """
     return {_COLUMN_SCHEMA_KEY: table_schema(schema)}
@@ -148,4 +149,4 @@ def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     -------
     A mapping to hand to `dg.AssetSpec(metadata=...)`.
     """
-    return {_COLUMN_SCHEMA_KEY: quarantine_table_schema(schema)}
+    return {_COLUMN_SCHEMA_KEY: _quarantine_table_schema(schema)}

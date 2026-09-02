@@ -20,7 +20,7 @@ _ROOT = Path(__file__).parent.parent
 # The root: the happy path, and one name for each namespace that is not it.
 _PUBLIC = {
     # The decorator, and the spec that puts its quarantine in the graph.
-    "dataframely_asset",
+    "dy_asset",
     "build_quarantine_spec",
     # The two namespaces, rather than their twenty names.
     "errors",
@@ -32,15 +32,17 @@ _PUBLIC = {
     "MultiColumnRules",
 }
 
-# What `dd.wiring` puts in reach, for a `@dg.multi_asset` a user assembles themselves.
+# What `dd.wiring` puts in reach, for a `@dg.asset` a user assembles themselves.
 _WIRING = {
     "AssetYield",
+    "QuarantineWriter",
     "check_name",
     "check_specs",
+    "delegating_writer",
+    "file_writer",
     "process",
     "quarantine_frame",
     "quarantine_path",
-    "quarantine_table_schema",
     "schema_metadata",
     "table_schema",
 }
@@ -57,7 +59,7 @@ _ERRORS = {
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
     "NothingSurvivedError",
-    "QuarantineSettingError",
+    "QuarantineRootError",
     "ReservedColumnError",
     "SchemaShapeError",
     "ValidationAbortError",

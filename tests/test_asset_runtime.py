@@ -1,4 +1,4 @@
-"""Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
+"""Runtime behaviour of `@dy_asset`, asserted through `dg.materialize`.
 
 Everything here is asserted against what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All six exits are here. Which of the five validating ones a frame reaches is decided by the frame and by whether the asset declares a quarantine; the sixth is the skip, which has no frame to decide anything (#95).
 """
@@ -12,7 +12,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dataframely_asset
+from dagster_dataframely import dy_asset
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import (
     DagsterDataframelyError,
@@ -37,7 +37,7 @@ def _raw_orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dataframely_asset(schema=Orders)
+@dy_asset(Orders)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
@@ -127,7 +127,7 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
 def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
     """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting. `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change. The shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
 
-    @dataframely_asset(schema=Orders, name="orders_lazy")
+    @dy_asset(Orders, name="orders_lazy")
     def lazy_orders() -> pl.LazyFrame:
         return clean_orders().lazy()
 
@@ -144,7 +144,7 @@ def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
     """
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
-    @dataframely_asset(schema=Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
+    @dy_asset(Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
     def forgot_the_frame():
         return "orders"
 
@@ -180,7 +180,7 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
 
     # Set by hand so one body can carry an annotation that contradicts it, and on a function declared here rather than on an imported one, which would leave the annotation on a module-level object every other test shares.
     fn.__annotations__ = {"return": annotation}
-    asset = dataframely_asset(schema=Orders, name="orders")(fn)
+    asset = dy_asset(Orders, name="orders")(fn)
 
     assert _materialize(tmp_path, asset).success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
@@ -188,7 +188,7 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
 
 # --- a decorated function that takes the context ---
 # Nothing in the package enables this: `functools.wraps` puts the decorated function's signature in
-# front of Dagster, so the parameter binds exactly as it does on a bare `@dg.multi_asset`.
+# front of Dagster, so the parameter binds exactly as it does on a bare `@dg.asset`.
 # It was never covered, and it is now the supported way a partitioned asset reaches its
 # own key, so a wrapper change that shadowed the signature has to fail a test here.
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
@@ -209,7 +209,7 @@ def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
     """Blank rather than annotated, which is the one spelling that survives a user-side `from __future__ import annotations`."""
     seen: dict[str, str] = {}
 
-    @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
+    @dy_asset(Orders, name="orders", partitions_def=_DAYS)
     # Left unannotated deliberately: that is the shape under test.
     def orders(context) -> pl.DataFrame:  # pyrefly: ignore[implicit-any-parameter]
         seen["partition"] = context.partition_key
@@ -224,7 +224,7 @@ def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
 def test_a_decorated_function_can_take_an_annotated_context(tmp_path: Path):
     seen: dict[str, str] = {}
 
-    @dataframely_asset(schema=Orders, name="orders", partitions_def=_DAYS)
+    @dy_asset(Orders, name="orders", partitions_def=_DAYS)
     def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
         seen["partition"] = context.partition_key
         return clean_orders()
@@ -241,11 +241,11 @@ def test_a_decorated_function_can_take_the_context_alongside_an_upstream_frame(
     """The context binds first and the frames follow, so taking one does not cost the ordinary parameter binding."""
     seen: dict[str, object] = {}
 
-    @dataframely_asset(schema=Orders, name="orders")
+    @dy_asset(Orders, name="orders")
     def orders(
         context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
     ) -> pl.DataFrame:
-        seen["asset"] = context.asset_key_for_output("orders").to_user_string()
+        seen["asset"] = context.asset_key.to_user_string()
         seen["rows"] = len(raw_orders)
         return raw_orders
 
@@ -260,7 +260,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
     """The op name is the step key, so the two steps have to be distinguishable for the run to execute at all (#70). Both tables land, under the prefixes their keys spell."""
 
     def shipments(prefix: str) -> dg.AssetsDefinition:
-        @dataframely_asset(schema=Orders, key_prefix=prefix, name="shipments")
+        @dy_asset(Orders, key_prefix=prefix, name="shipments")
         def _shipments() -> pl.DataFrame:
             return clean_orders()
 
@@ -278,7 +278,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
 
 
 # --- a wrong-shaped frame ---
-@dataframely_asset(schema=Orders, name="orders")
+@dy_asset(Orders, name="orders")
 def _wrong_dtype() -> pl.DataFrame:
     return wrong_dtype_orders()
 
@@ -296,7 +296,7 @@ def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
 
 
 def test_a_missing_column_aborts_too(tmp_path: Path):
-    @dataframely_asset(schema=Orders, name="orders")
+    @dy_asset(Orders, name="orders")
     def missing_column() -> pl.DataFrame:
         return clean_orders().drop("quantity")
 
@@ -309,7 +309,7 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
 def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
     """The message is the only thing a user sees of this error, so it agrees in number."""
 
-    @dataframely_asset(schema=Orders, name="orders")
+    @dy_asset(Orders, name="orders")
     def several() -> pl.DataFrame:
         return (
             clean_orders().drop("email").with_columns(pl.col("quantity").cast(pl.Int64))
@@ -354,7 +354,7 @@ def test_the_shape_check_tabulates_every_offending_column(tmp_path: Path):
 
 
 # --- invalid rows with no quarantine ---
-@dataframely_asset(schema=Orders, name="orders")
+@dy_asset(Orders, name="orders")
 def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
@@ -374,7 +374,7 @@ def test_the_abort_names_the_quarantine_as_the_fix(tmp_path: Path):
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, _mixed)
 
-    assert "quarantine=dg.AssetOut()" in str(raised.value)
+    assert "quarantine=True" in str(raised.value)
 
 
 def test_the_abort_writes_nothing(tmp_path: Path):
@@ -404,7 +404,7 @@ def test_the_abort_still_reports_every_rule(tmp_path: Path):
 def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
     """With no quarantine the two frames are indistinguishable, because both discard everything. Declaring one is what makes them differ."""
 
-    @dataframely_asset(schema=Orders, name="orders")
+    @dy_asset(Orders, name="orders")
     def hopeless() -> pl.DataFrame:
         return hopeless_orders()
 
@@ -426,77 +426,49 @@ def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
 
 # --- invalid rows with a quarantine, some surviving ---
 _GOOD_KEY = dg.AssetKey(["orders"])
-_QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
 
 
-@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+@dy_asset(Orders, name="orders", quarantine=True)
 def _quarantined() -> pl.DataFrame:
     return mixed_orders()
 
 
 def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
-    """The middle case: 3 valid rows are written, 3 invalid ones are inspectable, and downstream proceeds."""
+    """The middle case: 3 valid rows are written, 3 invalid ones are readable beside them, and downstream proceeds.
+
+    One materialization, because the quarantine is evidence of a run rather than an out (ADR-0004). The file lands anyway, beside the table, because the asset's own manager placed it (ADR-0006).
+    """
     result = _materialize(tmp_path, _quarantined)
 
     assert result.success
-    assert set(_materialized(result)) == {_GOOD_KEY, _QUARANTINE_KEY}
+    assert set(_materialized(result)) == {_GOOD_KEY}
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
     assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 3
 
 
-def test_an_upstream_and_a_quarantine_still_execute_as_one_step(tmp_path: Path):
-    """The quarantine depends on an asset produced by its own op. That is the shape `internal_asset_deps` exists for, and the one that could plausibly have been read as a cycle (ADR-0003)."""
+def test_the_materialization_says_where_the_rest_went(tmp_path: Path):
+    """The run's own answer, computed rather than read back off the manager: the borrowed context is not a real output, so whatever `path` or `Query` the manager emitted went nowhere (ADR-0006)."""
+    metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    assert metadata["dy_quarantine_address"] == dg.MetadataValue.text(
+        "orders_quarantine"
+    )
+    assert metadata["dy_rejected_count"] == dg.MetadataValue.int(3)
+    assert isinstance(metadata["dy_rejected_sample"], dg.TableMetadataValue)
+
+
+def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
+    """A quarantine adds no node, so an asset that declares one has the lineage it would have had without one."""
+
+    @dy_asset(Orders, name="orders", quarantine=True)
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return mixed_orders()
 
     result = _materialize(tmp_path, _raw_orders, downstream)
 
     assert result.success
-    assert set(_materialized(result)) == {
-        dg.AssetKey(["raw_orders"]),
-        _GOOD_KEY,
-        _QUARANTINE_KEY,
-    }
+    assert set(_materialized(result)) == {dg.AssetKey(["raw_orders"]), _GOOD_KEY}
     assert len(result.get_step_success_events()) == 2
-
-
-def test_an_eager_asset_on_the_quarantine_key_fires_only_when_rows_landed(
-    tmp_path: Path,
-):
-    """Automating on invalid rows is the user's own asset pointed at the quarantine's key, and this package wires nothing for it. A clean run skips the quarantine rather than writing an empty table, which is what keeps that asset quiet instead of firing it on nothing."""
-    returns: dict[str, Callable[[], pl.DataFrame]] = {"next": mixed_orders}
-
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
-    def quarantining() -> pl.DataFrame:
-        return returns["next"]()
-
-    @dg.asset(
-        ins={"bad_rows": dg.AssetIn(key=_QUARANTINE_KEY)},
-        automation_condition=dg.AutomationCondition.eager(),
-    )
-    def triage(bad_rows: pl.DataFrame) -> None: ...
-
-    resources = storage(tmp_path)
-    definitions = dg.Definitions(assets=[quarantining, triage], resources=resources)
-
-    def tick(cursor: Any) -> Any:
-        dg.materialize([quarantining], resources=resources, instance=instance)
-        return dg.evaluate_automation_conditions(
-            defs=definitions, instance=instance, cursor=cursor
-        )
-
-    with dg.DagsterInstance.ephemeral() as instance:
-        # `eager` fires on what changed since the last cursor, so the first tick has nothing to have changed and only establishes one.
-        baseline = tick(None)
-        returns["next"] = clean_orders
-        clean = tick(baseline.cursor)
-        returns["next"] = mixed_orders
-        quarantined = tick(clean.cursor)
-
-    assert clean.get_num_requested(dg.AssetKey(["triage"])) == 0
-    assert quarantined.get_num_requested(dg.AssetKey(["triage"])) == 1
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
@@ -579,23 +551,23 @@ def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
     assert rejected_by_min["order_id"].to_list() == ["ORD-4"]
 
 
-def test_the_quarantine_emits_its_own_row_count():
-    """On what the step yields, for the reason `test_a_clean_run_emits_row_count` gives."""
-    yielded = _yielded(_quarantined())  # pyrefly: ignore[bad-argument-type]
+def test_the_rejected_count_rides_beside_the_row_count(tmp_path: Path):
+    """Both numbers on one materialization, because there is one materialization. `dagster/row_count` counts what was written and `dy_rejected_count` counts what was not, so neither can be mistaken for the other."""
+    metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
 
-    assert (yielded[_GOOD_KEY].metadata or {})["dagster/row_count"] == 3
-    assert (yielded[_QUARANTINE_KEY].metadata or {})["dagster/row_count"] == 3
+    assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
+    assert metadata["dy_rejected_count"] == dg.MetadataValue.int(3)
 
 
-def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
+def test_the_materialization_tabulates_the_rules_that_rejected_together(tmp_path: Path):
     """One broken upstream field tripping three rules at once is one row here, not three unrelated counts."""
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    @dy_asset(Orders, name="orders", quarantine=True)
     def cooccurring() -> pl.DataFrame:
         return cooccurring_orders()
 
     metadata = _materialized(_materialize(tmp_path, cooccurring))
-    cooccurrence = metadata[_QUARANTINE_KEY]["cooccurrence"]
+    cooccurrence = metadata[_GOOD_KEY]["dy_rejected_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -609,7 +581,7 @@ def test_the_quarantine_emits_rule_cooccurrence_counts(tmp_path: Path):
     ]
 
 
-def test_the_cooccurrence_table_leads_with_the_set_that_broke_the_most_rows(
+def test_the_rejected_rules_table_leads_with_the_set_that_broke_the_most_rows(
     tmp_path: Path,
 ):
     """`cooccurrence_counts()` groups without `maintain_order`, so what it hands over is in no order at all. The same frame twice emits these rows differently, and two runs of the same data then diff as though something changed.
@@ -625,12 +597,12 @@ def test_the_cooccurrence_table_leads_with_the_set_that_broke_the_most_rows(
         )
     )
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    @dy_asset(Orders, name="orders", quarantine=True)
     def repeated() -> pl.DataFrame:
         return pl.concat([mixed_orders(), duplicate_break])
 
     metadata = _materialized(_materialize(tmp_path, repeated))
-    cooccurrence = metadata[_QUARANTINE_KEY]["cooccurrence"]
+    cooccurrence = metadata[_GOOD_KEY]["dy_rejected_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -643,7 +615,7 @@ def test_the_cooccurrence_table_leads_with_the_set_that_broke_the_most_rows(
 def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
     """An empty quarantine partition then means something."""
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    @dy_asset(Orders, name="orders", quarantine=True)
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
@@ -655,19 +627,22 @@ def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
 
 
 # --- invalid rows with a quarantine, none surviving ---
-@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+@dy_asset(Orders, name="orders", quarantine=True)
 def _nothing_survived() -> pl.DataFrame:
     return hopeless_orders()
 
 
-def test_nothing_surviving_materializes_the_quarantine_and_skips_the_valid_out(
+def test_nothing_surviving_writes_the_quarantine_and_materializes_nothing(
     tmp_path: Path,
 ):
-    """The case that matters most: an empty table must never silently replace a last-known-good snapshot."""
+    """The case that matters most: an empty table must never silently replace a last-known-good snapshot.
+
+    The rows land anyway, and this is where that is worth the most: the run is over, there is nothing to materialize, and the file is the only account of what happened.
+    """
     result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
 
     assert not result.success
-    assert set(_materialized(result)) == {_QUARANTINE_KEY}
+    assert _materialized(result) == {}
     assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 2
     assert not (tmp_path / "orders.parquet").exists()
 
@@ -675,7 +650,7 @@ def test_nothing_surviving_materializes_the_quarantine_and_skips_the_valid_out(
 def test_nothing_surviving_leaves_the_last_known_good_table_intact(tmp_path: Path):
     """The same key, written clean and then run again on a frame nothing survives."""
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    @dy_asset(Orders, name="orders", quarantine=True)
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
@@ -712,12 +687,12 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
 # A partition that has no file and never will is neither a failure nor an empty table (#95).
 # The exit is asserted here against what Dagster ends up holding, and in `TestExitSelection`
 # against what leaves the generator.
-@dataframely_asset(schema=Orders, name="orders")
+@dy_asset(Orders, name="orders")
 def _skipping() -> pl.DataFrame | None:
     return None
 
 
-@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+@dy_asset(Orders, name="orders", quarantine=True)
 def _skipping_with_quarantine() -> pl.DataFrame | None:
     return None
 
@@ -757,7 +732,7 @@ def test_a_skip_answers_whatever_check_list_the_asset_declared(
 ):
     """Collapsing changes how many checks there are, and the exit has to answer the list the asset actually declared rather than a list of its own."""
 
-    @dataframely_asset(schema=Orders, name="orders", check_granularity=granularity)
+    @dy_asset(Orders, name="orders", check_granularity=granularity)
     def skipping() -> pl.DataFrame | None:
         return None
 
@@ -791,17 +766,17 @@ def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
 # --- the temp file ---
 # One entry per exit, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
-    pytest.param(clean_orders, None, id="everything survived"),
-    pytest.param(mixed_orders, None, id="no quarantine"),
-    pytest.param(mixed_orders, dg.AssetOut(), id="some survived"),
-    pytest.param(hopeless_orders, dg.AssetOut(), id="nothing survived"),
-    pytest.param(wrong_dtype_orders, None, id="shape"),
+    pytest.param(clean_orders, False, id="everything survived"),
+    pytest.param(mixed_orders, False, id="no quarantine"),
+    pytest.param(mixed_orders, True, id="some survived"),
+    pytest.param(hopeless_orders, True, id="nothing survived"),
+    pytest.param(wrong_dtype_orders, False, id="shape"),
 ]
 
 
 def _both_ways(
     frame: Callable[[], pl.DataFrame],
-    quarantine: dg.AssetOut | None,
+    quarantine: bool,
     *,
     temp_dir: str | None = None,
 ) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
@@ -810,15 +785,11 @@ def _both_ways(
     Same name, same schema, same rows: the two runs differ in the return type and in nothing else, which is what makes their events comparable.
     """
 
-    @dataframely_asset(
-        schema=Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir
-    )
+    @dy_asset(Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir)
     def eager() -> pl.DataFrame:
         return frame()
 
-    @dataframely_asset(
-        schema=Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir
-    )
+    @dy_asset(Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir)
     def lazy() -> pl.LazyFrame:
         return frame().lazy()
 
@@ -830,15 +801,13 @@ def _packaged(name: str) -> bool:
 
     The IO manager writes to the same mapping, and what it puts there is neither this package's nor stable between two runs: a path names the directory one run wrote to, and `dagster-polars`' own sample reads rows back off disk in whatever order the file gives them. Whitelisted rather than blacklisted, so a manager that grows a key does not quietly rejoin the comparison.
     """
-    return name in {"dagster/row_count", "cooccurrence", "sample"} or name.startswith(
-        "stats/"
-    )
+    return name in {"dagster/row_count", "sample"} or name.startswith(("stats/", "dy_"))
 
 
 def _reported(result: dg.ExecuteInProcessResult) -> object:
     """Everything the package itself told Dagster, in one comparable value.
 
-    Nothing the package emits is normalised, `cooccurrence` included: every table it builds is ordered by construction, so two runs of the same rows are equal value for value.
+    Nothing the package emits is normalised, `dy_rejected_rules` included: every table it builds is ordered by construction, so two runs of the same rows are equal value for value.
     """
     return (
         {
@@ -861,11 +830,11 @@ def _written(root: Path) -> dict[str, pl.DataFrame]:
 
 @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
 def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
-    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
     """The staging file moves where the data is materialized, not what happens to it afterwards.
 
-    Asserted at every exit and over everything the package emits: the outs that materialized, the row counts, the statistics, the samples, the co-occurrence table, every check with its severity and metadata, and the bytes on disk.
+    Asserted at every exit and over everything the package emits: whether the table materialized, the row counts, the statistics, the samples, the rejection keys, every check with its severity and metadata, and the bytes on disk.
     """
     eager, lazy = _both_ways(frame, quarantine)
 
@@ -881,7 +850,7 @@ def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
 
 @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
 def test_the_landing_is_removed_whichever_exit_the_run_takes(
-    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
     """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
     staging = tmp_path / "staging"
@@ -910,7 +879,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
         return sink(frame, path, **kwargs)
 
     monkeypatch.setattr(pl.LazyFrame, "sink_parquet", spy)
-    _, lazy = _both_ways(clean_orders, None)
+    _, lazy = _both_ways(clean_orders, quarantine=False)
 
     assert _materialize(tmp_path, lazy).success
     assert set(engines) == {"streaming"}
@@ -921,7 +890,9 @@ def test_an_eager_return_never_lands(tmp_path: Path):
 
     Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
     """
-    eager, _ = _both_ways(clean_orders, None, temp_dir=str(tmp_path / "absent"))
+    eager, _ = _both_ways(
+        clean_orders, quarantine=False, temp_dir=str(tmp_path / "absent")
+    )
 
     assert _materialize(tmp_path / "store", eager).success
 
@@ -932,7 +903,7 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
     A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
     """
     absent = tmp_path / "absent"
-    _, lazy = _both_ways(clean_orders, None, temp_dir=str(absent))
+    _, lazy = _both_ways(clean_orders, quarantine=False, temp_dir=str(absent))
 
     with pytest.raises(FileNotFoundError) as raised:
         _materialize(tmp_path / "store", lazy)
@@ -946,7 +917,7 @@ def test_the_temp_dir_environment_variable_reaches_the_landing(
     """The house-style tier, asserted through a materialization rather than through `resolve`. The decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
-    _, lazy = _both_ways(clean_orders, None)
+    _, lazy = _both_ways(clean_orders, quarantine=False)
 
     with pytest.raises(FileNotFoundError) as raised:
         _materialize(tmp_path / "store", lazy)
@@ -959,23 +930,21 @@ def test_the_shape_check_runs_before_the_landing(tmp_path: Path):
 
     Asserted through a staging file that cannot work: the shape error is what arrives, so nothing ever tried to write there.
     """
-    _, lazy = _both_ways(wrong_dtype_orders, None, temp_dir=str(tmp_path / "absent"))
+    _, lazy = _both_ways(
+        wrong_dtype_orders, quarantine=False, temp_dir=str(tmp_path / "absent")
+    )
 
     with pytest.raises(SchemaShapeError):
         _materialize(tmp_path / "store", lazy)
 
 
 # --- collapsed checks ---
-@dataframely_asset(
-    schema=Orders, name="orders", quarantine=dg.AssetOut(), check_granularity="column"
-)
+@dy_asset(Orders, name="orders", quarantine=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dataframely_asset(
-    schema=Orders, name="orders", quarantine=dg.AssetOut(), check_granularity="schema"
-)
+@dy_asset(Orders, name="orders", quarantine=True, check_granularity="schema")
 def _by_schema() -> pl.DataFrame:
     return mixed_orders()
 
@@ -1043,7 +1012,7 @@ def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path)
 def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
     """A rule set reports 0 per member rather than going quiet, so a clean run is a row in its history."""
 
-    @dataframely_asset(schema=Orders, name="orders", check_granularity="column")
+    @dy_asset(Orders, name="orders", check_granularity="column")
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
@@ -1069,37 +1038,45 @@ _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 class TestExitSelection:
     """Which of the six exits a frame reaches, asserted by calling `process` directly.
 
-    The tests above assert what Dagster ends up holding, which takes a run. These assert which objects leave the generator and which error ends it, which does not: no run, no IO manager, no `tmp_path`.
+    The tests above assert what Dagster ends up holding, which takes a run. These assert which objects leave the generator, which writer calls it made and which error ended it, none of which does: no run, no IO manager, no `tmp_path`.
+
+    The writer is a list's `append` wearing a return value, because that is the whole of what `process` knows about a writer. A real one is asserted against a real manager in `tests/test_quarantine.py`.
 
     The helpers are scoped to this class rather than module-level, because the file already has a `_written` and a `_reported` that answer the same questions of a run.
 
-    The keys are built by hand here because nothing declares an out for them to belong to, which is safe only because nothing consumes them. The decorator reads its own off the finished `AssetsDefinition` (ADR-0002), since an out that declares `key_prefix` has an asset key its output name does not spell.
+    The key is built by hand here because nothing declares an asset for it to belong to, which is safe only because nothing consumes it.
     """
 
     VALID = dg.AssetKey(["orders"])
-    QUARANTINE = dg.AssetKey(["orders_quarantine"])
+    ADDRESS = "orders_quarantine"
 
     @classmethod
     def _drained(
         cls, frame: pl.DataFrame | None, *, quarantine: bool
-    ) -> tuple[_Yielded, DagsterDataframelyError | None]:
-        """Run `process` to exhaustion, keeping both what it yielded and whatever ended it.
+    ) -> tuple[_Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
+        """Run `process` to exhaustion, keeping what it yielded, what it wrote, and whatever ended it.
 
         Three of the six exits raise after yielding, so draining with `list()` alone would discard the results that say what happened.
         """
+        written: list[pl.DataFrame] = []
+
+        def writer(invalid: pl.DataFrame) -> str:
+            written.append(invalid)
+            return cls.ADDRESS
+
         yielded: _Yielded = []
         results = process(
             Orders,
             frame,
             valid_key=cls.VALID,
-            quarantine_key=cls.QUARANTINE if quarantine else None,
+            quarantine_writer=writer if quarantine else None,
         )
         try:
             for result in results:
                 yielded.append(result)
         except DagsterDataframelyError as error:
-            return yielded, error
-        return yielded, None
+            return yielded, written, error
+        return yielded, written, None
 
     @staticmethod
     def _tables(yielded: _Yielded) -> list[dg.AssetKey]:
@@ -1112,6 +1089,15 @@ class TestExitSelection:
             for r in yielded
             if isinstance(r, dg.MaterializeResult) and r.asset_key is not None
         ]
+
+    @staticmethod
+    def _metadata(yielded: _Yielded) -> Mapping[str, Any]:
+        """The one materialization's metadata, or nothing when the exit yielded none."""
+        materializations = [r for r in yielded if isinstance(r, dg.MaterializeResult)]
+        if not materializations:
+            return {}
+        (materialization,) = materializations
+        return materialization.metadata or {}
 
     @staticmethod
     def _checks(yielded: _Yielded) -> list[dg.AssetCheckResult]:
@@ -1127,61 +1113,127 @@ class TestExitSelection:
         return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__dtypes"]
 
     def test_a_clean_frame_writes_the_valid_table_and_nothing_else(self):
-        yielded, error = self._drained(clean_orders(), quarantine=False)
+        yielded, written, error = self._drained(clean_orders(), quarantine=False)
 
         assert error is None
         assert self._tables(yielded) == [self.VALID]
+        assert written == []
 
-    def test_a_clean_frame_skips_a_declared_quarantine(self):
-        """An empty quarantine is not written, so an empty quarantine partition means something."""
-        yielded, error = self._drained(clean_orders(), quarantine=True)
+    def test_a_clean_frame_never_calls_a_declared_writer(self):
+        """An empty quarantine is not written, so an empty quarantine means something."""
+        yielded, written, error = self._drained(clean_orders(), quarantine=True)
 
         assert error is None
         assert self._tables(yielded) == [self.VALID]
+        assert written == []
+
+    def test_a_clean_frame_says_nothing_about_rejection(self):
+        """The four keys are absent rather than zero. A run that held nothing back has nothing to report, and `dy_rejected_count: 0` would read as a claim about a quarantine that does not exist."""
+        yielded, _, _ = self._drained(clean_orders(), quarantine=True)
+
+        assert not [key for key in self._metadata(yielded) if key.startswith("dy_")]
 
     def test_a_wrong_shape_reports_the_shape_check_and_writes_nothing(self):
-        yielded, error = self._drained(wrong_dtype_orders(), quarantine=True)
+        yielded, written, error = self._drained(wrong_dtype_orders(), quarantine=True)
 
         assert isinstance(error, SchemaShapeError)
         assert self._tables(yielded) == []
+        assert written == []
         assert [c.check_name for c in self._checks(yielded)] == ["dy_schema__dtypes"]
 
-    def test_rejected_rows_with_no_quarantine_write_nothing_but_still_report(self):
-        yielded, error = self._drained(mixed_orders(), quarantine=False)
+    def test_rejected_rows_with_no_writer_write_nothing_but_still_report(self):
+        yielded, written, error = self._drained(mixed_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
         assert self._tables(yielded) == []
+        assert written == []
         assert any(not c.passed for c in self._checks(yielded))
 
-    def test_rejected_rows_with_a_quarantine_write_both_tables(self):
-        yielded, error = self._drained(mixed_orders(), quarantine=True)
+    def test_rejected_rows_with_a_writer_write_the_table_and_the_invalid_rows(self):
+        yielded, written, error = self._drained(mixed_orders(), quarantine=True)
+        (invalid,) = written
 
         assert error is None
-        assert self._tables(yielded) == [self.VALID, self.QUARANTINE]
+        assert self._tables(yielded) == [self.VALID]
+        assert len(invalid) == 3
+        assert "dy_rule__amount__min" in invalid.columns
 
-    def test_nothing_surviving_writes_the_quarantine_alone(self):
-        """The valid out is skipped rather than materialized empty, so a last-known-good table survives."""
-        yielded, error = self._drained(hopeless_orders(), quarantine=True)
+    def test_the_partial_exit_reports_the_rejection_on_the_materialization(self):
+        """Where a reader is already looking. The rows went somewhere only the writer knows, so the address is the whole of what the run can say about the place."""
+        yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
+        metadata = self._metadata(yielded)
+
+        assert metadata["dy_quarantine_address"] == self.ADDRESS
+        assert metadata["dy_rejected_count"] == 3
+        assert isinstance(metadata["dy_rejected_rules"], dg.TableMetadataValue)
+        assert isinstance(metadata["dy_rejected_sample"], dg.TableMetadataValue)
+
+    def test_the_rejected_sample_is_bounded_by_the_row_sample_setting(self):
+        """One number governs both samples, so consenting to real rows in the event log is one decision."""
+        yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
+        sample = self._metadata(yielded)["dy_rejected_sample"]
+        assert isinstance(sample, dg.TableMetadataValue)
+
+        bounded = process(
+            Orders,
+            mixed_orders(),
+            valid_key=self.VALID,
+            quarantine_writer=lambda _: self.ADDRESS,
+            row_sample=1,
+        )
+        (materialization,) = [r for r in bounded if isinstance(r, dg.MaterializeResult)]
+        narrowed = (materialization.metadata or {})["dy_rejected_sample"]
+        assert isinstance(narrowed, dg.TableMetadataValue)
+
+        assert len(sample.records) == 3
+        assert len(narrowed.records) == 1
+
+    def test_nothing_surviving_writes_the_rows_and_yields_no_table(self):
+        """The rows are all written, but the valid output is skipped rather than materialized empty, so a last-known-good table survives."""
+        yielded, written, error = self._drained(hopeless_orders(), quarantine=True)
+        (invalid,) = written
 
         assert isinstance(error, NothingSurvivedError)
-        assert self._tables(yielded) == [self.QUARANTINE]
+        assert self._tables(yielded) == []
+        assert len(invalid) == 2
 
-    def test_nothing_surviving_without_a_quarantine_aborts_instead(self):
+    def test_an_abort_puts_the_address_on_every_check_instead(self):
+        """There is no materialization to carry it, and a failed run still has to say where its evidence went.
+
+        Read as a `TextMetadataValue` because `dg.AssetCheckResult` normalises what it is handed and `dg.MaterializeResult` does not, which `tests/test_upstream_characterization.py` pins.
+        """
+        yielded, _, _ = self._drained(hopeless_orders(), quarantine=True)
+        checks = self._checks(yielded)
+
+        assert checks
+        assert all(
+            (c.metadata or {})["dy_quarantine_address"]
+            == dg.MetadataValue.text(self.ADDRESS)
+            for c in checks
+        )
+
+    def test_the_abort_names_the_address_the_writer_returned(self):
+        _, _, error = self._drained(hopeless_orders(), quarantine=True)
+
+        assert self.ADDRESS in str(error)
+
+    def test_nothing_surviving_without_a_writer_aborts_instead(self):
         """A quarantine splits three exits into five; without one this is the same abort as any other rejection."""
-        yielded, error = self._drained(hopeless_orders(), quarantine=False)
+        yielded, written, error = self._drained(hopeless_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
         assert self._tables(yielded) == []
+        assert written == []
 
     @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
     def test_no_check_ever_rides_a_materialization(
-        self, frame: Callable[[], pl.DataFrame], quarantine: dg.AssetOut | None
+        self, frame: Callable[[], pl.DataFrame], quarantine: bool
     ):
-        """Every exit yields its checks standalone, including the three that write a table to bundle them onto.
+        """Every exit yields its checks standalone, including the two that write a table to bundle them onto.
 
         Nothing above states this, because a run flattens the two forms into one event stream. It is what makes an asset built on `process` callable in a unit test: direct invocation satisfies a check output only from a standalone result (ADR-0002).
         """
-        yielded, _ = self._drained(frame(), quarantine=quarantine is not None)
+        yielded, _, _ = self._drained(frame(), quarantine=quarantine)
 
         assert not [
             result
@@ -1192,8 +1244,8 @@ class TestExitSelection:
 
     def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
         """The same rejected rows warn when they have somewhere to go and error when they do not."""
-        warned, _ = self._drained(mixed_orders(), quarantine=True)
-        errored, _ = self._drained(mixed_orders(), quarantine=False)
+        warned, _, _ = self._drained(mixed_orders(), quarantine=True)
+        errored, _, _ = self._drained(mixed_orders(), quarantine=False)
 
         assert {c.severity for c in self._rules(warned)} == {dg.AssetCheckSeverity.WARN}
         assert {c.severity for c in self._rules(errored)} == {
@@ -1204,15 +1256,16 @@ class TestExitSelection:
     @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
     def test_a_skip_writes_no_table_and_raises_nothing(self, quarantine: bool):
         """The exit the asset's shape does not decide. A quarantine changes what an invalid row costs, and a skip has no rows to cost anything."""
-        yielded, error = self._drained(None, quarantine=quarantine)
+        yielded, written, error = self._drained(None, quarantine=quarantine)
 
         assert error is None
         assert self._tables(yielded) == []
+        assert written == []
 
     def test_a_skip_still_answers_every_check(self):
-        """Not politeness. A check spec is a non-optional op output whatever `is_required` the out carries, so a step that answers none of them dies on `did not return an output for non-optional output`. `test_a_skipped_run_stays_green_and_materializes_nothing` is where that is asserted against a real run."""
-        skipped, _ = self._drained(None, quarantine=False)
-        clean, _ = self._drained(clean_orders(), quarantine=False)
+        """Not politeness. A check spec is a non-optional op output whatever the asset declares, so a step that answers none of them dies on `did not return an output for non-optional output`. `test_a_skipped_run_stays_green_and_materializes_nothing` is where that is asserted against a real run."""
+        skipped, _, _ = self._drained(None, quarantine=False)
+        clean, _, _ = self._drained(clean_orders(), quarantine=False)
 
         assert {c.check_name for c in self._checks(skipped)} == {
             c.check_name for c in self._checks(clean)
@@ -1220,7 +1273,7 @@ class TestExitSelection:
 
     def test_a_skips_checks_pass_because_the_rules_ran_over_an_empty_frame(self):
         """Computed rather than asserted. Every rule is evaluated, over zero rows, and none is violated, which is why this reads the same as a clean run rather than being fabricated to."""
-        yielded, _ = self._drained(None, quarantine=False)
+        yielded, _, _ = self._drained(None, quarantine=False)
 
         assert all(c.passed for c in self._checks(yielded))
         assert {c.severity for c in self._rules(yielded)} == {

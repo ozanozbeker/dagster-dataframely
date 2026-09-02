@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 
 import dagster_dataframely
-from dagster_dataframely import dataframely_asset
+from dagster_dataframely import dy_asset
 from tests.scenario import Orders, clean_orders, mixed_orders, storage
 
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
@@ -83,12 +83,12 @@ def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
     )
 
 
-@dataframely_asset(schema=Orders, name="orders")
+@dy_asset(Orders, name="orders")
 def _orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dataframely_asset(schema=Shipment, name="shipment")
+@dy_asset(Shipment, name="shipment")
 def _shipment() -> pl.DataFrame:
     return shipment_frame(_DURATIONS)
 
@@ -159,7 +159,7 @@ def test_a_family_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
     class Weights(dy.Schema):
         weight = dy.Float64(nullable=False)
 
-    @dataframely_asset(schema=Weights, name="weights")
+    @dy_asset(Weights, name="weights")
     def weights() -> pl.DataFrame:
         return pl.DataFrame({"weight": [1.0, 2.0]})
 
@@ -266,7 +266,7 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
 def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
     """A duration is a difference, so it is signed. Statistics that dropped the sign would read as their own opposite."""
 
-    @dataframely_asset(schema=Shipment, name="shipment")
+    @dy_asset(Shipment, name="shipment")
     def refunds() -> pl.DataFrame:
         return shipment_frame(
             [
@@ -288,7 +288,7 @@ def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
     """A column nobody filled in has no bounds and no span. Zero would claim it did."""
 
-    @dataframely_asset(schema=Shipment, name="shipment")
+    @dy_asset(Shipment, name="shipment")
     def unfulfilled() -> pl.DataFrame:
         return shipment_frame([None, None, None, None])
 
@@ -369,18 +369,16 @@ def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
     assert _families(_metadata(tmp_path, _orders))
 
 
-def test_the_setting_off_at_the_asset_suppresses_the_pass_on_both_outs(tmp_path: Path):
-    """Off is off for the whole run, not for the table the reader happened to be thinking of."""
+def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
+    """Off is off for the whole run, and the row count is not a statistic: it survives."""
 
-    @dataframely_asset(
-        schema=Orders, name="orders", quarantine=dg.AssetOut(), statistics=False
-    )
+    @dy_asset(Orders, name="orders", quarantine=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
     materialized = _materialized(tmp_path, without_statistics)
 
-    assert set(materialized) == {"orders", "orders_quarantine"}
+    assert set(materialized) == {"orders"}
     assert not [family for m in materialized.values() for family in _families(m)]
     assert materialized["orders"]["dagster/row_count"].value == 3
 
@@ -391,24 +389,28 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
     """The house-style tier: a platform engineer turns the pass off for a whole code location without touching an asset."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
 
-    @dataframely_asset(schema=Orders, name="orders")
+    @dy_asset(Orders, name="orders")
     def house_style() -> pl.DataFrame:
         return clean_orders()
 
     assert not _families(_metadata(tmp_path, house_style))
 
 
-def test_the_quarantine_carries_statistics_too(tmp_path: Path):
-    """The invalid rows are a table a consumer reads, and what the values in them look like is the question the checks do not answer."""
+def test_the_quarantine_carries_no_statistics(tmp_path: Path):
+    """A statistic summarises a table somebody consumes, and nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). What the run does say about the held-back rows is their count, which rules rejected them together, and a sample.
 
-    @dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+    Nothing is computed rather than computed and dropped, so the pass a reader is paying for is the one over the table they asked for.
+    """
+
+    @dy_asset(Orders, name="orders", quarantine=True)
     def quarantined() -> pl.DataFrame:
         return mixed_orders()
 
-    metadata = _metadata(tmp_path, quarantined, key="orders_quarantine")
+    metadata = _metadata(tmp_path, quarantined)
 
     assert _families(metadata)
-    assert _table(metadata, "numeric")["amount"]["min"] == -4.0
+    assert "dy_rejected_count" in metadata
+    assert not [name for name in metadata if name.startswith("stats/dy_")]
 
 
 # --- how the numbers are computed ---
