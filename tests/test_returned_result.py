@@ -216,7 +216,7 @@ def test_a_run_leaves_the_quarantines_event_tags_alone(tmp_path: Path):
 # the wrapper's generator, so nothing happens until something advances it: a refusal that only
 # surfaced on a direct call would let a run write a table the package never validated.
 # Declared as bare returns rather than as decorated assets, because the two tests below need the
-# same six shapes and a decorated asset cannot be re-declared per test without a name collision.
+# same seven shapes and a decorated asset cannot be re-declared per test without a name collision.
 _REFUSALS = [
     pytest.param(
         lambda: dg.MaterializeResult(metadata={"source": "stripe"}),
@@ -230,6 +230,13 @@ _REFUSALS = [
         MaterializeResultValueError,
         "carries no frame",
         id="a value that is not a frame",
+    ),
+    pytest.param(
+        # A bare `None` is the skip, and this is not that. A returned result exists to put something on a materialization, and a skipped run has none, so there is nowhere for the rest of this object to go (#95).
+        lambda: dg.MaterializeResult(value=None, metadata={"delivered": False}),
+        MaterializeResultValueError,
+        "carries no frame",
+        id="a value of None",
     ),
     pytest.param(
         lambda: dg.MaterializeResult(
@@ -256,10 +263,11 @@ _REFUSALS = [
         id="dg.Output",
     ),
     pytest.param(
-        lambda: None,
+        # Not `None`, which the guard now lets through as the skip (#95). A string is the nearest thing that is still nothing but a mistake.
+        lambda: "orders",
         dg.DagsterInvariantViolationError,
-        "'orders' returned a NoneType",
-        id="nothing at all",
+        "'orders' returned a str",
+        id="something that is not a frame",
     ),
 ]
 
@@ -319,13 +327,14 @@ def test_an_abort_with_no_quarantine_still_raises_its_own_error():
 
 
 def test_the_frame_guard_names_every_route_out():
-    """Giving up the schema used to be the whole of the advice, which is wrong for anyone who wanted metadata on a validated table. It is now the last of three, and right for the one reader it is left for: an asset that writes its own storage and never holds a frame at all."""
+    """Giving up the schema used to be the whole of the advice, which is wrong for anyone who wanted metadata on a validated table. It is now the last of four, and right for the one reader it is left for: an asset that writes its own storage and never holds a frame at all."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-        _call(_refusing(lambda: None))
+        _call(_refusing(lambda: "orders"))
     message = str(raised.value)
 
     assert "Polars DataFrame or LazyFrame" in message
     assert "dg.MaterializeResult" in message
+    assert "`None` to skip" in message
     assert "plain `@dg.asset`" in message
     assert "schema_metadata" in message
 

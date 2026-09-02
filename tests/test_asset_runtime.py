@@ -1,6 +1,6 @@
 """Runtime behaviour of `@dataframely_asset`, asserted through `dg.materialize`.
 
-Everything here is asserted against what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All five exits are here; which one a frame reaches is decided by the frame and by whether the asset declares a quarantine.
+Everything here is asserted against what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All six exits are here. Which of the five validating ones a frame reaches is decided by the frame and by whether the asset declares a quarantine; the sixth is the skip, which has no frame to decide anything (#95).
 """
 
 from collections.abc import Callable, Mapping
@@ -13,13 +13,14 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
+from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import (
     DagsterDataframelyError,
     NothingSurvivedError,
     SchemaShapeError,
     ValidationAbortError,
 )
-from dagster_dataframely.wiring import process
+from dagster_dataframely.wiring import AssetYield, check_specs, process, schema_metadata
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -156,19 +157,22 @@ def test_the_schema_carrier_reaches_the_io_manager_live_on_both_paths():
 
 
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
-    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one, the same line `_ParquetIOManager` draws."""
+    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one, the same line `_ParquetIOManager` draws.
+
+    `None` is exempt, and is the skip (#95). It is the one wiring mistake this guard gave up catching, because the skip has to be spelled as a value and `None` is the only value a bare `return` produces.
+    """
 
     # pyrefly rejects this call outright, which is the point: the runtime guard is for everyone who does not run a type checker, exactly like the Collection guard.
     @dataframely_asset(schema=Orders, name="orders")  # pyrefly: ignore[bad-argument-type]
     def forgot_the_frame():
-        return None
+        return "orders"
 
     with pytest.raises(
         dg.DagsterInvariantViolationError, match="Polars DataFrame or LazyFrame"
     ) as raised:
         _materialize(tmp_path, forgot_the_frame)
 
-    assert "'orders' returned a NoneType" in str(raised.value)
+    assert "'orders' returned a str" in str(raised.value)
     assert not list(tmp_path.rglob("*.parquet"))
 
 
@@ -722,6 +726,86 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     )
 
 
+# --- no source data ---
+# A partition that has no file and never will is neither a failure nor an empty table (#95).
+# The exit is asserted here against what Dagster ends up holding, and in `TestExitSelection`
+# against what leaves the generator.
+@dataframely_asset(schema=Orders, name="orders")
+def _skipping() -> pl.DataFrame | None:
+    return None
+
+
+@dataframely_asset(schema=Orders, name="orders", quarantine=dg.AssetOut())
+def _skipping_with_quarantine() -> pl.DataFrame | None:
+    return None
+
+
+@pytest.mark.parametrize(
+    "asset", [_skipping, _skipping_with_quarantine], ids=["bare", "quarantined"]
+)
+def test_a_skipped_run_stays_green_and_materializes_nothing(
+    tmp_path: Path, asset: dg.AssetsDefinition
+):
+    """The whole point. Red says the pipeline is broken and green with zero rows says an empty report arrived. Neither is true, so the partition is left unmaterialized and the step still succeeds."""
+    result = _materialize(tmp_path, asset)
+
+    assert result.success
+    assert _materialized(result) == {}
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_a_skipped_run_reports_every_check_as_passing(tmp_path: Path):
+    """A check spec is a non-optional op output, so a step that answers none of them fails outright. This is what proves the exit answers all of them, and that they read as a pass rather than as a stale or invented result."""
+    evaluations = _evaluations(_materialize(tmp_path, _skipping))
+
+    assert len(evaluations) == len(list(_skipping.check_specs))
+    assert all(e.passed for e in evaluations.values())
+
+
+def test_a_skipped_runs_checks_claim_no_materialization(tmp_path: Path):
+    """The worry the exit was designed against: a green check on a skipped partition asserting itself over the last run that did have data. Dagster leaves the target empty because there is no materialization in this run to point at, so the check reports on nothing and says so."""
+    evaluations = _evaluations(_materialize(tmp_path, _skipping))
+
+    assert all(e.target_materialization_data is None for e in evaluations.values())
+
+
+@pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+def test_a_skip_answers_whatever_check_list_the_asset_declared(
+    tmp_path: Path, granularity: Granularity
+):
+    """Collapsing changes how many checks there are, and the exit has to answer the list the asset actually declared rather than a list of its own."""
+
+    @dataframely_asset(schema=Orders, name="orders", check_granularity=granularity)
+    def skipping() -> pl.DataFrame | None:
+        return None
+
+    evaluations = _evaluations(_materialize(tmp_path, skipping))
+
+    assert set(evaluations) == {spec.name for spec in skipping.check_specs}
+    assert all(e.passed for e in evaluations.values())
+
+
+def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
+    tmp_path: Path,
+):
+    """The README tells a hand-wirer that `output_required=False` is what buys the skip on a single-out asset, so the claim is pinned rather than asserted. `process` is the same function either way (ADR-0001), which is what makes the two agree by construction."""
+
+    @dg.asset(
+        name="orders",
+        output_required=False,
+        metadata=schema_metadata(Orders),
+        check_specs=check_specs(Orders, asset="orders"),
+    )
+    def orders_by_hand(context: dg.AssetExecutionContext) -> AssetYield:
+        yield from process(Orders, None, valid_key=context.asset_key)
+
+    result = _materialize(tmp_path, orders_by_hand)
+
+    assert result.success
+    assert _materialized(result) == {}
+    assert len(_evaluations(result)) == len(list(orders_by_hand.check_specs))
+
+
 # --- the temp file ---
 # One entry per exit, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
@@ -986,12 +1070,12 @@ def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
     assert not [name for name in quarantine.columns if name.startswith("dy_col__")]
 
 
-# --- the five exits, reached by calling `process` directly ---
+# --- the six exits, reached by calling `process` directly ---
 _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 class TestExitSelection:
-    """Which of the five exits a frame reaches, asserted by calling `process` directly.
+    """Which of the six exits a frame reaches, asserted by calling `process` directly.
 
     The tests above assert what Dagster ends up holding, which takes a run. These assert which objects leave the generator and which error ends it, which does not: no run, no IO manager, no `tmp_path`.
 
@@ -1005,11 +1089,11 @@ class TestExitSelection:
 
     @classmethod
     def _drained(
-        cls, frame: pl.DataFrame, *, quarantine: bool
+        cls, frame: pl.DataFrame | None, *, quarantine: bool
     ) -> tuple[_Yielded, DagsterDataframelyError | None]:
         """Run `process` to exhaustion, keeping both what it yielded and whatever ended it.
 
-        Three of the five exits raise after yielding, so draining with `list()` alone would discard the results that say what happened.
+        Three of the six exits raise after yielding, so draining with `list()` alone would discard the results that say what happened.
         """
         yielded: _Yielded = []
         results = process(
@@ -1122,4 +1206,31 @@ class TestExitSelection:
         assert {c.severity for c in self._rules(warned)} == {dg.AssetCheckSeverity.WARN}
         assert {c.severity for c in self._rules(errored)} == {
             dg.AssetCheckSeverity.ERROR
+        }
+
+    # --- the sixth exit: no source data ---
+    @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
+    def test_a_skip_writes_no_table_and_raises_nothing(self, quarantine: bool):
+        """The exit the asset's shape does not decide. A quarantine changes what an invalid row costs, and a skip has no rows to cost anything."""
+        yielded, error = self._drained(None, quarantine=quarantine)
+
+        assert error is None
+        assert self._tables(yielded) == []
+
+    def test_a_skip_still_answers_every_check(self):
+        """Not politeness. A check spec is a non-optional op output whatever `is_required` the out carries, so a step that answers none of them dies on `did not return an output for non-optional output`. `test_a_skipped_run_stays_green_and_materializes_nothing` is where that is asserted against a real run."""
+        skipped, _ = self._drained(None, quarantine=False)
+        clean, _ = self._drained(clean_orders(), quarantine=False)
+
+        assert {c.check_name for c in self._checks(skipped)} == {
+            c.check_name for c in self._checks(clean)
+        }
+
+    def test_a_skips_checks_pass_because_the_rules_ran_over_an_empty_frame(self):
+        """Computed rather than asserted. Every rule is evaluated, over zero rows, and none is violated, which is why this reads the same as a clean run rather than being fabricated to."""
+        yielded, _ = self._drained(None, quarantine=False)
+
+        assert all(c.passed for c in self._checks(yielded))
+        assert {c.severity for c in self._rules(yielded)} == {
+            dg.AssetCheckSeverity.WARN
         }

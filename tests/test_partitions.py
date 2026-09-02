@@ -284,3 +284,88 @@ def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
     assert "multiple partitions" in str(failure.error)
     assert "multi-run backfill policy" in str(failure.error)
     assert not list(tmp_path.rglob("*.parquet"))
+
+
+# --- a partition with no source data ---
+# The motivating shape (#95): a monthly x distributor grid where one distributor left the
+# marketplace. Its historical cells hold real data and must stay. Its recent cells have no file
+# and never will, which is neither a failure nor an empty report.
+_GRID = dg.MultiPartitionsDefinition(
+    {
+        "month": dg.StaticPartitionsDefinition(["2026-01", "2026-02"]),
+        "distributor": dg.StaticPartitionsDefinition(["trading", "departed"]),
+    }
+)
+_DEPARTED = dg.MultiPartitionKey({"month": "2026-02", "distributor": "departed"})
+_REPORTS_KEY = dg.AssetKey(["reports"])
+
+
+@dataframely_asset(schema=Orders, name="reports", partitions_def=_GRID)
+def _reports() -> pl.DataFrame | None:
+    keys = dg.AssetExecutionContext.get().partition_key.keys_by_dimension
+    if keys == {"month": "2026-02", "distributor": "departed"}:
+        return None
+    return clean_orders()
+
+
+def _materialize_cell(
+    tmp_path: Path,
+    partition_key: dg.MultiPartitionKey,
+    *,
+    instance: dg.DagsterInstance | None = None,
+) -> dg.ExecuteInProcessResult:
+    return dg.materialize(
+        [_reports],
+        partition_key=partition_key,
+        instance=instance,
+        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        raise_on_error=False,
+    )
+
+
+def test_a_partition_with_no_source_data_stays_unmaterialized(tmp_path: Path):
+    """Green with zero rows would read as an empty report arriving, and red would read as a broken pipeline. Neither happened, so the cell is left with no materialization at all and the run still succeeds."""
+    result = _materialize_cell(tmp_path, _DEPARTED)
+
+    assert result.success
+    assert _partitions(result) == {}
+    assert not list(tmp_path.rglob("*.parquet"))
+
+
+def test_a_skipped_partition_leaves_every_other_cell_alone(tmp_path: Path):
+    """The whole reason the exit is per-partition. A distributor that left still owns its history, and skipping this month's cell cannot touch last month's file."""
+    kept = dg.MultiPartitionKey({"month": "2026-01", "distributor": "departed"})
+
+    assert _materialize_cell(tmp_path, kept).success
+    assert _materialize_cell(tmp_path, _DEPARTED).success
+
+    written = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*.parquet"))
+
+    assert written == ["reports/departed/2026-01.parquet"]
+
+
+def test_a_skipped_partition_still_reports_its_checks(tmp_path: Path):
+    """Answering the check list is what keeps the step green, so this is the assertion the exit rests on rather than a nicety."""
+    result = _materialize_cell(tmp_path, _DEPARTED)
+    evaluations = _evaluations(result)
+
+    assert set(evaluations) == {spec.name for spec in _reports.check_specs}
+    assert all(e.passed for e in evaluations.values())
+
+
+def test_a_skip_does_not_stamp_a_later_check_onto_an_earlier_partitions_table(
+    tmp_path: Path,
+):
+    """`test_a_history_row_is_traceable_to_its_partition_through_the_materialization` shows a check's only route back to a partition is `target_materialization_data`. A skipped run writes no materialization, so that route is empty rather than pointing at the last cell that did have data."""
+    with dg.DagsterInstance.ephemeral() as instance:
+        traded = dg.MultiPartitionKey({"month": "2026-01", "distributor": "trading"})
+        _materialize_cell(tmp_path, traded, instance=instance)
+        _materialize_cell(tmp_path, _DEPARTED, instance=instance)
+
+        latest = instance.event_log_storage.get_asset_check_execution_history(
+            check_key=dg.AssetCheckKey(_REPORTS_KEY, "dy_rule__amount__min"), limit=1
+        )[0].evaluation
+
+        assert isinstance(latest, dg.AssetCheckEvaluation)
+        assert latest.passed
+        assert latest.target_materialization_data is None

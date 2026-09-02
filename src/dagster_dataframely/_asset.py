@@ -224,23 +224,36 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
 
     The contract then lives in exactly one place. From the single declaration, the Columns tab fills in before the asset has ever run, every Dataframely rule reports through an asset check with pass/fail history, one check per rule until `check_granularity` collapses them, and a frame whose shape does not match the schema aborts the run before a single row is filtered.
 
-    The decorated function keeps plain Polars annotations. Nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and a declared `context` binds the way it does on a plain `@dg.asset`. Four returns are accepted, a frame or a `dg.MaterializeResult` carrying one, eager or lazy:
+    The decorated function keeps plain Polars annotations. Nothing rewrites the signature, upstream dependencies bind as ordinary parameters, and a declared `context` binds the way it does on a plain `@dg.asset`. Five returns are accepted: a frame or a `dg.MaterializeResult` carrying one, eager or lazy, or `None`:
 
         pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
         pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
+        None
 
     **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch. This decorator cannot: the annotation describes what the decorated function handed over, while `dagster_type` describes what the asset stores, and those differ here. Validation is eager, so the out always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
+
+    **Returning `None` skips the asset.** Nothing is validated, neither out materializes, and the run stays green, so a partition with no source data stays unmaterialized instead of going green with zero rows or red with an error. It is for the partition that has no data and never will, which is neither an empty report nor a broken pipeline:
+
+        def sales(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
+            path = source_path(context.partition_key)
+            if not path.exists():
+                return None
+            return pl.read_parquet(path)
+
+    The test is yours to write. The decorator never catches `FileNotFoundError`, or anything else, to decide this for you: it cannot tell a file that is legitimately absent from a path that is misconfigured, and guessing wrong turns a broken pipeline into a silently missing partition. `None` is the word for the first case, and an escaping error stays the word for the second.
+
+    Every check still reports on a skipped run, and passes. A check spec is a non-optional output whatever the out declares, so a step that answers none of them fails outright. The rules are therefore run over an empty frame and report what that says. Nothing is fabricated: each rule was evaluated, over zero rows, and none was violated. Dagster attaches those evaluations to no materialization, so a passing check on a skipped partition does not claim to have checked an earlier one.
 
     A returned result is what `@dg.asset` accepts and the only route there is to a materialization's tags and data version:
 
         def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(value=raw_orders, metadata={"source": "stripe"})
 
-    Its `value` is the frame to validate, and is required. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both.
+    Its `value` is the frame to validate, and is required. `dg.MaterializeResult(value=None)` is refused rather than read as the skip, because the whole point of a returned result is to put something on a materialization and a skipped run has none. Its `metadata`, `data_version` and `tags` land on the valid out's materialization only, the package's own metadata keys winning a collision exactly as they do for `metadata=` above. `asset_key` and `check_results` are refused by name, because the decorator decides both.
 
     A returned result is the route this package prefers, and the context is the other one. `context.add_asset_metadata({...}, asset_key=context.asset_key_for_output(<this asset's name>))` reaches the same materialization. The `asset_key=` is mandatory as soon as a quarantine is declared, whether or not it is written. That route also overrides this package's own metadata keys, where a returned result loses to them, and it cannot be reached by calling the asset.
 
-    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately. Declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares.
+    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately. Declaring `quarantine=dg.AssetOut()` *is* the consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares. The skip sits outside this. It says there were no rows to have a policy about.
 
     With no quarantine, every row has to be valid. A run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
 
@@ -389,7 +402,7 @@ def dataframely_asset(  # noqa: PLR0913 - forwarding the whole parameter list is
         outs = {
             asset_name: dg.AssetOut(
                 key=key,
-                # The shape check and both abort paths end the step without yielding.
+                # The shape check, both abort paths and the skip all end the step without yielding.
                 is_required=False,
                 # The package's two keys are applied last, so a user cannot accidentally displace the Columns tab or the schema carrier.
                 metadata={**(metadata or {}), **schema_metadata(schema)},

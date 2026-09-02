@@ -32,11 +32,12 @@ From that one declaration you get:
   Add `quarantine=dg.AssetOut()` and the rows the schema rejects are written to a sibling asset instead of failing the run, as long as something survives.
 
 The decorated function is an ordinary Dagster asset body.
-Upstream assets bind as parameters, you declare `context` if you want it, and you can return any of four things: a frame, or a `dg.MaterializeResult` carrying one, eager or lazy.
+Upstream assets bind as parameters, you declare `context` if you want it, and you can return any of five things: a frame, or a `dg.MaterializeResult` carrying one, eager or lazy, or `None`.
 
 ```text
 pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
 pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
+None
 ```
 
 If you have metadata, tags or a data version to attach, return the result rather than the bare frame.
@@ -140,6 +141,7 @@ Declaring a quarantine **is** your consent to partial data, so what an invalid r
 | some rows rejected, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
 | some rows rejected, quarantine declared | the survivors | the invalid rows | fail at `WARN` | green |
 | every row rejected, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
+| `None`, meaning no source data | skipped | skipped | all pass | green |
 
 Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
 
@@ -164,6 +166,38 @@ Its only parent in the graph is the valid table, so the lineage runs `raw_orders
 That edge is asset-grained rather than row-grained: no row in the quarantine came from the valid table, since `Schema.filter` splits one frame into two.
 What it states is that the quarantine can't be planned or materialized without the valid table, which is true, both being outs of one step.
 It costs you one thing: a clean run skips the quarantine, so Dagster reads it as stale against the valid table's newer materialization until the next run that rejects a row.
+
+## A partition with no data
+
+Some partitions have no source data, and never will.
+A monthly x distributor grid where one distributor left the marketplace two years ago is the shape: its historical partitions hold real data and must stay, its recent ones have no file.
+
+That's not a failure, and it isn't an empty table either.
+Return `None` and the asset skips: nothing is validated, neither out materializes, and the run stays green, so the partition stays unmaterialized instead of going green with zero rows or red with an error.
+
+```python
+@dd.dataframely_asset(schema=SupplierReport, partitions_def=grid)
+def supplier_reports(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
+    path = source_path(context.partition_key)
+    if not path.exists():
+        return None
+    return pl.read_parquet(path)
+```
+
+**The existence test is yours to write.**
+The decorator never catches `FileNotFoundError`, or anything else, to decide this for you.
+It can't tell a file that's legitimately absent from a path that's misconfigured, and guessing wrong would turn a broken pipeline into a silently missing partition.
+`None` is how you say the first; letting the error escape is still how you say the second.
+
+**Every check still reports on a skipped run, and passes.**
+That isn't politeness.
+A check spec is a non-optional output whatever the asset declares, so a step that answers none of them fails outright, and `@dg.asset(output_required=False)` hits the same wall the moment it declares one check.
+So the rules are run over an empty frame and report what that says.
+Nothing is fabricated: every rule was evaluated, over zero rows, and none was violated.
+Dagster attaches those evaluations to no materialization, so a passing check on a skipped partition doesn't claim to have checked the last one that had data.
+
+`dg.MaterializeResult(value=None)` is refused rather than read as the skip.
+A returned result exists to put metadata, tags or a data version on a materialization, and a skipped run has none, so there's nowhere for the rest of the object to go.
 
 ## The package never casts
 
@@ -654,7 +688,7 @@ The shape check runs before the staging, so a frame whose shape disagrees with t
 What stays eager is storage, not the computation, and that's the difference from the section above.
 This package doesn't promise to write a file.
 It promises to write a file and report on it.
-`dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation can't choose among its five exits without counting both halves of the split.
+`dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation can't choose among its five validating exits without counting both halves of the split.
 So the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
 A plain `@dg.asset` streams end to end, sink to storage with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
@@ -940,7 +974,10 @@ def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
 ```
 
 That is still the Columns tab, one check per rule, and the row filter.
-`context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve, and nothing here needs `output_required=False`: with no quarantine to write, every path that doesn't raise yields its one out.
+`context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve.
+
+Add `output_required=False` if you want to hand `process` a `None` frame and skip: the out is optional on that path, and the checks are answered whether or not it materializes.
+Leave it off and every path that doesn't raise yields the one out.
 
 What you gave up is where the invalid rows land.
 `process` writes them to a second out and this asset has only one, so rejected rows abort the run exactly as they do when the decorator is passed no quarantine.
