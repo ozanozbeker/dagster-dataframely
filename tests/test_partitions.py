@@ -13,8 +13,14 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
-from tests.scenario import Orders, clean_orders, mixed_orders, wrong_dtype_orders
+from dagster_dataframely import dataframely_asset
+from tests.scenario import (
+    Orders,
+    clean_orders,
+    mixed_orders,
+    storage,
+    wrong_dtype_orders,
+)
 
 _PARTITIONS = dg.StaticPartitionsDefinition(["clean", "mixed", "wrong"])
 _FRAMES = {"clean": clean_orders, "mixed": mixed_orders, "wrong": wrong_dtype_orders}
@@ -43,7 +49,7 @@ def _materialize(
         [_orders],
         partition_key=partition_key,
         instance=instance,
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
         raise_on_error=raise_on_error,
     )
 
@@ -238,9 +244,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
             [daily_orders],
             partition_key="2026-01-01",
             instance=instance,
-            resources={
-                "io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))
-            },
+            resources=storage(tmp_path),
         )
         history = instance.event_log_storage.get_asset_check_execution_history(
             check_key=check_key, limit=10
@@ -267,7 +271,7 @@ def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
 
     job = dg.Definitions(
         assets=[ranged],
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     ).resolve_implicit_global_asset_job_def()
 
     result = job.execute_in_process(
@@ -318,7 +322,7 @@ def _materialize_cell(
         [_reports],
         partition_key=partition_key,
         instance=instance,
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
         raise_on_error=False,
     )
 

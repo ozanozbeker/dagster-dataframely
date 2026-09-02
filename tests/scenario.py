@@ -5,13 +5,32 @@ It covers the cases the whole effort needs: the dtypes a round trip or a metadat
 Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants than as fixture indirection. `Orders` also has to be importable at class-definition time to decorate an asset.
 
 `POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the shape check loudly in every runtime test, instead of being silently rebuilt to match.
+
+`storage` is here for the same reason the frames are: every run test needs somewhere to write, and only a handful care which manager writes it. It builds `dagster-polars`' parquet manager, which ADR-0004 makes this package's recommendation, so a test that merely needs storage exercises what a user will actually run.
 """
 
 import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 
 import dataframely as dy
 import polars as pl
+from dagster_polars import PolarsParquetIOManager
+
+
+def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
+    """Build the resources a run needs when all it needs is somewhere to write.
+
+    Parameters
+    ----------
+    tmp_path
+        The directory the run writes under.
+
+    Returns
+    -------
+    The `resources` mapping to hand `dg.materialize`.
+    """
+    return {"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))}
 
 
 class Orders(dy.Schema):

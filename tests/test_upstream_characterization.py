@@ -16,6 +16,7 @@ import pytest
 from dagster._annotations import is_public
 from dagster._core.definitions.metadata.metadata_value import ObjectMetadataValue
 from dagster._serdes import deserialize_value, serialize_value
+from dagster_polars import PolarsParquetIOManager
 from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
 from upath import UPath
@@ -491,3 +492,28 @@ def test_an_object_metadata_value_degrades_to_its_label_across_process():
 
     assert restored.instance is None
     assert restored.value == Orders.__name__
+
+
+def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
+    """An IO manager's metadata lands on the materialization after the step's, so a key both of them write reads as the manager's.
+
+    `dagster-polars` counts the rows it writes and files them under `dagster/row_count`, the same key this package yields. The two agree on the number, so nothing is wrong, but a test asserting that count through a run would pass with the package's emission deleted. The row-count assertions therefore read the step's own yield instead, and this records why.
+    """
+
+    @dg.asset
+    def counted() -> dg.MaterializeResult[pl.DataFrame]:
+        return dg.MaterializeResult(
+            value=pl.DataFrame({"a": [1, 2, 3]}), metadata={"dagster/row_count": 999}
+        )
+
+    result = dg.materialize(
+        [counted],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+    )
+    recorded = next(
+        event.step_materialization_data.materialization.metadata
+        for event in result.get_asset_materialization_events()
+    )
+
+    assert result.success
+    assert recorded["dagster/row_count"].value == 3

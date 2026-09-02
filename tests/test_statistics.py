@@ -16,8 +16,8 @@ import polars as pl
 import pytest
 
 import dagster_dataframely
-from dagster_dataframely import DataframelyParquetIOManager, dataframely_asset
-from tests.scenario import Orders, clean_orders, mixed_orders
+from dagster_dataframely import dataframely_asset
+from tests.scenario import Orders, clean_orders, mixed_orders, storage
 
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
@@ -99,7 +99,7 @@ def _materialized(
     """Materialize one asset and return every materialization it emitted, keyed by asset name."""
     result = dg.materialize(
         [asset],
-        resources={"io_manager": DataframelyParquetIOManager(base_dir=str(tmp_path))},
+        resources=storage(tmp_path),
     )
     return {
         event.asset_key.to_user_string(): (
