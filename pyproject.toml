@@ -58,6 +58,12 @@ dev = [
   "ruff>=0.16.5",
   "rumdl>=0.2.62",
 ]
+# Not a default group, so `uv sync` and CI never install it. Here to run the DuckDB
+# example against a real engine rather than a stand-in.
+duckdb = [
+  "dagster-duckdb-polars>=0.27.12",
+  "duckdb>=1.1",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.00,<0.13.0"]
