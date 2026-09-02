@@ -24,11 +24,15 @@ Nothing in the package knows which manager that is. The quarantine's address is 
 
 **The output context is borrowed, not built.** `DbIOManager` backends read the database and connection settings off the output context at write time rather than off themselves, so a context assembled by hand needs per-manager knowledge, which is the thing this decision exists to avoid. Instead the step's real `OutputContext` is cloned and re-pointed at the quarantine's key. Copying fields is not interpreting them, and that is what keeps the write manager-blind.
 
-**`quarantine` becomes a bool again, and the location an override.** ADR-0004 folded the two into `bool | str | Path` because `True` had to resolve to a root and a `True` that resolved to nothing was an error invisible at the call site. That objection is gone: `True` now means "wherever this asset's manager puts things", which always resolves. The override stays for the three cases delegation cannot serve, and it is a small explicit type rather than an overloaded `str | Path`, because there are three of them and a type cannot carry three meanings legibly:
+**`quarantine` becomes a bool, and nothing else.** ADR-0004 folded the flag and the location into `bool | str | Path` because `True` had to resolve to a root, and a `True` that resolved to nothing was an error invisible at the call site. That objection is gone: `True` now means "wherever this asset's manager puts things", which always resolves.
+
+There is no location override. Three cases would need one, and they are recorded here so the design survives without the surface:
 
 1. Same manager, a different key.
 2. A different manager, named by its resource key.
 3. No manager at all, a root plus the path rule.
+
+None of them has a user asking for it, and a root is meaningless to a warehouse, so the three are not one filesystem case plus extras: they are two spellings of *where* and one of *who*. Spelling that wrong is a rename, and pre-1.0 a rename costs more than the wait. `QUARANTINE_DIR` still supplies case 3 for direct invocation, which is the only one the package needs to function.
 
 **`quarantine_path` survives as case 3.** It keeps the `UPathIOManager` layout it already mirrors, and it is what direct invocation uses when no resources were supplied.
 
