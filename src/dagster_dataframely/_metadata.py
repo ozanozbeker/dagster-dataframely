@@ -135,17 +135,17 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 
 
 def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
-    """Build the definition metadata the quarantine out declares.
+    """Build the metadata a quarantine declares about its own shape.
 
     Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking.
 
     Parameters
     ----------
     schema
-        The schema whose invalid rows the out holds.
+        The schema whose invalid rows the quarantine holds.
 
     Returns
     -------
-    A mapping to hand to `dg.AssetOut(metadata=...)`.
+    A mapping to hand to `dg.AssetSpec(metadata=...)`.
     """
     return {_COLUMN_SCHEMA_KEY: quarantine_table_schema(schema)}

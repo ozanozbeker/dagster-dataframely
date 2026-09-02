@@ -7,15 +7,24 @@ import datetime as dt
 import inspect
 import warnings
 from pathlib import Path
+from typing import override
 
 import dagster as dg
 import dataframely as dy
 import polars as pl
 import pytest
 from dagster._annotations import is_public
+from dagster._core.storage.upath_io_manager import (
+    coerce_to_relative_parts,
+    escape_dotdot_segments,
+    escape_leading_slash,
+)
 from dagster_polars import PolarsParquetIOManager
 from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
+from upath import UPath
+
+from dagster_dataframely.wiring import quarantine_path
 
 
 class Orders(dy.Schema):
@@ -445,3 +454,68 @@ def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
 
     assert result.success
     assert recorded["dagster/row_count"].value == 3
+
+
+def test_the_three_path_escapes_dagster_applies_are_still_importable():
+    """`quarantine_path` calls all three rather than restating them, so a quarantine and the table it came from are escaped by one implementation (#104).
+
+    None is exported from `dagster` and none is marked `@public`, which is why they are pinned here. What each protects against is a write outside the root: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks a `..` segment upward at write time.
+
+    `escape_dotdot_segments` is the pair `FilesystemIOManager.make_safe_partition_path` applies. The `UPathIOManager` base class applies only the first and documents overriding for the second, which is what this package does.
+    """
+    assert escape_leading_slash("/etc") == "%2Fetc"
+    assert escape_leading_slash("etc") == "etc"
+    assert escape_dotdot_segments("../etc") == "%2E%2E/etc"
+    assert escape_dotdot_segments("my..backup") == "my..backup"
+    assert coerce_to_relative_parts(UPath("/sales/orders")) == ("%2Fsales", "orders")
+    assert coerce_to_relative_parts(UPath("sales/orders")) == ("sales", "orders")
+
+
+def test_upath_io_manager_still_spells_a_multi_partition_key_by_dimension_name(
+    tmp_path: Path,
+):
+    """The one path rule `quarantine_path` restates instead of importing, because upstream keeps it in a closure inside `_get_paths_for_partitions` (#104).
+
+    Asserted as a derivation rather than as a literal. The quarantine's tail under its own leaf has to be the tail the manager writes under the asset's leaf, so upstream reordering the dimensions fails here rather than leaving a quarantine nobody can find.
+    """
+    written: dict[str, UPath] = {}
+
+    class Probe(dg.UPathIOManager):
+        extension = ".txt"
+
+        @override
+        def dump_to_path(
+            self, context: dg.OutputContext, obj: str, path: UPath
+        ) -> None:
+            written["path"] = path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(obj)
+
+        @override
+        def load_from_path(self, context: dg.InputContext, path: UPath) -> str:
+            return path.read_text()
+
+    grid = dg.MultiPartitionsDefinition(
+        {
+            "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+            "day": dg.StaticPartitionsDefinition(["2026-01-02"]),
+        }
+    )
+    key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
+
+    @dg.asset(name="orders", partitions_def=grid)
+    def orders() -> str:
+        return "written"
+
+    result = dg.materialize(
+        [orders],
+        partition_key=key,
+        resources={"io_manager": Probe(base_path=UPath(tmp_path))},
+    )
+    quarantined = quarantine_path(dg.AssetKey(["orders"]), tmp_path, key)
+
+    assert result.success
+    base = UPath(tmp_path)
+    assert quarantined.relative_to(base / "orders_quarantine") == (
+        written["path"].relative_to(base / "orders").with_suffix(".parquet")
+    )

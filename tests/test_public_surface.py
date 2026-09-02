@@ -19,9 +19,10 @@ _ROOT = Path(__file__).parent.parent
 
 # The root: the happy path, and one name for each namespace that is not it.
 _PUBLIC = {
-    # The decorator.
+    # The decorator, and the spec that puts its quarantine in the graph.
     "dataframely_asset",
-    # The two namespaces, rather than their nineteen names.
+    "build_quarantine_spec",
+    # The two namespaces, rather than their twenty names.
     "errors",
     "wiring",
     # The types, so a caller can annotate what it passes the decorator. Here rather than
@@ -38,6 +39,7 @@ _WIRING = {
     "check_specs",
     "process",
     "quarantine_frame",
+    "quarantine_path",
     "quarantine_table_schema",
     "schema_metadata",
     "table_schema",
@@ -95,7 +97,7 @@ def test_nothing_public_leaks_past_any_export_list():
 def test_only_errors_and_wiring_have_public_module_names():
     """One responsibility per module and no promise about any of them, so the tree stays free to change.
 
-    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Eleven error names and eight wiring names would be nineteen of a namespace of twenty-two, and neither set is what a user reaches for to get work done. Polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
+    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Eleven error names and nine wiring names would be twenty of a namespace of twenty-four, and neither set is what a user reaches for to get work done. Polars answered the error half the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
 
     What each costs is the freedom to rename that one file. `errors` is a leaf holding one class per failure, so it has nothing to split along. `wiring` re-exports rather than defines, so everything behind it stays free to move.
     """
