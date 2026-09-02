@@ -1,6 +1,7 @@
 # 4. The quarantine is a file, not an asset
 
 Accepted, 2026-09-02. Supersedes [ADR-0003](0003-the-quarantines-only-parent-is-the-valid-asset.md).
+Amended by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md): the asset's own IO manager places the quarantine, so the root becomes an override rather than the mechanism. Everything else here stands.
 
 ## Context
 

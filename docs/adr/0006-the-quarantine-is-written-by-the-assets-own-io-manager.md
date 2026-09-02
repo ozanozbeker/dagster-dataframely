@@ -1,0 +1,61 @@
+# 6. The quarantine is written by the asset's own IO manager
+
+Accepted, 2026-09-02. Amends [ADR-0004](0004-the-quarantine-is-a-file-not-an-asset.md), which still decides that the quarantine is not an asset and that this package ships no IO manager.
+
+## Context
+
+ADR-0004 made the quarantine a parquet file under a root the user configures, and made the root's default the deployment setting `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`. Adjacency, the file sitting beside the table it came from, was left to the user setting that root equal to their IO manager's `base_dir`.
+
+Two things showed up while building it.
+
+**Adjacency by configuration is adjacency nobody checks.** Point the root somewhere else and the quarantine still lands, just not beside the data, and nothing says so.
+
+**A warehouse has no `base_dir` to equal.** A DuckDB, Snowflake or BigQuery shop stores tables, not files. For them the setting cannot express adjacency at all, so the invalid rows leave the warehouse and become a parquet file somewhere else. That is a regression from the sibling asset ADR-0004 replaced, which put them in a second table.
+
+The rejected alternative in ADR-0004, "the IO manager writes the quarantine", was argued against *owning* a manager. It was never tried against *borrowing* the user's.
+
+## Decision
+
+**The quarantine is written through whatever IO manager the asset is already bound to, addressed by its own asset key.**
+
+`quarantine_key` suffixes the last part of the asset's key, leaving the prefix alone: `analytics/orders` becomes `analytics/orders_quarantine`. The package then hands that key, and the invalid rows, to `context.resources.io_manager`.
+
+Nothing in the package knows which manager that is. The quarantine's address is its asset key, and every asset-key-addressed manager already turns a key into its own location: `UPathIOManager` into a path, `DbIOManager` into `<schema>.<table>` off `asset_key.path[-1]`. So one suffix rule places the quarantine natively on every backend, and the partition layout comes along with it.
+
+**The output context is borrowed, not built.** `DbIOManager` backends read the database and connection settings off the output context at write time rather than off themselves, so a context assembled by hand needs per-manager knowledge, which is the thing this decision exists to avoid. Instead the step's real `OutputContext` is cloned and re-pointed at the quarantine's key. Copying fields is not interpreting them, and that is what keeps the write manager-blind.
+
+**`quarantine` becomes a bool again, and the location an override.** ADR-0004 folded the two into `bool | str | Path` because `True` had to resolve to a root and a `True` that resolved to nothing was an error invisible at the call site. That objection is gone: `True` now means "wherever this asset's manager puts things", which always resolves. The override stays for the three cases delegation cannot serve, and it is a small explicit type rather than an overloaded `str | Path`, because there are three of them and a type cannot carry three meanings legibly:
+
+1. Same manager, a different key.
+2. A different manager, named by its resource key.
+3. No manager at all, a root plus the path rule.
+
+**`quarantine_path` survives as case 3.** It keeps the `UPathIOManager` layout it already mirrors, and it is what direct invocation uses when no resources were supplied.
+
+## Evidence
+
+`prototypes/quarantine_sink/` ran twelve combinations green on dagster 1.13.20: `PolarsParquetIOManager` and `DuckDBPolarsIOManager`, partitioned and not, across the three exits that reject rows.
+
+The abort case holds. `handle_output` is called inside the asset body before anything raises, so a run that dies still leaves the rows where a reader can open them, which is what ADR-0004 promised and the reason the file exists at all.
+
+The two managers tested are one from each base class Dagster ships. Between them `UPathIOManager` and `DbIOManager` cover nearly every first-party manager, so this is not support for two integrations.
+
+## Consequences
+
+**This reads `context.resources.io_manager`, which ADR-0002 and ADR-0004 refused.** The refusal bought a decorated asset that is callable in a test with no resources. That still works: direct invocation with no manager falls back to case 3, the root and the path rule. A test that wants the real placement passes a manager, which is what testing placement means.
+
+**Three private Dagster APIs**: `get_step_execution_context`, `StepOutputHandle`, `get_output_context`. Pinned by characterization tests, as `_naming` pins Dataframely's. An import-time failure here breaks the whole code location, not just the quarantine, which is the loud failure and the right one.
+
+**Metadata the manager emits is dropped.** It calls `add_output_metadata` on a context that is not a real output, so the manager's own `path` or `Query` goes nowhere. The package emits the quarantine's location itself, so a reader loses nothing, but the two are computed separately and could disagree.
+
+**A partitioned asset on a database manager needs `partition_expr`.** `DbIOManager` raises without it. The user already declares it for their own partitioned table, and it is forwarded automatically because the borrowed context carries definition metadata.
+
+**A quarantine spec gets simpler.** `build_quarantine_spec` (ADR-0004) keyed a spec that a downstream asset then had to route to a second IO manager. Written through the asset's own manager, the spec's key resolves through that same manager with no routing at all.
+
+## Alternatives rejected
+
+**Per-manager adapters**, one each for `dagster-polars` and `dagster-duckdb-polars`, reading `base_dir` or `database` and placing the quarantine ourselves. Rejected: the prototype needed no manager-specific code at all, so adapters would buy a support matrix and nothing else.
+
+**Ship our own IO manager.** Rejected again, on ADR-0004's reasoning plus one more: it only helps users who bind it, and the warehouse case that motivated this decision is exactly the one it cannot serve.
+
+**Keep the file as the only mechanism.** Rejected because it cannot put a warehouse's invalid rows in the warehouse, which is where that user will look for them.
