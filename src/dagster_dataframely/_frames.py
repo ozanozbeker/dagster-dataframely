@@ -15,14 +15,14 @@ import polars as pl
 _STAGING_PREFIX = "dagster_dataframely_"
 
 
-def shape_problems(
+def column_schema_problems(
     schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
 ) -> list[dict[str, str]]:
-    """Compare the frame's shape against the schema, naming every mismatch.
+    """Compare the frame's columns and dtypes against the schema, naming every mismatch.
 
     An explicit pre-check, not a `try`/`except` around `filter`. The `try` would behave differently depending on what the decorated function returned. `filter(cast=False)` raises at call time on a `DataFrame`, but on a `LazyFrame` it returns cleanly and the same error surfaces only on the eventual collect. The decorator promises either return type works, so the shape check cannot rest on a difference between them.
 
-    Only public API, and none of it executes. `collect_schema()` resolves a `LazyFrame`'s shape without running it.
+    Only public API, and none of it executes. `collect_schema()` resolves a `LazyFrame`'s column schema without running it.
 
     Parameters
     ----------
@@ -33,7 +33,7 @@ def shape_problems(
 
     Returns
     -------
-    One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `SchemaShapeError`, so the two cannot disagree.
+    One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `ColumnSchemaError`, so the two cannot disagree.
     """
     actual: pl.Schema = frame.collect_schema()
     return [

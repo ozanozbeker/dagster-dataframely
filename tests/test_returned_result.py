@@ -41,7 +41,7 @@ def _call(asset: dg.AssetsDefinition) -> _Yielded:
 
 
 def _results(events: _Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """The materialization each out produced, keyed by asset."""
+    """The materialization each output produced, keyed by asset."""
     return {
         event.asset_key: event
         for event in events
@@ -168,13 +168,13 @@ def test_a_lazy_return_folds_the_same_way():
 
 # --- what a quarantine changes about the fold ---
 def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
-    """There is one, because the quarantine is written rather than materialized. So the returned result has exactly one place to land, and the package's own rejection keys still win a collision."""
+    """There is one, because the quarantine is written rather than materialized. So the returned result has exactly one place to land, and the package's own keys still win a collision."""
 
     @dy_asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=cooccurring_orders(),
-            metadata={"source": "stripe", "dy_rejected_count": 99},
+            metadata={"source": "stripe", "dataframely/invalid_count": 99},
             data_version=dg.DataVersion("v1"),
             tags={"run/flavour": "backfill"},
         )
@@ -185,7 +185,7 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
 
     assert set(materializations) == {_VALID}
     assert event.metadata["source"] == dg.MetadataValue.text("stripe")
-    assert event.metadata["dy_rejected_count"] == dg.MetadataValue.int(1)
+    assert event.metadata["dataframely/invalid_count"] == dg.MetadataValue.int(1)
     assert tags["dagster/data_version"] == "v1"
     assert tags["run/flavour"] == "backfill"
 

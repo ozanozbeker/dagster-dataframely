@@ -1,6 +1,6 @@
 """The rows a run puts in front of a reader, bounded.
 
-Two surfaces want the same thing for the same reason. A red check says `amount|min` rejected 43 rows, which raises the question of what three of them held. A materialization says 90,000 rows were written, which raises the question of what one of them looks like. A count answers neither. A handful of rows answers both.
+Two surfaces want the same thing for the same reason. A red check says 43 rows failed `amount|min`, which raises the question of what three of them held. A materialization says 90,000 rows were written, which raises the question of what one of them looks like. A count answers neither. A handful of rows answers both.
 
 **Bounded by construction.** There is no unbounded setting and no unbounded read. Nothing leaves this module without a caller saying how many rows it wanted. These rows go into the Dagster event log, which is shared, exported and not redacted, so somebody chooses the amount that lands there.
 
@@ -12,8 +12,8 @@ Its own module rather than `_metadata`'s or `_statistics`', for the reason `_sta
 import dagster as dg
 import polars as pl
 
-#: The valid output's materialization display key. Short and unprefixed, like `stats/*`: every key on a materialization is one a reader is meant to read.
-SAMPLE_KEY = "sample"
+#: The valid rows' materialization display key. Namespaced like `dataframely/valid_stats/*`, so everything this package writes sorts in one block apart from Dagster's and the IO manager's.
+VALID_SAMPLE_KEY = "dataframely/valid_sample"
 
 #: What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's own field rather than exporting a name for it.
 type Cell = str | int | float | bool | None
@@ -72,7 +72,7 @@ def sample_metadata(key: str, rows: list[Row]) -> dict[str, dg.TableMetadataValu
 
     Returns
     -------
-    The one entry, or nothing at all when there are no rows: the limit was zero, the frame was empty, or the rule this belongs to rejected nothing.
+    The one entry, or nothing at all when there are no rows: the limit was zero, the frame was empty, or nothing failed the rule this belongs to.
     """
     if not rows:
         return {}

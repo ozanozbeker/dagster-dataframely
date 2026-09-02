@@ -230,7 +230,7 @@ def statistics_metadata(
 
     Returns
     -------
-    One entry per family present, keyed `stats/<family>`, each holding a row per column in the frame's own column order. Empty when the setting is off, and empty of any family the frame has no column of.
+    One entry per family present, keyed `dataframely/valid_stats/<family>`, each holding a row per column in the frame's own column order. Empty when the setting is off, and empty of any family the frame has no column of.
     """
     if not enabled:
         return {}
@@ -240,6 +240,8 @@ def statistics_metadata(
         if family is not None:
             families.setdefault(family, {})[name] = dtype
     return {
-        f"stats/{family}": _family_table(frame, columns, _AGGREGATES[family])
+        f"dataframely/valid_stats/{family}": _family_table(
+            frame, columns, _AGGREGATES[family]
+        )
         for family, columns in families.items()
     }

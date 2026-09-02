@@ -121,14 +121,14 @@ def _table(
     metadata: Mapping[str, dg.MetadataValue[Any]], family: str
 ) -> dict[str, dict[str, Any]]:
     """Read one family's table back as a row per column, keyed by column name."""
-    value = metadata[f"stats/{family}"]
+    value = metadata[f"dataframely/valid_stats/{family}"]
     assert isinstance(value, dg.TableMetadataValue)
     rows = [dict(record.data) for record in value.records]
     return {str(row["column"]): row for row in rows}
 
 
 def _families(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    return {key for key in metadata if key.startswith("stats/")}
+    return {key for key in metadata if key.startswith("dataframely/valid_stats/")}
 
 
 def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
@@ -136,7 +136,7 @@ def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
     return {
         column
         for family in _families(metadata)
-        for column in _table(metadata, family.removeprefix("stats/"))
+        for column in _table(metadata, family.removeprefix("dataframely/valid_stats/"))
     }
 
 
@@ -146,10 +146,10 @@ def test_a_materialization_carries_one_table_per_family_present(tmp_path: Path):
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _families(metadata) == {
-        "stats/numeric",
-        "stats/temporal",
-        "stats/string",
-        "stats/boolean",
+        "dataframely/valid_stats/numeric",
+        "dataframely/valid_stats/temporal",
+        "dataframely/valid_stats/string",
+        "dataframely/valid_stats/boolean",
     }
 
 
@@ -165,7 +165,7 @@ def test_a_family_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
 
     metadata = _metadata(tmp_path, weights, key="weights")
 
-    assert _families(metadata) == {"stats/numeric"}
+    assert _families(metadata) == {"dataframely/valid_stats/numeric"}
 
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
@@ -176,7 +176,11 @@ def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Pat
     assert "address" not in _stat_columns(stats)
     assert "tags" not in _stat_columns(ordered)
     # `Orders` carries no `Bool`, so the fourth table is absent for a second reason.
-    assert _families(ordered) == {"stats/numeric", "stats/temporal", "stats/string"}
+    assert _families(ordered) == {
+        "dataframely/valid_stats/numeric",
+        "dataframely/valid_stats/temporal",
+        "dataframely/valid_stats/string",
+    }
 
 
 def test_the_families_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
@@ -386,7 +390,7 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
 def test_the_setting_off_in_the_environment_suppresses_the_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier: a platform engineer turns the pass off for a whole code location without touching an asset."""
+    """The house-style source: a platform engineer turns the pass off for a whole code location without touching an asset."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
 
     @dy_asset(Orders, name="orders")
@@ -409,8 +413,10 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
     metadata = _metadata(tmp_path, quarantined)
 
     assert _families(metadata)
-    assert "dy_rejected_count" in metadata
-    assert not [name for name in metadata if name.startswith("stats/dy_")]
+    assert "dataframely/invalid_count" in metadata
+    assert not [
+        name for name in metadata if name.startswith("dataframely/valid_stats/dy_")
+    ]
 
 
 # --- how the numbers are computed ---

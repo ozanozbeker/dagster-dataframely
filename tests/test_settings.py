@@ -1,8 +1,8 @@
-"""The three-tier settings chain, asserted at the one call every setting resolves through.
+"""The settings chain, asserted at the one call every setting resolves through.
 
-`resolve` is where the tiers meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it. A fake one covers the tier a shipped setting cannot reach, because a shipped default is valid by construction.
+`resolve` is where the three sources meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it. A fake one covers the source a shipped setting cannot reach, because a shipped default is valid by construction.
 
-Each extra shape covers a tier the ones before it cannot reach. A flag has to parse the environment tier rather than match it, because the environment arrives as a string whatever the shape holds. A count's vocabulary is a range, so it is the only shape with something left to reject in a tier a type checker has already narrowed. A directory ships a package default of `None`, and that is a value this shape means something by rather than the absence of one.
+Each extra shape covers a source the ones before it cannot reach. A flag has to parse the environment variable rather than match it, because the environment arrives as a string whatever the shape holds. A count's vocabulary is a range, so it is the only shape with something left to reject in a source a type checker has already narrowed. A directory ships a package default of `None`, and that is a value this shape means something by rather than the absence of one.
 """
 
 import importlib
@@ -39,13 +39,13 @@ _WRONG: Any = "per_column"
 _FRACTION: Any = 2.5
 _YES: Any = True
 
-# The same, for the two-valued shape. It is the environment tier's own spelling, which makes it the word somebody writes into the argument by mistake.
+# The same, for the two-valued shape. It is the environment variable's own spelling, which makes it the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
 
 # The same, for the shape that holds a path. A `Path` is what a user reaches for, and the shape holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong in that tier, so this is the only way to assert the default is validated rather than trusted.
+# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated rather than trusted.
 _BROKEN = _Choice[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
 
 # The same, one shape along: a count whose default is a number it does not accept.
@@ -70,14 +70,14 @@ def test_a_setting_nobody_touched_is_the_package_default():
 def test_the_environment_variable_beats_the_package_default(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The house-style tier: set once by a platform engineer, for every asset in the code location."""
+    """The house-style source: set once by a platform engineer, for every asset in the code location."""
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
     assert CHECK_GRANULARITY.resolve(None) == "column"
 
 
 def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyPatch):
-    """The override tier: the house style holds everywhere except where an asset says otherwise."""
+    """The override: the house style holds everywhere except where an asset says otherwise."""
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
     assert CHECK_GRANULARITY.resolve("schema") == "schema"
@@ -93,10 +93,10 @@ def test_every_setting_names_its_environment_variable_after_itself():
     assert TEMP_DIR.env_var == _TEMP_DIR_ENV
 
 
-def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
+def test_a_flag_parses_the_environment_source_rather_than_matching_it(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The one tier where a flag differs from a choice, asserted in both directions and in the casing a deployment is as likely to write."""
+    """The one source where a flag differs from a choice, asserted in both directions and in the casing a deployment is as likely to write."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
     assert STATISTICS.resolve(None) is False
 
@@ -107,7 +107,7 @@ def test_a_flag_parses_the_environment_tier_rather_than_matching_it(
 def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The case a truthiness test would get wrong, and the one that matters. With the tier below saying on, the setting would be impossible to turn off."""
+    """The case a truthiness test would get wrong, and the one that matters. With the source below saying on, the setting would be impossible to turn off."""
     monkeypatch.setenv(_STATISTICS_ENV, "true")
 
     assert STATISTICS.resolve(argument=False) is False
@@ -116,7 +116,7 @@ def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
 def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`1` is the plausible wrong word, and the error has to be the same one a choice raises: same setting, same allowed values, same tier order."""
+    """`1` is the plausible wrong word, and the error has to be the same one a choice raises: same setting, same allowed values, same source order."""
     monkeypatch.setenv(_STATISTICS_ENV, "1")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -128,10 +128,10 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     assert _STATISTICS_ENV in message
 
 
-def test_a_flag_rejects_a_word_from_the_argument_tier():
+def test_a_flag_rejects_a_word_from_the_argument():
     """The one shape where an unvalidated argument is silently the *opposite* of what was written.
 
-    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment tier spells the same instruction exactly that way, which makes the mistake reachable rather than hypothetical.
+    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment variable spells the same instruction exactly that way, which makes the mistake reachable rather than hypothetical.
     """
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
@@ -142,7 +142,7 @@ def test_a_flag_rejects_a_word_from_the_argument_tier():
     assert "argument" in message
 
 
-def test_a_count_reads_the_environment_tier_as_a_number(
+def test_a_count_reads_the_environment_source_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The other shape that has to parse rather than match, and the one where a wrong reading would be silent: `'0'` is a string every truthiness test calls true."""
@@ -156,13 +156,13 @@ def test_a_count_reads_the_environment_tier_as_a_number(
 def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Zero turns a sample off, so the tier test cannot be truthiness. With the tier below saying 5, the setting would be impossible to turn off."""
+    """Zero turns a sample off, so the test cannot be truthiness. With the source below saying 5, the setting would be impossible to turn off."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "5")
 
     assert ROW_SAMPLE.resolve(0) == 0
 
 
-def test_a_count_rejects_a_negative_from_the_argument_tier():
+def test_a_count_rejects_a_negative_from_the_argument():
     with pytest.raises(InvalidSettingError) as raised:
         MAX_FAILURE_SAMPLES.resolve(-1)
     message = str(raised.value)
@@ -175,7 +175,7 @@ def test_a_count_rejects_a_negative_from_the_argument_tier():
     assert "argument" in message
 
 
-def test_a_count_rejects_a_negative_from_the_environment_tier(
+def test_a_count_rejects_a_negative_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "-1")
@@ -186,7 +186,7 @@ def test_a_count_rejects_a_negative_from_the_environment_tier(
     assert _ROW_SAMPLE_ENV in str(raised.value)
 
 
-def test_a_count_rejects_a_word_the_environment_tier_cannot_read_as_a_number(
+def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The same error a negative gets, so a deployment never has to tell two failures apart."""
@@ -217,10 +217,10 @@ def test_a_count_rejects_a_bool():
     assert "'True'" in str(raised.value)
 
 
-def test_a_directory_reads_the_environment_tier_as_the_path_it_spells(
+def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The shape with nothing to parse and nothing to match: the environment tier already arrives as what the setting holds."""
+    """The shape with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
     monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/staging")
 
     assert TEMP_DIR.resolve(None) == "/scratch/staging"
@@ -246,7 +246,7 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every tier of this setting spells a path as a string, because the environment tier can spell it no other way."""
+    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every source for this setting spells a path as a string, because the environment variable can spell it no other way."""
     with pytest.raises(InvalidSettingError) as raised:
         TEMP_DIR.resolve(_PATH_OBJECT)
 
@@ -254,17 +254,17 @@ def test_a_directory_rejects_something_that_is_not_a_path():
     assert "argument" in str(raised.value)
 
 
-def test_a_value_outside_the_vocabulary_raises_from_the_argument_tier():
+def test_a_value_outside_the_vocabulary_raises_from_the_argument():
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
 
     assert "per_column" in str(raised.value)
 
 
-def test_a_value_outside_the_vocabulary_raises_from_the_environment_tier(
+def test_a_value_outside_the_vocabulary_raises_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A wrong value in a deployment's environment is the tier where a silent misconfiguration would spread furthest."""
+    """A wrong value in a deployment's environment is the source where a silent misconfiguration would spread furthest."""
     monkeypatch.setenv(_GRANULARITY_ENV, "per_column")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -273,8 +273,8 @@ def test_a_value_outside_the_vocabulary_raises_from_the_environment_tier(
     assert _GRANULARITY_ENV in str(raised.value)
 
 
-def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
-    """The chain validates on resolve, so no tier is trusted, including the package's own."""
+def test_a_value_outside_the_vocabulary_raises_from_the_default_source():
+    """The chain validates on resolve, so no source is trusted, including the package's own."""
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
 
@@ -296,7 +296,7 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_tier():
     assert "filesystem paths" in str(raised.value)
 
 
-def test_the_error_names_the_setting_the_value_and_the_tier_order():
+def test_the_error_names_the_setting_the_value_and_the_source_order():
     """Everything needed to find the typo without opening the package source: which setting, what it got, and every place it could have come from."""
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
@@ -311,7 +311,7 @@ def test_the_error_names_the_setting_the_value_and_the_tier_order():
 
 
 def test_no_module_offers_a_global_default_setter():
-    """There is deliberately no fourth tier.
+    """There is deliberately no fourth source.
 
     Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control. The same asset would derive different checks depending on which module happened to be imported first.
     """

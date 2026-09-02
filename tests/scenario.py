@@ -4,7 +4,7 @@ It covers the cases the whole effort needs: the dtypes a round trip or a metadat
 
 Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants than as fixture indirection. `Orders` also has to be importable at class-definition time to decorate an asset.
 
-`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the shape check loudly in every runtime test, instead of being silently rebuilt to match.
+`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the column-schema check loudly in every runtime test, instead of being silently rebuilt to match.
 
 `storage` is here for the same reason the frames are: every run test needs somewhere to write, and only a handful care which manager writes it. It builds `dagster-polars`' parquet manager, which ADR-0004 makes this package's recommendation, so a test that merely needs storage exercises what a user will actually run.
 
@@ -235,7 +235,7 @@ def clean_orders() -> pl.DataFrame:
 
 
 def mixed_orders() -> pl.DataFrame:
-    """Three valid rows and three rejected, one per rule that can reject alone."""
+    """Three valid rows and three invalid, one per rule a row can fail alone."""
     return _frame(
         [
             _row("ORD-1", "a@example.com", "10.00", 1, "new"),
@@ -253,7 +253,7 @@ def mixed_orders() -> pl.DataFrame:
 def cooccurring_orders() -> pl.DataFrame:
     """Three valid rows and one that trips three rules at once.
 
-    The fifth frame, added by #19. The other four reject at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look exactly like a working one.
+    The fifth frame, added by #19. The other four fail at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look exactly like a working one.
     """
     return _frame(
         [
@@ -277,5 +277,5 @@ def hopeless_orders() -> pl.DataFrame:
 
 
 def wrong_dtype_orders() -> pl.DataFrame:
-    """`quantity` arrives `Int64`: a pipeline defect the shape check catches before the filter."""
+    """`quantity` arrives `Int64`: a pipeline defect the column-schema check catches before the filter."""
     return clean_orders().with_columns(pl.col("quantity").cast(pl.Int64))
