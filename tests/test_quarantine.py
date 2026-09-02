@@ -52,17 +52,17 @@ def _invalid_rows() -> pl.DataFrame:
 
 # --- the path ---
 def test_the_leaf_carries_the_suffix_so_a_shared_root_cannot_overwrite(tmp_path: Path):
-    """The whole point of `_quarantine` on the leaf. `UPathIOManager` writes `orders.parquet` under the same root, so the two sit beside each other rather than one over the other. The delegating writer puts the same suffix on the asset key, so both routes name one thing."""
+    """The whole point of `_quarantine` on the leaf. `UPathIOManager` writes `orders.parquet` under the same quarantine_dir, so the two sit beside each other rather than one over the other. The delegating writer puts the same suffix on the asset key, so both routes name one thing."""
     path = quarantine_path(_ORDERS, tmp_path)
 
     assert path == UPath(tmp_path) / "orders_quarantine.parquet"
 
 
 def test_a_path_is_a_upath_whatever_the_root_arrived_as(tmp_path: Path):
-    """The decorator resolves a root to a `UPath`, but a hand-wirer reaching for the same rule holds whatever their config gave them."""
+    """The decorator resolves a quarantine_dir to a `UPath`, but a hand-wirer reaching for the same rule holds whatever their config gave them."""
     paths = [
-        quarantine_path(_ORDERS, root)
-        for root in (tmp_path, str(tmp_path), UPath(tmp_path))
+        quarantine_path(_ORDERS, quarantine_dir)
+        for quarantine_dir in (tmp_path, str(tmp_path), UPath(tmp_path))
     ]
 
     assert all(isinstance(path, UPath) for path in paths)
@@ -104,7 +104,7 @@ def test_a_multi_partition_key_is_spelled_in_dimension_name_order(tmp_path: Path
     ids=["unpartitioned", "partitioned", "multi_partitioned"],
 )
 def test_a_cloud_root_is_the_same_rule(partition_key: str | None, tail: str):
-    """One rule and one `UPath`, so nothing about the path changes when the root moves to object storage. Every form, because a `/` in the tail is exactly where a scheme-aware path could have behaved differently."""
+    """One rule and one `UPath`, so nothing about the path changes when the quarantine_dir moves to object storage. Every form, because a `/` in the tail is exactly where a scheme-aware path could have behaved differently."""
     path = quarantine_path(
         dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse", partition_key
     )
@@ -124,7 +124,7 @@ def test_a_cloud_root_is_the_same_rule(partition_key: str | None, tail: str):
 def test_a_partition_key_cannot_climb_out_of_the_root(
     tmp_path: Path, partition_key: str, tail: str
 ):
-    """A partition key can come from data, and both of these resolve outside the root unescaped: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks `..` upward at write time.
+    """A partition key can come from data, and both of these resolve outside the quarantine_dir unescaped: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks `..` upward at write time.
 
     `FilesystemIOManager`'s pair of escapes rather than the `UPathIOManager` base class's one, which is upstream's own documented advice for a hierarchical filesystem.
     """
@@ -256,7 +256,7 @@ def _loaded(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Write a real quarantine frame where the rule says, then read it back downstream.
 
-    The root is the manager's `base_dir`, which is the arrangement all three of these tests exist to prove. Nothing in the run knows about this package: the spec supplies a key and `PolarsParquetIOManager` resolves it to the file already sitting there.
+    The quarantine_dir is the manager's `base_dir`, which is the arrangement all three of these tests exist to prove. Nothing in the run knows about this package: the spec supplies a key and `PolarsParquetIOManager` resolves it to the file already sitting there.
 
     Returns
     -------
@@ -321,7 +321,7 @@ _ONE_DAY = dg.StaticPartitionsDefinition([_DAY])
 #: What `DbIOManager` needs to delete a partition before rewriting it, and what a user already declares for their own partitioned table. It is forwarded because the borrowed context copies definition metadata, never because anything here reads it.
 _PARTITION_EXPR = {"partition_expr": "ordered_at"}
 
-#: The two exits that reject rows and have somewhere to put them. The third rejecting exit has no writer by definition, so there is nothing for it to place.
+#: The two exits with failing rows and somewhere to put them. The third has no writer by definition, so there is nothing for it to place.
 _REJECTING = [
     pytest.param(mixed_orders, 3, False, id="partial"),
     pytest.param(hopeless_orders, 2, True, id="nothing survived"),
@@ -405,7 +405,7 @@ def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     aborts: bool,
     partitioned: bool,
 ):
-    """The case a root cannot express. A warehouse stores tables, so the invalid rows belong in one beside the table they came from rather than in a file somewhere else.
+    """The case a quarantine_dir cannot express. A warehouse stores tables, so the invalid rows belong in one beside the table they came from rather than in a file somewhere else.
 
     The partitioned runs are also where `partition_expr` is forwarded off the definition metadata: without it `DbIOManager` refuses, which the test below asserts.
     """
@@ -455,15 +455,15 @@ def test_the_address_is_the_key_the_manager_resolved(tmp_path: Path):
     (event,) = result.get_asset_materialization_events()
     metadata = event.step_materialization_data.materialization.metadata
 
-    assert metadata["dy_quarantine_address"] == dg.MetadataValue.text(
+    assert metadata["dataframely/quarantine_address"] == dg.MetadataValue.text(
         f"{WAREHOUSE_SCHEMA}/orders_quarantine"
     )
 
 
 def test_the_managers_own_metadata_does_not_reach_the_materialization(tmp_path: Path):
-    """The risk the clone carries. A cloned context reaches the same `add_output_metadata` the real output does, and `dagster-polars` calls it with the path and row count of whatever it just wrote.
+    """The risk the copy carries. A copied context reaches the same `add_output_metadata` the real output does, and `dagster-polars` calls it with the path and row count of whatever it just wrote.
 
-    It rebinds the mapping on the object it was called on, so the quarantine's numbers land on the clone and the step reads the original. The frame here splits 3 valid against 1 held back, so a leak would be visible as a row count of 1.
+    It rebinds the mapping on the object it was called on, so the quarantine's numbers land on the copy and the step reads the original. The frame here splits 3 valid against 1 held back, so a leak would be visible as a row count of 1.
     """
     result = dg.materialize(
         [_delegating(cooccurring_orders, partitioned=False)],
@@ -491,7 +491,9 @@ def test_the_file_writer_writes_where_the_path_rule_says(tmp_path: Path):
     (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
     path = tmp_path / "orders_quarantine.parquet"
 
-    assert (materialization.metadata or {})["dy_quarantine_address"] == str(path)
+    assert (materialization.metadata or {})["dataframely/quarantine_address"] == str(
+        path
+    )
     assert_frame_equal(pl.read_parquet(path), _invalid_rows())
 
 

@@ -1,6 +1,6 @@
 """Asset-check specs derived from a schema, and the results a run reports against them.
 
-Specs come off the schema, never off a run's `FailureInfo`. A rule that rejected nothing still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
+Specs come off the schema, never off a run's `FailureInfo`. A rule nothing failed still gets a spec and still reports `0 failed`, so a clean run is a row in every rule's history rather than a gap in it.
 
 `check_granularity` decides how many specs there are. A 40-column schema contributes around 120 rules, and nobody reads a check list that long. One grouping answers the question on both sides: the specs and the results are built from the same call, so a check can never report for a set of rules its spec did not claim.
 """
@@ -13,8 +13,8 @@ import polars as pl
 from dataframely._rule import Rule
 
 from dagster_dataframely._naming import (
+    COLUMN_SCHEMA_CHECK,
     SCHEMA_RULES_CHECK,
-    SHAPE_CHECK,
     check_name,
     column_check_name,
     split_rule,
@@ -143,7 +143,7 @@ def check_specs(
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
-    """Build the schema's check specs, plus the shape check.
+    """Build the schema's check specs, plus the column-schema check.
 
     Parameters
     ----------
@@ -158,7 +158,7 @@ def check_specs(
 
     Returns
     -------
-    The shape check's spec first, then one spec per rule set.
+    The column-schema check's spec first, then one spec per rule set.
 
     Raises
     ------
@@ -173,14 +173,14 @@ def check_specs(
     rule_sets: list[_RuleSet] = _rule_sets(
         schema, check_granularity, multi_column_rules
     )
-    shape = dg.AssetCheckSpec(
-        SHAPE_CHECK,
+    column_schema = dg.AssetCheckSpec(
+        COLUMN_SCHEMA_CHECK,
         asset=asset,
         description=f"Columns and dtypes match {schema.__name__}.",
         blocking=True,
     )
     return [
-        shape,
+        column_schema,
         *(
             dg.AssetCheckSpec(
                 rule_set.name, asset=asset, description=rule_set.description
@@ -190,19 +190,19 @@ def check_specs(
     ]
 
 
-#: What `FailureInfo.details()` calls a row a rule rejected.
+#: What `FailureInfo.details()` calls a row that failed a rule.
 _INVALID = "invalid"
 
 
-def _rejected_rows(
+def _failed_rows(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     counts: dict[str, int],
     limit: int,
 ) -> dict[str, list[Row]]:
-    """Sample the rows each rule rejected, bounded per rule.
+    """Sample the rows that failed each rule, bounded per rule.
 
-    Per rule rather than per check, because a check can stand for a hundred of them. A bound shared across a rule set would let the rule that rejected a thousand rows crowd out the one that rejected one, and the second is the more interesting of the two.
+    Per rule rather than per check, because a check can stand for a hundred of them. A bound shared across a rule set would let the rule a thousand rows failed crowd out the one a single row failed, and the second is the more interesting of the two.
 
     Parameters
     ----------
@@ -217,13 +217,13 @@ def _rejected_rows(
 
     Returns
     -------
-    Up to `limit` rows per rule that rejected anything, keyed by the rule's own name. Rules that rejected nothing are absent, so a caller iterates what failed rather than what exists.
+    Up to `limit` rows per rule anything failed, keyed by the rule's own name. Rules nothing failed are absent, so a caller iterates what failed rather than what exists.
     """
     if not limit or not counts:
         return {}
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
-    # Dropped from every sample: the rule columns are the quarantine's shape, and the check already says which rule this is.
+    # Dropped from every sample: the rule columns are the quarantine's own, and the check already says which rule this is.
     rule_columns: list[str] = [
         rule for rule in validation_rules(schema) if rule in details.collect_schema()
     ]
@@ -292,11 +292,11 @@ def rule_results(  # noqa: PLR0913 - every setting the specs were derived with h
     multi_column_rules: MultiColumnRules | None = None,
     max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
-    """Build one result per check out of what the filter rejected.
+    """Build one result per check out of what the filter held back.
 
     Severity is the run's outcome rather than the rule's. When nothing is written, no failure is a warning.
 
-    The whole `FailureInfo` rather than its counts, because a check reports two things about a rule and they have to come from the same object: how many rows it rejected, and which rows those were.
+    The whole `FailureInfo` rather than its counts, because a check reports two things about a rule and they have to come from the same object: how many rows failed it, and which rows those were.
 
     Parameters
     ----------
@@ -317,11 +317,11 @@ def rule_results(  # noqa: PLR0913 - every setting the specs were derived with h
 
     Returns
     -------
-    One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule that rejected nothing still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
+    One result per rule set, in the same order and under the same names `check_specs` claimed, because both read the rule sets from one call. A rule nothing failed still gets a result, so a clean run is a row in every rule's history rather than a gap in it.
     """
     counts: dict[str, int] = failure.counts()
     rules: dict[str, Rule] = validation_rules(schema)
-    sampled: dict[str, list[Row]] = _rejected_rows(
+    sampled: dict[str, list[Row]] = _failed_rows(
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     )
     results: list[dg.AssetCheckResult] = []

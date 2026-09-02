@@ -297,21 +297,21 @@ def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
 
 def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run():
     """A blocking check carrying a `partitions_def` still stamps its partition, and a failing one still ends the run."""
-    # #31 passes the partitions_def to every spec `check_specs` builds, the shape check included. That one is worth proving rather than assuming: it is the only spec this package marks `blocking=True`, and a preview parameter that quietly disarmed the gate would let a wrong-shaped frame reach the table.
+    # #31 passes the partitions_def to every spec `check_specs` builds, the column-schema check included. That one is worth proving rather than assuming: it is the only spec this package marks `blocking=True`, and a preview parameter that quietly disarmed the gate would let a frame whose columns do not match reach the table.
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     key = dg.AssetKey(["orders"])
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", PreviewWarning)
         spec = dg.AssetCheckSpec(
-            "dy_schema__dtypes", asset=key, blocking=True, partitions_def=days
+            "dy_schema__columns", asset=key, blocking=True, partitions_def=days
         )
 
     @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
     def orders():
         return dg.MaterializeResult(
             check_results=[
-                dg.AssetCheckResult(check_name="dy_schema__dtypes", passed=False)
+                dg.AssetCheckResult(check_name="dy_schema__columns", passed=False)
             ]
         )
 
@@ -337,11 +337,11 @@ def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
     # #72 unbundles every check result for exactly this reason (ADR-0002). A run flattens the two forms into one event stream, so nothing else in the suite can tell them apart, and the bundled form is what made a decorated asset untestable by calling it.
     # Undocumented: direct invocation is Dagster's own documented unit-testing path, but nothing says a bundled check leaves its output unsatisfied. The error names an output name no user wrote.
     def spec(asset: dg.AssetKey) -> dg.AssetCheckSpec:
-        return dg.AssetCheckSpec("dy_schema__dtypes", asset=asset)
+        return dg.AssetCheckSpec("dy_schema__columns", asset=asset)
 
     def result(asset: dg.AssetKey) -> dg.AssetCheckResult:
         return dg.AssetCheckResult(
-            check_name="dy_schema__dtypes", asset_key=asset, passed=True
+            check_name="dy_schema__columns", asset_key=asset, passed=True
         )
 
     bundled_key = dg.AssetKey(["bundled_orders"])
@@ -536,7 +536,7 @@ def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_
 def test_a_directly_invoked_asset_still_refuses_to_hand_over_a_step():
     """How the decorator tells a run from a call, which is what decides whether the quarantine is delegated or written to a file.
 
-    A call has no step to borrow from, so `DagsterInvalidPropertyError` is the whole of the signal. Asked rather than tested for, because there is no predicate that answers it.
+    A call has no step, so `DagsterInvalidPropertyError` is the whole of the signal. Asked rather than tested for, because there is no predicate that answers it.
     """
 
     @dg.asset(name="orders")
@@ -608,13 +608,13 @@ def test_an_output_context_still_clones_and_re_points_by_attribute():
         definition_metadata={"partition_expr": "ordered_at"},
     )
 
-    clone = copy.copy(original)
-    clone._asset_key = dg.AssetKey(["analytics", "orders_quarantine"])
-    clone.add_output_metadata({"path": "somewhere"})
+    repointed = copy.copy(original)
+    repointed._asset_key = dg.AssetKey(["analytics", "orders_quarantine"])
+    repointed.add_output_metadata({"path": "somewhere"})
 
-    assert clone is not original
-    assert clone.asset_key.path == ["analytics", "orders_quarantine"]
+    assert repointed is not original
+    assert repointed.asset_key.path == ["analytics", "orders_quarantine"]
     assert original.asset_key.path == ["analytics", "orders"]
-    assert clone.definition_metadata == original.definition_metadata
-    assert "path" in clone.get_logged_metadata()
+    assert repointed.definition_metadata == original.definition_metadata
+    assert "path" in repointed.get_logged_metadata()
     assert original.get_logged_metadata() == {}

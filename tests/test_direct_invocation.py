@@ -17,7 +17,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from dagster_dataframely import dy_asset
-from dagster_dataframely.errors import QuarantineRootError, SchemaShapeError
+from dagster_dataframely.errors import ColumnSchemaError, QuarantineDirError
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -58,8 +58,8 @@ _SHAPES = [
 
 
 @pytest.fixture
-def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point the fallback writer at a directory this test owns.
+def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point `file_writer` at a directory this test owns.
 
     Set before the asset is declared, because the decorator resolves every setting where the asset is declared rather than where it runs.
     """
@@ -77,7 +77,7 @@ def _events(asset: dg.AssetsDefinition, *args: object) -> _Yielded:
 
 
 def _tables(events: _Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
-    """The frame each out produced, keyed by asset."""
+    """The frame each output produced, keyed by asset."""
     return {
         event.asset_key: event.value
         for event in events
@@ -104,7 +104,7 @@ def _run(tmp_path: Path, asset: dg.AssetsDefinition) -> dg.ExecuteInProcessResul
 
 @pytest.mark.parametrize(("frame", "quarantine"), _SHAPES)
 def test_calling_the_asset_hands_back_its_frame(
-    root: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
+    quarantine_dir: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
     """No run, no IO manager, no instance: the validated frame comes off `MaterializeResult.value`."""
     asset = _orders(frame, quarantine=quarantine)
@@ -117,7 +117,7 @@ def test_calling_the_asset_hands_back_its_frame(
 
 @pytest.mark.parametrize(("frame", "quarantine"), _SHAPES)
 def test_calling_the_asset_reports_every_check_it_declares(
-    root: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
+    quarantine_dir: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
     """Standalone results, one per spec. Bundling them onto the materialization is what direct invocation refuses."""
     asset = _orders(frame, quarantine=quarantine)
@@ -129,7 +129,10 @@ def test_calling_the_asset_reports_every_check_it_declares(
 
 @pytest.mark.parametrize(("frame", "quarantine"), _SHAPES)
 def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
-    tmp_path: Path, root: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
+    tmp_path: Path,
+    quarantine_dir: Path,
+    frame: Callable[[], pl.DataFrame],
+    quarantine: bool,
 ):
     """The property the whole change rests on. Resolving the key at definition time is only safe while it agrees with what Dagster derives at run time.
 
@@ -152,7 +155,10 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
 
 @pytest.mark.parametrize(("frame", "quarantine"), _SHAPES)
 def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
-    tmp_path: Path, root: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
+    tmp_path: Path,
+    quarantine_dir: Path,
+    frame: Callable[[], pl.DataFrame],
+    quarantine: bool,
 ):
     """Same names, same outcomes, same asset. A check whose key differed between the two would report against a spec no run declared."""
     asset = _orders(frame, quarantine=quarantine)
@@ -164,17 +170,19 @@ def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
     }
 
 
-def test_a_shape_drift_raises_out_of_the_call():
+def test_a_column_schema_drift_raises_out_of_the_call():
     """The error a user is meant to read, rather than a step failure they have to open a run to find."""
     asset = _orders(wrong_dtype_orders)
 
-    with pytest.raises(SchemaShapeError) as raised:
+    with pytest.raises(ColumnSchemaError) as raised:
         _events(asset)
 
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
 
-def test_a_called_quarantine_writes_a_real_file_under_the_configured_root(root: Path):
+def test_a_called_quarantine_writes_a_real_file_under_the_configured_root(
+    quarantine_dir: Path,
+):
     """The middle exit, reached by calling: three rows handed back and three on disk where the setting says.
 
     A test that wants the placement a run would give runs the asset. This is the other half: the rows a call held back, in a file the test named, so a unit test can open them.
@@ -182,7 +190,7 @@ def test_a_called_quarantine_writes_a_real_file_under_the_configured_root(root: 
     asset = _orders(mixed_orders, quarantine=True)
 
     tables = _tables(_called(asset, quarantine=True))
-    written = pl.read_parquet(root / "orders_quarantine.parquet")
+    written = pl.read_parquet(quarantine_dir / "orders_quarantine.parquet")
 
     assert set(tables) == {dg.AssetKey(["orders"])}
     assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
@@ -194,14 +202,16 @@ def test_a_called_quarantine_with_no_root_says_so_rather_than_choosing_one():
     """The rows are evidence, and writing them somewhere nobody named is how evidence gets lost."""
     asset = _orders(mixed_orders, quarantine=True)
 
-    with pytest.raises(QuarantineRootError) as raised:
+    with pytest.raises(QuarantineDirError) as raised:
         _called(asset, quarantine=True)
 
     assert "DAGSTER_DATAFRAMELY_QUARANTINE_DIR" in str(raised.value)
     assert "orders" in str(raised.value)
 
 
-def test_a_called_partitioned_quarantine_lands_under_its_partition(root: Path):
+def test_a_called_partitioned_quarantine_lands_under_its_partition(
+    quarantine_dir: Path,
+):
     """`build_asset_context(partition_key=...)` is the whole of what the fallback reads off the context, and one file per partition is what a backfill of one partition rewrites."""
 
     @dy_asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
@@ -210,7 +220,7 @@ def test_a_called_partitioned_quarantine_lands_under_its_partition(root: Path):
 
     _events(orders, dg.build_asset_context(partition_key="2026-01-02"))
 
-    assert (root / "orders_quarantine" / "2026-01-02.parquet").exists()
+    assert (quarantine_dir / "orders_quarantine" / "2026-01-02.parquet").exists()
 
 
 def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_built_one():

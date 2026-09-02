@@ -15,9 +15,9 @@ from polars.testing import assert_frame_equal
 from dagster_dataframely import dy_asset
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import (
+    ColumnSchemaError,
     DagsterDataframelyError,
     NothingSurvivedError,
-    SchemaShapeError,
     ValidationAbortError,
 )
 from dagster_dataframely.wiring import AssetYield, check_specs, process, schema_metadata
@@ -55,7 +55,7 @@ def _materialize(
 def _yielded(
     events: AssetYield,
 ) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """The materialization each out produced, keyed by asset, as the step yielded it.
+    """The materialization each output produced, keyed by asset, as the step yielded it.
 
     What a run records is this merged with whatever the IO manager adds, so a key both of them write reads as the manager's there.
     """
@@ -108,7 +108,7 @@ def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
     rules = {name: e for name, e in evaluations.items() if name.startswith("dy_rule__")}
 
     assert len(evaluations) == len(list(orders.check_specs))
-    assert len(rules) == len(evaluations) - 1  # every check but the shape check
+    assert len(rules) == len(evaluations) - 1  # every check but the column-schema check
     assert all(e.passed for e in evaluations.values())
     assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules.values())
 
@@ -138,7 +138,7 @@ def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
 
 
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
-    """The shape check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one.
+    """The column-schema check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one.
 
     `None` is exempt, and is the skip (#95). It is the one wiring mistake this guard gave up catching, because the skip has to be spelled as a value and `None` is the only value a bare `return` produces.
     """
@@ -160,7 +160,7 @@ def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
 # --- the object returned decides, never the annotation ---
 # `@dg.asset` infers the output's `dagster_type` from the return annotation and fails the run
 # on a mismatch. This decorator cannot: the annotation describes what the decorated function handed
-# over, `dagster_type` describes what the out stores, and validation is eager, so the out holds
+# over, `dagster_type` describes what the output stores, and validation is eager, so the output holds
 # a `DataFrame` however the decorated function arrived at it. Both mismatches below therefore run green,
 # and `tests/test_upstream_characterization.py` pins the plain-asset half of the contrast.
 @pytest.mark.parametrize(
@@ -277,7 +277,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
     )
 
 
-# --- a wrong-shaped frame ---
+# --- a frame whose columns do not match ---
 @dy_asset(Orders, name="orders")
 def _wrong_dtype() -> pl.DataFrame:
     return wrong_dtype_orders()
@@ -285,7 +285,7 @@ def _wrong_dtype() -> pl.DataFrame:
 
 def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
     """A pipeline defect, not a data defect: the message has to be readable without opening a traceback."""
-    with pytest.raises(SchemaShapeError) as raised:
+    with pytest.raises(ColumnSchemaError) as raised:
         _materialize(tmp_path, _wrong_dtype)
 
     message = str(raised.value)
@@ -300,13 +300,13 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
     def missing_column() -> pl.DataFrame:
         return clean_orders().drop("quantity")
 
-    with pytest.raises(SchemaShapeError) as raised:
+    with pytest.raises(ColumnSchemaError) as raised:
         _materialize(tmp_path, missing_column)
 
     assert "'quantity' (expected Int32, got <missing>)" in str(raised.value)
 
 
-def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
+def test_the_column_schema_error_reads_as_plural_for_several_columns(tmp_path: Path):
     """The message is the only thing a user sees of this error, so it agrees in number."""
 
     @dy_asset(Orders, name="orders")
@@ -315,7 +315,7 @@ def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
             clean_orders().drop("email").with_columns(pl.col("quantity").cast(pl.Int64))
         )
 
-    with pytest.raises(SchemaShapeError) as raised:
+    with pytest.raises(ColumnSchemaError) as raised:
         _materialize(tmp_path, several)
 
     assert "Columns 'email' (expected String, got <missing>), 'quantity' " in str(
@@ -324,27 +324,27 @@ def test_the_shape_error_reads_as_plural_for_several_columns(tmp_path: Path):
     assert "do not match Orders" in str(raised.value)
 
 
-def test_the_shape_check_writes_nothing(tmp_path: Path):
+def test_the_column_schema_check_writes_nothing(tmp_path: Path):
     _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
 
     assert not list(tmp_path.rglob("*.parquet"))
 
 
-def test_the_shape_check_runs_before_row_filtering(tmp_path: Path):
-    """Only the shape check reports. No rule check evaluates, because no row was ever filtered."""
+def test_the_column_schema_check_runs_before_row_filtering(tmp_path: Path):
+    """Only the column-schema check reports. No rule check evaluates, because no row was ever filtered."""
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
     evaluations = _evaluations(result)
-    shape = evaluations["dy_schema__dtypes"]
+    column_schema = evaluations["dy_schema__columns"]
 
     assert not result.success
-    assert set(evaluations) == {"dy_schema__dtypes"}
-    assert not shape.passed
-    assert shape.severity == dg.AssetCheckSeverity.ERROR
+    assert set(evaluations) == {"dy_schema__columns"}
+    assert not column_schema.passed
+    assert column_schema.severity == dg.AssetCheckSeverity.ERROR
 
 
-def test_the_shape_check_tabulates_every_offending_column(tmp_path: Path):
+def test_the_column_schema_check_tabulates_every_offending_column(tmp_path: Path):
     result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
-    metadata = dict(_evaluations(result)["dy_schema__dtypes"].metadata)
+    metadata = dict(_evaluations(result)["dy_schema__columns"].metadata)
     errors = metadata["dy_schema__errors"]
 
     assert isinstance(errors, dg.TableMetadataValue)
@@ -359,18 +359,18 @@ def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
 
-def test_rejected_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
+def test_invalid_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
     """A partial table must never silently replace a complete one."""
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, _mixed)
 
-    assert "Orders rejected 3 rows" in str(raised.value)
+    assert "3 rows failed Orders validation" in str(raised.value)
     assert "1 by 'amount|min'" in str(raised.value)
     assert "never discards rows on your behalf" in str(raised.value)
 
 
 def test_the_abort_names_the_quarantine_as_the_fix(tmp_path: Path):
-    """This error is the one place a user who has not read the README learns the option exists, so it names the keyword rather than gesturing at it."""
+    """This error is the one place a user who has not read the README learns the keyword exists, so it names it rather than gesturing at it."""
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, _mixed)
 
@@ -390,7 +390,7 @@ def test_the_abort_still_reports_every_rule(tmp_path: Path):
     evaluations = _evaluations(_materialize(tmp_path, _mixed, raise_on_error=False))
     failed = {name for name, e in evaluations.items() if not e.passed}
 
-    assert evaluations["dy_schema__dtypes"].passed
+    assert evaluations["dy_schema__columns"].passed
     assert failed == {
         "dy_rule__amount__min",
         "dy_rule__email__check__lowercase",
@@ -411,7 +411,7 @@ def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
     with pytest.raises(ValidationAbortError) as raised:
         _materialize(tmp_path, hopeless)
 
-    assert "Orders rejected 2 rows, 2 by 'amount|min'" in str(raised.value)
+    assert "2 rows failed Orders validation, 2 by 'amount|min'" in str(raised.value)
     assert not list(tmp_path.rglob("*.parquet"))
 
 
@@ -433,10 +433,10 @@ def _quarantined() -> pl.DataFrame:
     return mixed_orders()
 
 
-def test_the_survivors_land_and_the_rest_go_next_door(tmp_path: Path):
+def test_the_valid_rows_are_written_and_the_rest_are_quarantined(tmp_path: Path):
     """The middle case: 3 valid rows are written, 3 invalid ones are readable beside them, and downstream proceeds.
 
-    One materialization, because the quarantine is evidence of a run rather than an out (ADR-0004). The file lands anyway, beside the table, because the asset's own manager placed it (ADR-0006).
+    One materialization, because the quarantine is evidence of a run rather than a `dg.AssetOut` (ADR-0004). The file lands anyway, beside the table, because the asset's own manager placed it (ADR-0006).
     """
     result = _materialize(tmp_path, _quarantined)
 
@@ -450,11 +450,11 @@ def test_the_materialization_says_where_the_rest_went(tmp_path: Path):
     """The run's own answer, computed rather than read back off the manager: the borrowed context is not a real output, so whatever `path` or `Query` the manager emitted went nowhere (ADR-0006)."""
     metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
 
-    assert metadata["dy_quarantine_address"] == dg.MetadataValue.text(
+    assert metadata["dataframely/quarantine_address"] == dg.MetadataValue.text(
         "orders_quarantine"
     )
-    assert metadata["dy_rejected_count"] == dg.MetadataValue.int(3)
-    assert isinstance(metadata["dy_rejected_sample"], dg.TableMetadataValue)
+    assert metadata["dataframely/invalid_count"] == dg.MetadataValue.int(3)
+    assert isinstance(metadata["dataframely/invalid_sample"], dg.TableMetadataValue)
 
 
 def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
@@ -472,7 +472,7 @@ def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
-    """Consent to partial data was given by declaring the out, so an invalid row is a warning rather than a failure."""
+    """Consent to partial data was given by declaring the quarantine, so an invalid row is a warning rather than a failure."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
@@ -518,7 +518,7 @@ def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
     rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
-    checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__dtypes"}
+    checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__columns"}
 
     assert quarantine.columns[: len(Orders.columns())] == list(Orders.columns())
     assert set(quarantine.columns) == set(Orders.columns()) | set(rule_columns)
@@ -536,7 +536,7 @@ def test_the_rule_columns_are_cast_from_enum_to_string(tmp_path: Path):
     assert all(quarantine.schema[name] == pl.String for name in rule_columns)
 
 
-def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
+def test_a_rule_column_says_which_rule_each_row_failed(tmp_path: Path):
     _materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
         "order_id"
@@ -551,15 +551,15 @@ def test_a_rule_column_says_which_rule_rejected_which_row(tmp_path: Path):
     assert rejected_by_min["order_id"].to_list() == ["ORD-4"]
 
 
-def test_the_rejected_count_rides_beside_the_row_count(tmp_path: Path):
-    """Both numbers on one materialization, because there is one materialization. `dagster/row_count` counts what was written and `dy_rejected_count` counts what was not, so neither can be mistaken for the other."""
+def test_the_invalid_count_rides_beside_the_row_count(tmp_path: Path):
+    """Both numbers on one materialization, because there is one materialization. `dagster/row_count` counts what was written and `dataframely/invalid_count` counts what was not, so neither can be mistaken for the other."""
     metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
 
     assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
-    assert metadata["dy_rejected_count"] == dg.MetadataValue.int(3)
+    assert metadata["dataframely/invalid_count"] == dg.MetadataValue.int(3)
 
 
-def test_the_materialization_tabulates_the_rules_that_rejected_together(tmp_path: Path):
+def test_the_materialization_tabulates_the_rules_that_failed_together(tmp_path: Path):
     """One broken upstream field tripping three rules at once is one row here, not three unrelated counts."""
 
     @dy_asset(Orders, name="orders", quarantine=True)
@@ -567,7 +567,7 @@ def test_the_materialization_tabulates_the_rules_that_rejected_together(tmp_path
         return cooccurring_orders()
 
     metadata = _materialized(_materialize(tmp_path, cooccurring))
-    cooccurrence = metadata[_GOOD_KEY]["dy_rejected_rules"]
+    cooccurrence = metadata[_GOOD_KEY]["dataframely/invalid_by_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -581,7 +581,7 @@ def test_the_materialization_tabulates_the_rules_that_rejected_together(tmp_path
     ]
 
 
-def test_the_rejected_rules_table_leads_with_the_set_that_broke_the_most_rows(
+def test_the_invalid_by_rules_table_leads_with_the_set_that_broke_the_most_rows(
     tmp_path: Path,
 ):
     """`cooccurrence_counts()` groups without `maintain_order`, so what it hands over is in no order at all. The same frame twice emits these rows differently, and two runs of the same data then diff as though something changed.
@@ -602,7 +602,7 @@ def test_the_rejected_rules_table_leads_with_the_set_that_broke_the_most_rows(
         return pl.concat([mixed_orders(), duplicate_break])
 
     metadata = _materialized(_materialize(tmp_path, repeated))
-    cooccurrence = metadata[_GOOD_KEY]["dy_rejected_rules"]
+    cooccurrence = metadata[_GOOD_KEY]["dataframely/invalid_by_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -664,7 +664,7 @@ def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
     with pytest.raises(NothingSurvivedError) as raised:
         _materialize(tmp_path, _nothing_survived)
 
-    assert "Orders rejected all 2 rows" in str(raised.value)
+    assert "All 2 rows failed Orders validation" in str(raised.value)
     assert "2 by 'amount|min'" in str(raised.value)
     assert "orders_quarantine" in str(raised.value)
 
@@ -675,7 +675,7 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     evaluations = _evaluations(result)
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
-    assert evaluations["dy_schema__dtypes"].passed
+    assert evaluations["dy_schema__columns"].passed
     assert rules
     assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
     assert (
@@ -770,7 +770,7 @@ _EXITS = [
     pytest.param(mixed_orders, False, id="no quarantine"),
     pytest.param(mixed_orders, True, id="some survived"),
     pytest.param(hopeless_orders, True, id="nothing survived"),
-    pytest.param(wrong_dtype_orders, False, id="shape"),
+    pytest.param(wrong_dtype_orders, False, id="column_schema"),
 ]
 
 
@@ -801,13 +801,15 @@ def _packaged(name: str) -> bool:
 
     The IO manager writes to the same mapping, and what it puts there is neither this package's nor stable between two runs: a path names the directory one run wrote to, and `dagster-polars`' own sample reads rows back off disk in whatever order the file gives them. Whitelisted rather than blacklisted, so a manager that grows a key does not quietly rejoin the comparison.
     """
-    return name in {"dagster/row_count", "sample"} or name.startswith(("stats/", "dy_"))
+    return name in {"dagster/row_count", "dataframely/valid_sample"} or name.startswith(
+        ("dataframely/valid_stats/", "dy_")
+    )
 
 
 def _reported(result: dg.ExecuteInProcessResult) -> object:
     """Everything the package itself told Dagster, in one comparable value.
 
-    Nothing the package emits is normalised, `dy_rejected_rules` included: every table it builds is ordered by construction, so two runs of the same rows are equal value for value.
+    Nothing the package emits is normalised, `dataframely/invalid_by_rules` included: every table it builds is ordered by construction, so two runs of the same rows are equal value for value.
     """
     return (
         {
@@ -823,9 +825,9 @@ def _reported(result: dg.ExecuteInProcessResult) -> object:
     )
 
 
-def _written(root: Path) -> dict[str, pl.DataFrame]:
+def _written(directory: Path) -> dict[str, pl.DataFrame]:
     """Every table a run left on disk, keyed by file name."""
-    return {path.name: pl.read_parquet(path) for path in root.rglob("*.parquet")}
+    return {path.name: pl.read_parquet(path) for path in directory.rglob("*.parquet")}
 
 
 @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
@@ -834,7 +836,7 @@ def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
 ):
     """The staging file moves where the data is materialized, not what happens to it afterwards.
 
-    Asserted at every exit and over everything the package emits: whether the table materialized, the row counts, the statistics, the samples, the rejection keys, every check with its severity and metadata, and the bytes on disk.
+    Asserted at every exit and over everything the package emits: whether the table materialized, the row counts, the statistics, the samples, the invalid-row keys, every check with its severity and metadata, and the bytes on disk.
     """
     eager, lazy = _both_ways(frame, quarantine)
 
@@ -849,7 +851,7 @@ def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
 
 
 @pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
-def test_the_landing_is_removed_whichever_exit_the_run_takes(
+def test_the_staging_file_is_removed_whichever_exit_the_run_takes(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
     """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
@@ -862,7 +864,7 @@ def test_the_landing_is_removed_whichever_exit_the_run_takes(
     assert list(staging.iterdir()) == []
 
 
-def test_the_landing_sinks_with_the_streaming_engine(
+def test_the_staging_file_is_written_with_the_streaming_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The one clause of this design with no observable consequence, and the one the whole argument rests on.
@@ -885,7 +887,7 @@ def test_the_landing_sinks_with_the_streaming_engine(
     assert set(engines) == {"streaming"}
 
 
-def test_an_eager_return_never_lands(tmp_path: Path):
+def test_an_eager_return_is_never_staged(tmp_path: Path):
     """A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
 
     Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
@@ -911,10 +913,10 @@ def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
     assert str(absent) in str(raised.value)
 
 
-def test_the_temp_dir_environment_variable_reaches_the_landing(
+def test_the_temp_dir_environment_variable_reaches_the_staging_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style tier, asserted through a materialization rather than through `resolve`. The decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
+    """The house-style source, asserted through a materialization rather than through `resolve`. The decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
     absent = tmp_path / "absent"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
     _, lazy = _both_ways(clean_orders, quarantine=False)
@@ -925,16 +927,16 @@ def test_the_temp_dir_environment_variable_reaches_the_landing(
     assert str(absent) in str(raised.value)
 
 
-def test_the_shape_check_runs_before_the_landing(tmp_path: Path):
-    """Resolving a plan's columns and dtypes costs nothing, so a wrong-shaped frame is refused before a single row is streamed.
+def test_the_column_schema_check_runs_before_staging(tmp_path: Path):
+    """Resolving a plan's columns and dtypes costs nothing, so a frame whose columns do not match is refused before a single row is streamed.
 
-    Asserted through a staging file that cannot work: the shape error is what arrives, so nothing ever tried to write there.
+    Asserted through a staging file that cannot work: the column-schema error is what arrives, so nothing ever tried to write there.
     """
     _, lazy = _both_ways(
         wrong_dtype_orders, quarantine=False, temp_dir=str(tmp_path / "absent")
     )
 
-    with pytest.raises(SchemaShapeError):
+    with pytest.raises(ColumnSchemaError):
         _materialize(tmp_path / "store", lazy)
 
 
@@ -965,7 +967,7 @@ def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: P
     assert all(
         e.severity == dg.AssetCheckSeverity.WARN
         for name, e in evaluations.items()
-        if name != "dy_schema__dtypes"
+        if name != "dy_schema__columns"
     )
 
 
@@ -1000,7 +1002,7 @@ def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path)
     evaluations = _evaluations(_materialize(tmp_path, _by_schema))
     members = _members(evaluations["dy_schema__rules"])
 
-    assert set(evaluations) == {"dy_schema__dtypes", "dy_schema__rules"}
+    assert set(evaluations) == {"dy_schema__columns", "dy_schema__rules"}
     assert len(members) == len(Orders._validation_rules(with_cast=False))
     assert {rule: count for rule, count in members.items() if count} == {
         "amount|min": 1,
@@ -1108,9 +1110,9 @@ class TestExitSelection:
     def _rules(cls, yielded: _Yielded) -> list[dg.AssetCheckResult]:
         """The rule checks alone.
 
-        The shape check is dropped because it is not a rule: it is built without a severity, so it keeps Dagster's default rather than taking the one the run's outcome derives.
+        The column-schema check is dropped because it is not a rule: it is built without a severity, so it keeps Dagster's default rather than taking the one the run's outcome derives.
         """
-        return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__dtypes"]
+        return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__columns"]
 
     def test_a_clean_frame_writes_the_valid_table_and_nothing_else(self):
         yielded, written, error = self._drained(clean_orders(), quarantine=False)
@@ -1127,21 +1129,21 @@ class TestExitSelection:
         assert self._tables(yielded) == [self.VALID]
         assert written == []
 
-    def test_a_clean_frame_says_nothing_about_rejection(self):
-        """The four keys are absent rather than zero. A run that held nothing back has nothing to report, and `dy_rejected_count: 0` would read as a claim about a quarantine that does not exist."""
+    def test_a_clean_frame_says_nothing_about_invalid_rows(self):
+        """The four keys are absent rather than zero. A run that held nothing back has nothing to report, and `dataframely/invalid_count: 0` would read as a claim about a quarantine that does not exist."""
         yielded, _, _ = self._drained(clean_orders(), quarantine=True)
 
         assert not [key for key in self._metadata(yielded) if key.startswith("dy_")]
 
-    def test_a_wrong_shape_reports_the_shape_check_and_writes_nothing(self):
+    def test_a_wrong_column_schema_reports_the_check_and_writes_nothing(self):
         yielded, written, error = self._drained(wrong_dtype_orders(), quarantine=True)
 
-        assert isinstance(error, SchemaShapeError)
+        assert isinstance(error, ColumnSchemaError)
         assert self._tables(yielded) == []
         assert written == []
-        assert [c.check_name for c in self._checks(yielded)] == ["dy_schema__dtypes"]
+        assert [c.check_name for c in self._checks(yielded)] == ["dy_schema__columns"]
 
-    def test_rejected_rows_with_no_writer_write_nothing_but_still_report(self):
+    def test_invalid_rows_with_no_writer_write_nothing_but_still_report(self):
         yielded, written, error = self._drained(mixed_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
@@ -1149,7 +1151,7 @@ class TestExitSelection:
         assert written == []
         assert any(not c.passed for c in self._checks(yielded))
 
-    def test_rejected_rows_with_a_writer_write_the_table_and_the_invalid_rows(self):
+    def test_invalid_rows_with_a_writer_write_the_table_and_the_quarantine(self):
         yielded, written, error = self._drained(mixed_orders(), quarantine=True)
         (invalid,) = written
 
@@ -1158,20 +1160,22 @@ class TestExitSelection:
         assert len(invalid) == 3
         assert "dy_rule__amount__min" in invalid.columns
 
-    def test_the_partial_exit_reports_the_rejection_on_the_materialization(self):
+    def test_the_partial_exit_reports_the_invalid_rows_on_the_materialization(self):
         """Where a reader is already looking. The rows went somewhere only the writer knows, so the address is the whole of what the run can say about the place."""
         yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
         metadata = self._metadata(yielded)
 
-        assert metadata["dy_quarantine_address"] == self.ADDRESS
-        assert metadata["dy_rejected_count"] == 3
-        assert isinstance(metadata["dy_rejected_rules"], dg.TableMetadataValue)
-        assert isinstance(metadata["dy_rejected_sample"], dg.TableMetadataValue)
+        assert metadata["dataframely/quarantine_address"] == self.ADDRESS
+        assert metadata["dataframely/invalid_count"] == 3
+        assert isinstance(
+            metadata["dataframely/invalid_by_rules"], dg.TableMetadataValue
+        )
+        assert isinstance(metadata["dataframely/invalid_sample"], dg.TableMetadataValue)
 
-    def test_the_rejected_sample_is_bounded_by_the_row_sample_setting(self):
+    def test_the_invalid_sample_is_bounded_by_the_row_sample_setting(self):
         """One number governs both samples, so consenting to real rows in the event log is one decision."""
         yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
-        sample = self._metadata(yielded)["dy_rejected_sample"]
+        sample = self._metadata(yielded)["dataframely/invalid_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
         bounded = process(
@@ -1182,14 +1186,14 @@ class TestExitSelection:
             row_sample=1,
         )
         (materialization,) = [r for r in bounded if isinstance(r, dg.MaterializeResult)]
-        narrowed = (materialization.metadata or {})["dy_rejected_sample"]
+        narrowed = (materialization.metadata or {})["dataframely/invalid_sample"]
         assert isinstance(narrowed, dg.TableMetadataValue)
 
         assert len(sample.records) == 3
         assert len(narrowed.records) == 1
 
     def test_nothing_surviving_writes_the_rows_and_yields_no_table(self):
-        """The rows are all written, but the valid output is skipped rather than materialized empty, so a last-known-good table survives."""
+        """The rows are all written, but the valid rows are skipped rather than materialized empty, so a last-known-good table survives."""
         yielded, written, error = self._drained(hopeless_orders(), quarantine=True)
         (invalid,) = written
 
@@ -1207,7 +1211,7 @@ class TestExitSelection:
 
         assert checks
         assert all(
-            (c.metadata or {})["dy_quarantine_address"]
+            (c.metadata or {})["dataframely/quarantine_address"]
             == dg.MetadataValue.text(self.ADDRESS)
             for c in checks
         )
@@ -1218,7 +1222,7 @@ class TestExitSelection:
         assert self.ADDRESS in str(error)
 
     def test_nothing_surviving_without_a_writer_aborts_instead(self):
-        """A quarantine splits three exits into five; without one this is the same abort as any other rejection."""
+        """A quarantine splits three exits into five; without one this is the same abort as any other failing row."""
         yielded, written, error = self._drained(hopeless_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
@@ -1243,7 +1247,7 @@ class TestExitSelection:
         assert self._checks(yielded)
 
     def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
-        """The same rejected rows warn when they have somewhere to go and error when they do not."""
+        """The same invalid rows warn when they have somewhere to go and error when they do not."""
         warned, _, _ = self._drained(mixed_orders(), quarantine=True)
         errored, _, _ = self._drained(mixed_orders(), quarantine=False)
 
@@ -1255,7 +1259,7 @@ class TestExitSelection:
     # --- the sixth exit: no source data ---
     @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
     def test_a_skip_writes_no_table_and_raises_nothing(self, quarantine: bool):
-        """The exit the asset's shape does not decide. A quarantine changes what an invalid row costs, and a skip has no rows to cost anything."""
+        """The exit the asset's declaration does not decide. A quarantine changes what an invalid row costs, and a skip has no rows to cost anything."""
         yielded, written, error = self._drained(None, quarantine=quarantine)
 
         assert error is None

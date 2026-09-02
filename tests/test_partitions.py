@@ -119,15 +119,15 @@ def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
 
 
 # --- a partition whose frame drifts ---
-def test_a_drifting_partition_aborts_at_the_shape_check_before_any_row_check_reports(
+def test_a_drifting_partition_aborts_at_the_column_schema_check_before_any_row_check_reports(
     tmp_path: Path,
 ):
     result = _materialize(tmp_path, "wrong", raise_on_error=False)
     evaluations = _evaluations(result)
 
     assert not result.success
-    assert set(evaluations) == {"dy_schema__dtypes"}
-    assert not evaluations["dy_schema__dtypes"].passed
+    assert set(evaluations) == {"dy_schema__columns"}
+    assert not evaluations["dy_schema__columns"].passed
     assert not result.get_asset_materialization_events()
 
 
@@ -157,7 +157,7 @@ def test_a_drifting_partition_leaves_every_other_partition_alone(tmp_path: Path)
                 "dy_rule__paid_orders_have_amount",
             },
         ),
-        ("wrong", {"dy_schema__dtypes"}),
+        ("wrong", {"dy_schema__columns"}),
     ],
 )
 def test_every_partition_reports_its_own_checks_and_names_no_partition(

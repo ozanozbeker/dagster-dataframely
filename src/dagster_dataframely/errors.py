@@ -1,6 +1,6 @@
 """The package's exception family, all subclassing `DagsterDataframelyError` so they can be caught together.
 
-**The one module in this package with a public name.** Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root would be eleven of its twenty-four: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move. Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
+**The one module in this package with a public name.** Every other module is underscore-private so the file tree stays free to change. Eleven error names in the package's root namespace would be eleven of its twenty-six: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move. Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
 
 `errors` rather than `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
 
@@ -12,14 +12,14 @@ from collections.abc import Mapping, Sequence
 __all__ = [
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
+    "ColumnSchemaError",
     "DagsterDataframelyError",
     "InvalidSettingError",
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
     "NothingSurvivedError",
-    "QuarantineRootError",
+    "QuarantineDirError",
     "ReservedColumnError",
-    "SchemaShapeError",
     "ValidationAbortError",
 ]
 
@@ -31,7 +31,7 @@ class DagsterDataframelyError(Exception):
 class InvalidSettingError(DagsterDataframelyError):
     """A setting resolved to a value outside its vocabulary.
 
-    Raised on resolve, from whichever tier supplied the value, so a typo is a failure at the place it was written rather than a silent misconfiguration everywhere downstream.
+    Raised on resolve, from whichever source supplied the value, so a typo is a failure at the place it was written rather than a silent misconfiguration everywhere downstream.
     """
 
     def __init__(
@@ -39,20 +39,20 @@ class InvalidSettingError(DagsterDataframelyError):
         setting: str,
         value: str,
         allowed: Sequence[str] | str,
-        tier: str,
+        source: str,
         env_var: str,
     ) -> None:
-        """Name the setting, what it got, where that came from, and every tier it could have come from.
+        """Name the setting, what it got, where that came from, and every source it could have come from.
 
         Parameters
         ----------
         setting
             The setting's name, which is also the argument's.
         value
-            The value that was rejected.
+            The value that was refused.
         allowed
             The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because printing every value it accepts cannot be done.
-        tier
+        source
             Where this value came from, worded as a phrase.
         env_var
             The setting's environment variable.
@@ -60,10 +60,10 @@ class InvalidSettingError(DagsterDataframelyError):
         vocabulary: str = (
             allowed
             if isinstance(allowed, str)
-            else ", ".join(f"'{option}'" for option in allowed)
+            else ", ".join(f"'{allowed_value}'" for allowed_value in allowed)
         )
         super().__init__(
-            f"Setting `{setting}` got '{value}' from {tier}. Allowed values are {vocabulary}. It resolves in three tiers, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {vocabulary}. It resolves in three, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
         )
 
 
@@ -141,7 +141,7 @@ class CollectionNotSupportedError(DagsterDataframelyError):
 class MaterializeResultValueError(DagsterDataframelyError):
     """A returned `dg.MaterializeResult` carries no frame on `value`.
 
-    Raised before the shape check, because there is nothing to check. The frame is what this package validates, filters and writes, so a result without one describes a materialization the asset never made.
+    Raised before the column-schema check, because there is nothing to check. The frame is what this package validates, filters and writes, so a result without one describes a materialization the asset never made.
     """
 
     def __init__(self, asset: str) -> None:
@@ -164,7 +164,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
 class MaterializeResultFieldError(DagsterDataframelyError):
     """A returned `dg.MaterializeResult` sets a field the decorator owns.
 
-    Raised before the shape check. Both fields are decided by the declaration rather than by the decorated function, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
+    Raised before the column-schema check. Both fields are decided by the declaration rather than by the decorated function, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
     """
 
     def __init__(self, asset: str, field: str) -> None:
@@ -182,7 +182,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
         )
 
 
-class SchemaShapeError(DagsterDataframelyError):
+class ColumnSchemaError(DagsterDataframelyError):
     """A frame arrived with wrong dtypes or missing columns.
 
     A pipeline defect rather than a data defect, so the whole asset aborts: no rows are filtered and nothing is written.
@@ -214,63 +214,67 @@ def _culprits(counts: Mapping[str, int]) -> str:
 
 
 class ValidationAbortError(DagsterDataframelyError):
-    """Rows were rejected and no quarantine is declared, so the asset writes nothing.
+    """Rows failed validation and no quarantine is declared, so the asset writes nothing.
 
     Without somewhere to route invalid rows, every row has to be valid. Writing the survivors and dropping the rest is the failure this package exists to make visible, so configuration cannot reach it. A drop is a line the engineer writes in the asset body, the way a cast is.
     """
 
     def __init__(
-        self, schema_name: str, rejected: int, counts: Mapping[str, int]
+        self, schema_name: str, invalid_count: int, counts: Mapping[str, int]
     ) -> None:
         """State the damage per rule, and the three fixes.
 
-        Naming `quarantine=` makes this error the one place a user who has not read the README learns the option exists. It could only be named once the decorator accepted the keyword (#19). Before that it would have sent the reader to a `TypeError`.
+        Naming `quarantine=` makes this error the one place a user who has not read the README learns the keyword exists. It could only be named once the decorator accepted the keyword (#19). Before that it would have sent the reader to a `TypeError`.
 
         Parameters
         ----------
         schema_name
-            The schema that rejected the rows.
-        rejected
-            How many rows were rejected.
+            The schema the rows failed.
+        invalid_count
+            How many rows failed at least one rule.
         counts
-            Failure count per rule, for the rules that rejected anything. The counts can sum past `rejected`, because one row can break several rules.
+            Failure count per rule, for the rules anything failed. The counts can sum past `invalid_count`, because one row can break several rules.
         """
-        plural = "" if rejected == 1 else "s"
+        plural = "" if invalid_count == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected {rejected} row{plural}, {_culprits(counts)}. Nothing was written, so the last-known-good table survives. Fix the rows upstream, keep them with `quarantine=True`, or drop them deliberately in the asset body. This package never discards rows on your behalf."
+            f"{invalid_count} row{plural} failed {schema_name} validation, {_culprits(counts)}. Nothing was written, so the last-known-good table survives. Fix the rows upstream, keep them with `quarantine=True`, or drop them deliberately in the asset body. This package never discards rows on your behalf."
         )
 
 
 class NothingSurvivedError(DagsterDataframelyError):
-    """Every row was rejected, so only the quarantine was written.
+    """Every row failed validation, so only the quarantine was written.
 
-    The valid output is skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
+    The valid rows are skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
     """
 
     def __init__(
-        self, schema_name: str, rejected: int, counts: Mapping[str, int], address: str
+        self,
+        schema_name: str,
+        invalid_count: int,
+        counts: Mapping[str, int],
+        address: str,
     ) -> None:
         """State the damage per rule and where every row went.
 
         Parameters
         ----------
         schema_name
-            The schema that rejected the rows.
-        rejected
-            How many rows were rejected, which is all of them.
+            The schema the rows failed.
+        invalid_count
+            How many rows failed at least one rule, which is all of them.
         counts
-            Failure count per rule, for the rules that rejected anything.
+            Failure count per rule, for the rules anything failed.
         address
             Where the writer put the rows, rendered, so the message says where to look. An asset key under delegation and a file path under the fallback, because the answer can be a database table.
         """
-        plural = "" if rejected == 1 else "s"
+        plural = "" if invalid_count == 1 else "s"
         super().__init__(
-            f"{schema_name} rejected all {rejected} row{plural}, {_culprits(counts)}. Every row is in {address} with its per-rule outcome, and the valid output was skipped rather than written empty, so the last-known-good table survives."
+            f"All {invalid_count} row{plural} failed {schema_name} validation, {_culprits(counts)}. Every row is in {address} with its per-rule outcome, and the valid rows were skipped rather than written empty, so the last-known-good table survives."
         )
 
 
-class QuarantineRootError(DagsterDataframelyError):
-    """A quarantined asset reached the fallback writer with no root to write under.
+class QuarantineDirError(DagsterDataframelyError):
+    """A quarantined asset reached `file_writer` with no `quarantine_dir` set.
 
     Raised at run time, and only where there is no IO manager to delegate to, which is a decorated asset called directly rather than run. A run always has one, so this cannot reach a deployment.
 

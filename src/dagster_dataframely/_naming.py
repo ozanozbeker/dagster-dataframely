@@ -15,8 +15,8 @@ from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnEr
 # Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
 RESERVED_PREFIX = "dy_"
 
-#: The shape check. Present at every granularity, always blocking.
-SHAPE_CHECK = "dy_schema__dtypes"
+#: The column-schema check. Present at every granularity, always blocking.
+COLUMN_SCHEMA_CHECK = "dy_schema__columns"
 
 #: The check the rules no single column owns report through when they are collapsed.
 #: Deliberately not `dy_col__schema`, which would collide with a user column named `schema`, and `schema` is a column somebody has.
@@ -98,7 +98,7 @@ def split_rule(rule_name: str) -> tuple[str, str] | None:
 def validation_rules(schema: type[dy.Schema]) -> dict[str, Rule]:
     """Return the schema's validation rules, keyed by rule name.
 
-    `with_cast=False` drops the `<column>|dtype` pseudo-rules. They would otherwise duplicate the shape check at a different severity and without blocking.
+    `with_cast=False` drops the `<column>|dtype` pseudo-rules. They would otherwise duplicate the column-schema check at a different severity and without blocking.
 
     Parameters
     ----------

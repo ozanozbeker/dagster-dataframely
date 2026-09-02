@@ -2,7 +2,7 @@
 
 The decorator coordinates three artifacts no single `@dg.asset` parameter accepts as a bundle: the check specs, the definition metadata, and the wrapped runtime. First-party precedent for a decorator that does this is `@dbt_assets`.
 
-**One `dg.asset` call, not a `multi_asset`.** The quarantine stopped being an out in ADR-0004, so there is nothing for a second out to hold and nothing for `internal_asset_deps` to wire. See ADR-0005 for why the decorator wraps `dg.asset` rather than stacking under it: a check spec is an op output, and no public API adds one to a finished `AssetsDefinition` or swaps its compute function.
+**One `dg.asset` call, not a `multi_asset`.** The quarantine stopped being a `dg.AssetOut` in ADR-0004, so there is nothing for a second output to hold and nothing for `internal_asset_deps` to wire. See ADR-0005 for why the decorator wraps `dg.asset` rather than stacking under it: a check spec is an op output, and no public API adds one to a finished `AssetsDefinition` or swaps its compute function.
 
 This module carries no `from __future__ import annotations`. At a 3.12 floor it would buy only unquoted forward references, while turning user-facing annotations into strings that Dagster's runtime introspection rejects. The cost is that typing-only names such as `dg.CoercibleToAssetDep` are absent at runtime, so they are spelled here with runtime-real types.
 """
@@ -46,7 +46,7 @@ from dagster_dataframely._settings import (
 )
 from dagster_dataframely.errors import (
     CollectionNotSupportedError,
-    QuarantineRootError,
+    QuarantineDirError,
 )
 
 DecoratedFn = Callable[..., DecoratedReturn]
@@ -70,13 +70,13 @@ AssetDep = (
 
 
 def _quarantine_writer(
-    context: dg.AssetExecutionContext, *, root: str | None
+    context: dg.AssetExecutionContext, *, quarantine_dir: str | None
 ) -> QuarantineWriter:
     """Choose who writes this run's invalid rows.
 
     Delegation first, always. The asset's own IO manager puts the rows wherever it puts things, which needs no configuration and cannot disagree with where the valid table went (ADR-0006).
 
-    The fallback answers the one case with no step to borrow from: direct invocation, where the asset is called rather than run. A test that wants the real placement runs the asset.
+    `file_writer` answers the one case with no step: direct invocation, where the asset is called rather than run. A test that wants the real placement runs the asset.
 
     **The step is asked for on its own, ahead of the writer.** There is no predicate that answers "is this a run", so the question has to be put as a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property it reads raising the same error inside a real run would silently reroute the rows to a file.
 
@@ -84,7 +84,7 @@ def _quarantine_writer(
     ----------
     context
         The executing asset's context.
-    root
+    quarantine_dir
         Where the fallback writes, from `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or `None` when the deployment named none.
 
     Returns
@@ -93,21 +93,21 @@ def _quarantine_writer(
 
     Raises
     ------
-    QuarantineRootError
-        There is no manager to delegate to and no root to fall back on.
+    QuarantineDirError
+        There is no manager to delegate to and no quarantine_dir to fall back on.
     """
     try:
         context.get_step_execution_context()
     except DagsterInvalidPropertyError:
-        # Not a run, so there is no output context to borrow and no manager behind it.
+        # Not a run, so there is no step, no output context and no manager behind it.
         pass
     else:
         return delegating_writer(context)
-    if root is None:
-        raise QuarantineRootError(context.asset_key.to_user_string())
+    if quarantine_dir is None:
+        raise QuarantineDirError(context.asset_key.to_user_string())
     return file_writer(
         context.asset_key,
-        root,
+        quarantine_dir,
         # Read behind the guard because `partition_key` raises on an unpartitioned asset rather than answering `None`.
         context.partition_key if context.has_partition_key else None,
     )
@@ -209,14 +209,14 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
 
     A returned result is the route this package prefers, and the context is the other one. `context.add_asset_metadata({...})` reaches the same materialization. That route also overrides this package's own metadata keys, where a returned result loses to them, and it cannot be reached by calling the asset.
 
-    **The asset's declared shape is the failure policy.** There is no lenient mode and no strict flag, deliberately. `quarantine=True` *is* the consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares. The skip sits outside this. It says there were no rows to have a policy about.
+    **The asset's declaration is the failure policy.** There is no lenient mode and no strict flag, deliberately. `quarantine=True` *is* the consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares. The skip sits outside this. It says there were no rows to have a policy about.
 
-    With no quarantine, every row has to be valid. A run that rejects even one row fails and writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
+    With no quarantine, every row has to be valid. A run with even one failing row writes nothing, leaving the last-known-good table in place. To drop rows anyway, filter in the asset body, where the drop is a line you wrote:
 
         valid, _ = Orders.filter(raw_orders)
         return valid
 
-    With a quarantine, the invalid rows are handed to the asset's own IO manager under the key `<name>_quarantine`, carrying the original columns plus a rule column for every rule. They land wherever that manager puts things: a parquet file beside the table under `dagster-polars`, a second table beside it under `dagster-duckdb-polars`. The checks then fail at `WARN` and the run stays green, so downstream proceeds on the data that is fine. The materialization records where the rows went, how many there were, which rules rejected them together and a sample. A clean run writes no quarantine, and a run where *nothing* survived writes the quarantine and skips the asset rather than emptying it.
+    With a quarantine, the invalid rows are handed to the asset's own IO manager under the key `<name>_quarantine`, carrying the original columns plus a rule column for every rule. They land wherever that manager puts things: a parquet file beside the table under `dagster-polars`, a second table beside it under `dagster-duckdb-polars`. The checks then fail at `WARN` and the run stays green, so downstream proceeds on the data that is fine. The materialization records where the rows went, how many there were, which sets of rules they failed together and a sample. A clean run writes no quarantine, and a run where *nothing* survived writes the quarantine and skips the asset rather than emptying it.
 
     Every parameter is declared explicitly with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `check_specs` is a parameter this decorator owns and is simply absent, so it cannot be contested.
 
@@ -231,11 +231,11 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     multi_column_rules
         Where the rules no single column owns land at `column` granularity: grouped into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES`, then the package default `schema`.
     max_failure_samples
-        How many of the rows a rule rejected reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted. The bound is this package's own, and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule that rejected anything. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
+        How many of the rows that failed a rule reach that rule's check metadata, under `dy_failed_sample`. What a red check raises and the counts cannot answer, so it is opt-out and `0` is what turns it off. **These are real rows in the Dagster event log**, which is shared, exported and not redacted. The bound is this package's own, and `dy.Config.set_max_failure_examples` does not touch it. Bounded per rule, so a collapsed check shows this many for each rule anything failed. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then the package default `5`.
     statistics
         Whether the materialization carries `skimr`-style statistics for what it wrote: one table per dtype family present. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. The quarantine carries none at any value, because nothing consumes it. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
     row_sample
-        How many rows reach the materialization metadata, of what was written under `sample` and of what was held back under `dy_rejected_sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. One number for both, so consenting to a sample is one decision. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
+        How many rows reach the materialization metadata, of what was written under `dataframely/valid_sample` and of what was held back under `dataframely/invalid_sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. One number for both, so consenting to a sample is one decision. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
     temp_dir
         Where a `LazyFrame` return is staged before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the staging file goes to the system temp directory, which in a container is its ephemeral disk**, and a staged frame bigger than what the pod has spare fills it. Pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
     name
@@ -255,7 +255,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     config_schema
         Run configuration schema for the underlying op.
     required_resource_keys
-        Resources the decorated function reaches through the context. The quarantine needs none: its manager is borrowed off the step rather than read off the context's resources.
+        Resources the decorated function reaches through the context. The quarantine needs none: its manager comes off the step rather than read off the context's resources.
     resource_defs
         Resources bound to this asset specifically.
     hooks
@@ -294,7 +294,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     CollectionNotSupportedError
         `schema` is a `dy.Collection`.
     InvalidSettingError
-        A setting resolved to a value outside its vocabulary, from any tier.
+        A setting resolved to a value outside its vocabulary, from any source.
 
     Examples
     --------
@@ -394,8 +394,8 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
-                # Built before the body runs, so a deployment with nowhere to write finds out on its first run rather than on the first one that rejects a row.
-                writer = _quarantine_writer(context, root=quarantine_root)
+                # Built before the body runs, so a deployment with nowhere to write finds out on its first run rather than on the first one with a failing row.
+                writer = _quarantine_writer(context, quarantine_dir=quarantine_root)
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
                     if declares_context
@@ -424,7 +424,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
         return dg.asset(
             name=asset_name,
             key_prefix=prefix or None,
-            # The shape check, both abort paths and the skip all end the step without yielding.
+            # The column-schema check, both abort paths and the skip all end the step without yielding.
             output_required=False,
             # The package's own key is applied last, so a user cannot accidentally displace the Columns tab.
             metadata={**(metadata or {}), **schema_metadata(schema)},

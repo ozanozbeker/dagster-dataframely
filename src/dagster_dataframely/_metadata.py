@@ -61,7 +61,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
 
 def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
-    """Project the quarantine's shape onto its own Columns tab.
+    """Project the quarantine's column schema onto its own Columns tab.
 
     The schema's columns mirrored, keeping dtype, description and tags but **no constraints**. These rows are here precisely because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row in the table. The primary key above all: that is why it is stated table-level on the valid table and nowhere here. The invalid rows are exactly where a duplicate key ends up.
 
@@ -136,7 +136,7 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 
 
 def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
-    """Build the metadata a quarantine declares about its own shape.
+    """Build the metadata a quarantine declares about its own column schema.
 
     Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking.
 

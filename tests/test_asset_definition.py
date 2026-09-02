@@ -60,13 +60,13 @@ def _specs_by_name(asset: dg.AssetsDefinition) -> dict[str, dg.AssetCheckSpec]:
     return {spec.name: spec for spec in asset.check_specs}
 
 
-def test_the_door_produces_one_asset():
+def test_the_decorator_produces_one_asset():
     assert orders.keys == {dg.AssetKey(["orders"])}
     assert orders.group_names_by_key == {dg.AssetKey(["orders"]): "sales"}
 
 
 def test_the_output_is_not_required():
-    """The shape check and the abort paths both end the step without yielding the output."""
+    """The column-schema check and the abort paths both end the step without yielding the output."""
     (spec,) = orders.specs
     assert spec.skippable
 
@@ -331,19 +331,19 @@ def test_there_is_one_check_per_rule_plus_the_gate():
 
     Also the whole of "no rule value appears in any check name": a name is the rule's own name rewritten and nothing else, so tightening `min` leaves the check where it was rather than orphaning its history.
     """
-    expected = {"dy_schema__dtypes"} | {
+    expected = {"dy_schema__columns"} | {
         f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES
     }
 
     assert set(_specs_by_name(orders)) == expected
 
 
-def test_only_the_shape_check_is_blocking():
+def test_only_the_column_schema_check_is_blocking():
     specs = _specs_by_name(orders)
 
-    assert specs["dy_schema__dtypes"].blocking
+    assert specs["dy_schema__columns"].blocking
     assert not any(
-        spec.blocking for name, spec in specs.items() if name != "dy_schema__dtypes"
+        spec.blocking for name, spec in specs.items() if name != "dy_schema__columns"
     )
 
 
@@ -386,8 +386,8 @@ def test_no_check_description_is_blank():
     assert all(spec.description for spec in orders.check_specs)
 
 
-def test_the_shape_check_names_the_schema():
-    assert _specs_by_name(orders)["dy_schema__dtypes"].description == (
+def test_the_column_schema_check_names_the_schema():
+    assert _specs_by_name(orders)["dy_schema__columns"].description == (
         "Columns and dtypes match Orders."
     )
 
@@ -412,7 +412,7 @@ def by_schema() -> pl.DataFrame:
 def test_column_granularity_collapses_to_one_check_per_rule_bearing_column():
     """A 40-column schema contributes around 120 checks at `rule` granularity, which is a check list nobody reads."""
     assert set(_specs_by_name(by_column)) == {
-        "dy_schema__dtypes",
+        "dy_schema__columns",
         "dy_schema__rules",
     } | {f"dy_col__{column}" for column in _RULE_BEARING_COLUMNS}
 
@@ -449,14 +449,14 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
 
     assert len(struct_checks) == 10
     assert set(_specs_by_name(collapsed)) == {
-        "dy_schema__dtypes",
+        "dy_schema__columns",
         "dy_schema__rules",
         "dy_col__address_id",
         "dy_col__address",
     }
 
 
-def test_multi_column_rules_bucket_into_the_schema_check_by_default():
+def test_multi_column_rules_collapse_into_the_schema_check_by_default():
     """They belong to no column, so at column granularity they have no rule set of their own to land in."""
     specs = _specs_by_name(by_column)
 
@@ -482,7 +482,7 @@ def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
     assert "dy_schema__rules" not in specs
 
 
-def test_the_multi_column_bucket_cannot_be_collided_with_by_a_user_column():
+def test_the_multi_column_rule_set_cannot_be_collided_with_by_a_user_column():
     """It is `dy_schema__rules` rather than `dy_col__schema` precisely because a column named `schema` is a column somebody has."""
 
     class Tables(dy.Schema):
@@ -501,12 +501,14 @@ def test_the_multi_column_bucket_cannot_be_collided_with_by_a_user_column():
 
 
 def test_schema_granularity_leaves_one_rules_check_beside_the_gate():
-    assert set(_specs_by_name(by_schema)) == {"dy_schema__dtypes", "dy_schema__rules"}
+    assert set(_specs_by_name(by_schema)) == {"dy_schema__columns", "dy_schema__rules"}
 
 
 @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
-def test_a_schema_with_no_rules_gets_the_shape_check_and_nothing_else(granularity: Any):
-    """The shape check still holds the shape. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
+def test_a_schema_with_no_rules_gets_the_column_schema_check_and_nothing_else(
+    granularity: Any,
+):
+    """The column-schema check still holds. A rules check with no rules in it would pass forever and say nothing, at any granularity."""
 
     class Blob(dy.Schema):
         payload = dy.String(nullable=True)
@@ -515,19 +517,19 @@ def test_a_schema_with_no_rules_gets_the_shape_check_and_nothing_else(granularit
     def blob() -> pl.DataFrame:
         return pl.DataFrame()
 
-    assert set(_specs_by_name(blob)) == {"dy_schema__dtypes"}
+    assert set(_specs_by_name(blob)) == {"dy_schema__columns"}
 
 
 @pytest.mark.parametrize("asset", [orders, by_column, by_schema])
-def test_the_shape_check_is_present_and_blocking_at_every_granularity(
+def test_the_column_schema_check_is_present_and_blocking_at_every_granularity(
     asset: dg.AssetsDefinition,
 ):
-    """It is not a rule, so it never joins a rule set, and a wrong-shaped frame has to stop the run whatever the check list looks like."""
+    """It is not a rule, so it never joins a rule set, and a frame whose columns do not match has to stop the run whatever the check list looks like."""
     specs = _specs_by_name(asset)
 
-    assert specs["dy_schema__dtypes"].blocking
+    assert specs["dy_schema__columns"].blocking
     assert not any(
-        spec.blocking for name, spec in specs.items() if name != "dy_schema__dtypes"
+        spec.blocking for name, spec in specs.items() if name != "dy_schema__columns"
     )
 
 
@@ -547,7 +549,7 @@ def test_a_collapsed_check_names_the_rules_it_reports_for():
     )
 
 
-def test_a_granularity_outside_the_vocabulary_raises_at_the_door():
+def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
     """Definition time, so a misconfiguration never reaches a run.
 
     The value arrives through an untyped name because the literal is already a static error, and the runtime guard is what a user without a type checker gets.
@@ -573,7 +575,10 @@ def test_the_environment_variable_sets_the_house_granularity(
     def house_style() -> pl.DataFrame:
         return pl.DataFrame()
 
-    assert set(_specs_by_name(house_style)) == {"dy_schema__dtypes", "dy_schema__rules"}
+    assert set(_specs_by_name(house_style)) == {
+        "dy_schema__columns",
+        "dy_schema__rules",
+    }
 
 
 # --- definition metadata ---
@@ -602,7 +607,7 @@ def test_the_columns_tab_is_populated_before_first_materialization():
 
 
 def test_column_metadata_becomes_tags():
-    """`Column.metadata` is stored by Dataframely and never read, so column tags are its only destination. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
+    """`Column.metadata` is stored by Dataframely and never read, so column tags are the only place they reach. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
     assert _columns()["amount"].tags == {"owner": "finance", "pii": "False"}
 
 
@@ -702,13 +707,13 @@ def test_a_nested_columns_rules_render_as_constraints_on_its_elements():
     ]
 
 
-def test_a_constraint_dagster_models_first_class_is_not_repeated_as_a_pill():
+def test_a_constraint_dagster_models_first_class_is_not_repeated():
     """`nullable` and `unique` have their own fields on `TableColumnConstraints`, so a constraint saying the same thing would double every column's constraint list."""
     assert _columns()["quantity"].constraints.other == [">= 1"]
     assert _columns()["tracking_id"].constraints.other == []
 
 
-def test_a_constraint_left_at_its_dataframely_default_renders_no_pill():
+def test_a_constraint_left_at_its_dataframely_default_renders_nothing():
     """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the constraint could never say anything but the default and says nothing at all. The checks still exist and still report."""
     assert _measured()["ratio"].constraints.other == ["> 0.0", "< 1.0"]
     assert {"dy_rule__ratio__inf", "dy_rule__ratio__nan"} <= set(
@@ -771,7 +776,7 @@ def test_a_schema_with_no_primary_key_states_no_table_constraint():
 
 # --- the quarantine ---
 def test_a_quarantine_adds_nothing_to_the_graph():
-    """It is evidence of a run, not an out. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
+    """It is evidence of a run, not a `dg.AssetOut`. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
 
     `build_quarantine_spec` is what gives a quarantine a node, and the user declares it.
     """
@@ -964,14 +969,14 @@ _NO_DG_ASSET_COUNTERPART = {
 _NOT_ON_THE_DECORATOR = {
     "check_specs",  # decorator-owned: derived from the schema, never contested
     "key",  # decorator-owned: `key_prefix` plus `name` already say it, once
-    "output_required",  # decorator-owned: the shape check and abort paths must be able to skip
+    "output_required",  # decorator-owned: the column-schema check and abort paths must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
     "is_virtual",  # a virtual asset has no compute, so there is nothing to decorate
     "io_manager_def",  # the forwarded `resource_defs` covers it, keyed rather than positional
 }
 
 
-def test_the_door_speaks_dg_assets_vocabulary():
+def test_the_decorator_speaks_dg_assets_vocabulary():
     """`dg.asset` is both the mechanism and the vocabulary, so anything it can say about an asset is sayable here under the same name.
 
     Asserted in both directions, so the parameter list neither breaks silently nor silently lags a new Dagster feature (#15): nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is missing here without a line above saying why.
