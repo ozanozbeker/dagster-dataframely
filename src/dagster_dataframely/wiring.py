@@ -1,10 +1,10 @@
 """The parts the decorator assembles, for a `@dg.asset` you wire yourself.
 
-Reach for these when the decorator's shape is not the shape you need: a schema attached to an asset you did not declare, or a reporting arrangement the decorator does not offer. `dy_asset` calls the same functions internally, so a hand-wired asset and a decorated one report alike by construction rather than by agreement.
+Reach for these when the decorator does not fit: a schema attached to an asset you did not declare, or a reporting arrangement the decorator does not offer. `dy_asset` calls the same functions, so a hand-wired asset and a decorated one report alike by construction.
 
-**A namespace, not an implementation.** Every name is defined in a private module and re-exported here. The file tree stays free to change while the import path stays put. `__init__.py` has the same shape for the same reason.
+A namespace, not an implementation. Every name is defined in a private module and re-exported here, so the file tree can change while the import path stays put. `__init__.py` does the same for the same reason.
 
-**Its own module rather than eleven more names in the root.** The root is the happy path, and so is the decorator. Somebody who never hand-wires should not have to read past `check_specs` and `quarantine_frame` to find it. Hand-wiring is supported, not recommended, and one name in the root instead of eleven is what that distinction looks like from outside. `errors` is the other module with a public name, for the same reason.
+Its own module rather than eleven more names in the root. The root is the happy path, and so is the decorator. Someone who never hand-wires should not read past `check_specs` and `quarantine_frame` to find it. Hand-wiring is supported, not recommended, and one name in the root instead of eleven shows that distinction. `errors` is the other module with a public name, for the same reason.
 
 Examples
 --------

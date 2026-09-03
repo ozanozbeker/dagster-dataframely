@@ -1,6 +1,6 @@
-"""Definition-time behaviour of `@dy_asset`, asserted with no execution.
+"""Definition-time behaviour of `@dy_asset`, asserted without running anything.
 
-These tests assert against the `AssetsDefinition` the decorator returns. Everything a user sees before the asset has ever run is on it: the keys, the check specs, and the definition metadata that fills the Columns tab.
+Every test reads the `AssetsDefinition` the decorator returns. It carries everything a user sees before the first run: the keys, the check specs, and the definition metadata that fills the Columns tab.
 """
 
 import datetime as dt
@@ -25,7 +25,7 @@ from tests.scenario import Orders
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
-# Every rule `Orders` declares, in the order Dataframely reports them. Spelled out rather than derived so that a rule silently disappearing is a failure here.
+# Every rule `Orders` declares, in the order Dataframely reports them. Spelled out rather than derived, so a rule that silently disappears fails here.
 _RULES = [
     "paid_orders_have_amount",
     "line_numbers_are_dense",
@@ -66,13 +66,13 @@ def test_the_decorator_produces_one_asset():
 
 
 def test_the_output_is_not_required():
-    """The column-schema check and the abort paths both end the step without yielding the output."""
+    """The column-schema check and both failures that write nothing end the step without yielding the output."""
     (spec,) = orders.specs
     assert spec.skippable
 
 
 def test_a_key_prefix_carries_the_checks_with_it():
-    """The key is built once and handed to both surfaces, so the checks cannot lag it."""
+    """The key is built once and handed to both the asset and its check specs, so the checks cannot lag it."""
 
     @dy_asset(Orders, key_prefix="sales")
     def prefixed() -> pl.DataFrame:
@@ -103,7 +103,7 @@ def test_name_overrides_the_function_name():
 
 
 def test_upstream_dependencies_bind_as_ordinary_parameters():
-    """`functools.wraps` is what carries the signature through the wrapper."""
+    """`functools.wraps` carries the signature through the wrapper."""
 
     @dy_asset(Orders)
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
@@ -122,7 +122,7 @@ class _Warehouse(dg.ConfigurableResource[None]):
 
 
 def test_every_forwarded_dg_asset_parameter_reaches_the_definition():
-    """Twelve at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: one changes the asset key rather than landing unchanged, and the other cannot share an op with `backfill_policy`."""
+    """Twelve at once, so a parameter that forwards only in isolation still fails here. `name` and `pool` have their own tests: `name` changes the asset key instead of landing unchanged, and `pool` cannot share an op with `backfill_policy`."""
     partitions = dg.StaticPartitionsDefinition(["a", "b"])
     retry = dg.RetryPolicy(max_retries=2)
     backfill = dg.BackfillPolicy.single_run()
@@ -178,7 +178,7 @@ def test_pool_reaches_the_underlying_op():
 
 
 def test_the_asset_shaping_parameters_reach_the_definition():
-    """The eight that describe the table rather than the op. Same names as `@dg.asset` uses, and forwarded to it unchanged."""
+    """The eight that describe the table, not the op. Same names as `@dg.asset`, forwarded unchanged."""
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
@@ -263,7 +263,7 @@ def test_an_explicit_description_outranks_the_schema_docstring():
 
 
 def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
-    """The last source is Dagster's, not the package's. With nothing to fill the gap, the decorated function's docstring lands, exactly as it did before."""
+    """The last fallback is Dagster's, not the package's. With nothing to fill the gap, the decorated function's docstring lands as it always did."""
 
     @dy_asset(_Undocumented)
     def undocumented() -> pl.DataFrame:
@@ -288,7 +288,7 @@ def test_the_base_schemas_docstring_never_reaches_an_asset():
 
 
 def test_an_empty_description_counts_as_absent_too():
-    """The same emptiness rule on both sources. Neither can say "no description at all", because Dagster's fallback takes over the moment the package has nothing."""
+    """Both sources share one emptiness rule. Neither can say "no description at all": Dagster's fallback takes over the moment the package has nothing."""
 
     @dy_asset(_Documented, description="")
     def empty() -> pl.DataFrame:
@@ -329,7 +329,7 @@ def test_a_multi_line_schema_docstring_arrives_dedented():
 def test_there_is_one_check_per_rule_plus_the_gate():
     """Specs come off the schema, so a clean run still reports on every rule.
 
-    Also the whole of "no rule value appears in any check name": a name is the rule's own name rewritten and nothing else, so tightening `min` leaves the check where it was rather than orphaning its history.
+    This also covers "no rule value appears in any check name": a check name is the rule name rewritten and nothing else, so tightening `min` leaves the check in place rather than orphaning its history.
     """
     expected = {"dy_schema__columns"} | {
         f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES
@@ -357,7 +357,7 @@ def test_a_rules_docstring_becomes_its_check_description():
 
 
 def test_a_check_without_a_docstring_describes_the_constraint_itself():
-    """The middle rung. A check list reads flat, so the column is named: a bare `>= 0.00` says nothing about which column it bounds."""
+    """The middle fallback. A check list reads flat, so the description names the column: a bare `>= 0.00` says nothing about which column it bounds."""
     specs = _specs_by_name(orders)
 
     assert specs["dy_rule__amount__min"].description == "amount >= 0.00"
@@ -368,21 +368,21 @@ def test_a_check_without_a_docstring_describes_the_constraint_itself():
 
 
 def test_the_primary_key_check_describes_the_whole_key():
-    """It is one rule over a struct of every key column, so its description says so rather than naming one of them."""
+    """The primary key is one rule over a struct of every key column, so the description names the whole key, not one column."""
     assert _specs_by_name(orders)["dy_rule__primary_key"].description == (
         "PK: order_id, line_no"
     )
 
 
 def test_a_rule_with_neither_a_docstring_nor_a_constraint_falls_back_to_its_name():
-    """A `@dy.rule()` body is an arbitrary expression, so there is nothing structured to render and the name is all that is left."""
+    """A `@dy.rule()` body is an arbitrary expression, so nothing structured is left to render but the name."""
     assert _specs_by_name(orders)["dy_rule__line_numbers_are_dense"].description == (
         "line_numbers_are_dense"
     )
 
 
 def test_no_check_description_is_blank():
-    """The fallback's whole point: every step is reachable and the last one always holds."""
+    """Every fallback step is reachable and the last one always holds."""
     assert all(spec.description for spec in orders.check_specs)
 
 
@@ -410,7 +410,7 @@ def by_schema() -> pl.DataFrame:
 
 
 def test_column_granularity_collapses_to_one_check_per_rule_bearing_column():
-    """A 40-column schema contributes around 120 checks at `rule` granularity, which is a check list nobody reads."""
+    """A 40-column schema contributes around 120 checks at `rule` granularity. Nobody reads that list."""
     assert set(_specs_by_name(by_column)) == {
         "dy_schema__columns",
         "dy_schema__rules",
@@ -425,7 +425,7 @@ def test_a_column_carrying_no_rule_carries_no_check():
 
 
 def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
-    """Dataframely emits one `inner_<field>_nullability` rule per struct field, so a wide struct is where the check list gets unreadable fastest."""
+    """Dataframely emits one `inner_<field>_nullability` rule per struct field, so a wide struct makes the check list unreadable fastest."""
 
     class Addresses(dy.Schema):
         address_id = dy.String(primary_key=True)
@@ -465,7 +465,7 @@ def test_multi_column_rules_collapse_into_the_schema_check_by_default():
 
 
 def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
-    """The setting is for a schema whose cross-column rules are the ones worth their own history."""
+    """The setting serves a schema whose cross-column rules deserve their own history."""
 
     @dy_asset(
         Orders,
@@ -483,7 +483,7 @@ def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
 
 
 def test_the_multi_column_rule_set_cannot_be_collided_with_by_a_user_column():
-    """It is `dy_schema__rules` rather than `dy_col__schema` precisely because a column named `schema` is a column somebody has."""
+    """The name is `dy_schema__rules` rather than `dy_col__schema` because somebody has a column named `schema`."""
 
     class Tables(dy.Schema):
         table_id = dy.String(primary_key=True)
@@ -524,7 +524,7 @@ def test_a_schema_with_no_rules_gets_the_column_schema_check_and_nothing_else(
 def test_the_column_schema_check_is_present_and_blocking_at_every_granularity(
     asset: dg.AssetsDefinition,
 ):
-    """It is not a rule, so it never joins a rule set, and a frame whose columns do not match has to stop the run whatever the check list looks like."""
+    """The column-schema check is not a rule, so it never joins a rule set. A frame whose columns do not match must stop the run whatever the check list looks like."""
     specs = _specs_by_name(asset)
 
     assert specs["dy_schema__columns"].blocking
@@ -534,7 +534,7 @@ def test_the_column_schema_check_is_present_and_blocking_at_every_granularity(
 
 
 def test_a_collapsed_check_names_the_rules_it_reports_for():
-    """The description is where the collapsed detail goes: the check name says `email`, and the constraints it stands for say the rest."""
+    """The collapsed detail goes into the description: the check name says `email`, and the constraints it stands for say the rest."""
     specs = _specs_by_name(by_column)
 
     assert specs["dy_col__email"].description == (
@@ -552,7 +552,7 @@ def test_a_collapsed_check_names_the_rules_it_reports_for():
 def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
     """Definition time, so a misconfiguration never reaches a run.
 
-    The value arrives through an untyped name because the literal is already a static error, and the runtime guard is what a user without a type checker gets.
+    The value arrives through an untyped name because the literal is already a static error. The runtime guard serves a user without a type checker.
     """
     wrong: Any = "per_column"
 
@@ -568,7 +568,7 @@ def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
 def test_the_environment_variable_sets_the_house_granularity(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """One export in a code location's environment, and every asset in it collapses."""
+    """One export in a code location's environment sets the granularity for every asset in it."""
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "schema")
 
     @dy_asset(Orders, name="house_style")
@@ -583,7 +583,7 @@ def test_the_environment_variable_sets_the_house_granularity(
 
 # --- definition metadata ---
 def _catalog(asset: dg.AssetsDefinition, key: dg.AssetKey) -> dg.TableSchema:
-    """The Columns tab a data consumer opens."""
+    """Read the Columns tab a data consumer opens."""
     return asset.metadata_by_key[key][_COLUMN_SCHEMA_KEY]
 
 
@@ -607,7 +607,7 @@ def test_the_columns_tab_is_populated_before_first_materialization():
 
 
 def test_column_metadata_becomes_tags():
-    """`Column.metadata` is stored by Dataframely and never read, so column tags are the only place they reach. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
+    """Dataframely stores `Column.metadata` and never reads it, so column tags are the only place it reaches. Values are stringified because Dagster's tags are `Mapping[str, str]` and it rejects anything else at definition time."""
     assert _columns()["amount"].tags == {"owner": "finance", "pii": "False"}
 
 
@@ -624,7 +624,7 @@ def test_every_schema_column_reaches_the_catalog_in_order():
 
 
 def test_a_unique_column_says_so():
-    """`tracking_id` declares `unique=True`, which Dataframely enforces with its own rule and therefore its own check. The catalog has to agree with the check."""
+    """`tracking_id` declares `unique=True`. Dataframely enforces that with its own rule, so it has its own check, and the catalog has to agree with the check."""
     assert _columns()["tracking_id"].constraints.unique
     assert "dy_rule__tracking_id__unique" in _specs_by_name(orders)
 
@@ -637,9 +637,9 @@ def test_a_primary_key_column_never_claims_to_be_unique():
 
 # --- column constraints ---
 class Measurements(dy.Schema):
-    """The constraint shapes `Orders` has no natural column for.
+    """The constraint kinds `Orders` has no natural column for.
 
-    Local to this file rather than added to the shared scenario: none of them changes what a runtime or IO-manager test sees, and each is here only to cover one arm of the constraint renderer.
+    Local to this file rather than the shared scenario: none of them changes what a runtime or IO-manager test sees, and each covers one arm of the constraint renderer.
     """
 
     reading_at = dy.Datetime(resolution="1h")
@@ -664,7 +664,7 @@ def _measured() -> dict[str, dg.TableColumn]:
 
 
 def test_a_bound_reads_as_an_operator_rather_than_as_a_check_name():
-    """A consumer should see what the bound is, not merely that one exists."""
+    """A consumer should see what the bound is, not only that one exists."""
     assert _columns()["line_no"].constraints.other == [">= 1"]
     assert _measured()["depth"].constraints.other == [">= 0", "<= 100"]
     assert _measured()["ratio"].constraints.other[:2] == ["> 0.0", "< 1.0"]
@@ -683,14 +683,14 @@ def test_a_length_bound_states_the_unit_it_counts():
     assert _measured()["label"].constraints.other[-1] == "length >= 2 bytes"
 
 
-def test_the_remaining_constraint_shapes_render_their_value():
+def test_the_remaining_constraint_kinds_render_their_value():
     assert _columns()["order_id"].constraints.other == [r"matches ^ORD-\d+$"]
     assert _measured()["reading_at"].constraints.other == ["aligned to 1h"]
     assert _measured()["grade"].constraints.other == ["in (1, 2, 3)"]
 
 
 def test_a_named_check_renders_its_key_and_an_anonymous_one_says_it_is_one():
-    """The nudge to name a check: `custom check` is all an unnamed lambda leaves to render, and Dataframely's counter suffix is not a name anybody wrote."""
+    """An unnamed lambda leaves only `custom check` to render, and Dataframely's counter suffix is not a name anybody wrote. That is the nudge to name a check."""
     assert "lowercase" in _columns()["email"].constraints.other
     assert _columns()["note"].constraints.other == ["custom check"]
     assert _measured()["label"].constraints.other[:2] == [
@@ -700,7 +700,7 @@ def test_a_named_check_renders_its_key_and_an_anonymous_one_says_it_is_one():
 
 
 def test_a_nested_columns_rules_render_as_constraints_on_its_elements():
-    """A `List` or an `Array` runs its inner column's rules over the elements, so the renderer recurses into it rather than falling back to `inner_min` on a surface that is supposed to read as operators."""
+    """A `List` or an `Array` runs its inner column's rules over the elements, so the renderer recurses into it. Falling back to `inner_min` would break a constraint list meant to read as operators."""
     assert _measured()["corners"].constraints.other == [
         "elements not null",
         "elements >= 0",
@@ -714,7 +714,7 @@ def test_a_constraint_dagster_models_first_class_is_not_repeated():
 
 
 def test_a_constraint_left_at_its_dataframely_default_renders_nothing():
-    """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the constraint could never say anything but the default and says nothing at all. The checks still exist and still report."""
+    """`allow_inf` and `allow_nan` default to `False`, so every float column carries an `inf` and a `nan` rule nobody asked for. Setting either flag `True` removes its rule rather than changing it, so the constraint could only ever state the default. It says nothing instead. The checks still exist and still report."""
     assert _measured()["ratio"].constraints.other == ["> 0.0", "< 1.0"]
     assert {"dy_rule__ratio__inf", "dy_rule__ratio__nan"} <= set(
         _specs_by_name(measurements)
@@ -722,7 +722,7 @@ def test_a_constraint_left_at_its_dataframely_default_renders_nothing():
 
 
 def test_sibling_rules_render_in_one_voice_on_the_constraint_surface():
-    """`paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not. A docstring reaching this surface would put two sibling rules in different registers for a reason invisible from the UI, so the name is the constant here and the docstring reaches only the check description."""
+    """`paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not. A docstring on the Columns tab would put two sibling rules in different registers for a reason invisible from the UI. So the name is the constant here, and the docstring reaches only the check description."""
     assert _catalog(orders, dg.AssetKey(["orders"])).constraints.other == [
         "paid_orders_have_amount",
         "line_numbers_are_dense",
@@ -731,7 +731,7 @@ def test_sibling_rules_render_in_one_voice_on_the_constraint_surface():
 
 
 def test_the_primary_key_is_stated_once_at_table_level():
-    """Dataframely models it as one rule over a struct of every key column, and stating it once distinguishes a composite key from two independent single-column ones."""
+    """Dataframely models the key as one rule over a struct of every key column. Stating it once distinguishes a composite key from two independent single-column keys."""
     table_schema = _catalog(orders, dg.AssetKey(["orders"]))
 
     assert "PK: order_id, line_no" in table_schema.constraints.other
@@ -776,9 +776,9 @@ def test_a_schema_with_no_primary_key_states_no_table_constraint():
 
 # --- the quarantine ---
 def test_a_quarantine_adds_nothing_to_the_graph():
-    """It is evidence of a run, not a `dg.AssetOut`. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
+    """A quarantine is evidence of a run, not a `dg.AssetOut`. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
 
-    `build_quarantine_spec` is what gives a quarantine a node, and the user declares it.
+    `build_quarantine_spec` gives a quarantine a node, and the user declares it.
     """
 
     @dy_asset(Orders, quarantine=True)
@@ -797,7 +797,7 @@ def test_a_quarantine_adds_nothing_to_the_graph():
 
 
 def test_a_quarantine_needs_no_resource_declared():
-    """The manager is borrowed off the step, never read off `context.resources`. Declaring it would be validated at bind time, so every direct invocation would then have to supply a manager it has no use for."""
+    """The manager is borrowed off the step, never read off `context.resources`. Dagster validates a declared resource at bind time, so every direct invocation would have to supply a manager it never uses."""
 
     @dy_asset(Orders, quarantine=True)
     def kept() -> pl.DataFrame:
@@ -824,7 +824,7 @@ def test_a_user_column_in_the_reserved_namespace_raises():
 
 
 def test_the_reserved_column_error_reads_as_plural_for_several_columns():
-    """The message is the only thing a user sees of this error, so it agrees in number."""
+    """The message is all a user sees of this error, so it agrees in number."""
 
     class Reserved(dy.Schema):
         dy_flag = dy.Bool()
@@ -874,7 +874,7 @@ def test_a_collection_is_refused_at_the_boundary():
 
 
 def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
-    """The Collection guard exists because `dy.Collection` is the plausible wrong reach. It was deliberately not generalised into a type check on `schema=`."""
+    """The Collection guard exists because `dy.Collection` is the plausible wrong reach. Generalising it into a type check on `schema=` was rejected."""
     with pytest.raises(Exception) as raised:  # noqa: PT011 - breadth is the point
 
         @dy_asset(42)  # pyrefly: ignore[bad-argument-type]
@@ -896,7 +896,7 @@ def _shipments(prefix: str, *, quarantine: bool = False) -> dg.AssetsDefinition:
 
 
 def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
-    """An op name has to be unique across a code location, and the asset name alone is not. The prefix is the whole of what distinguishes two assets that share one.
+    """An op name has to be unique across a code location, and the asset name alone is not. Only the prefix distinguishes two assets that share a name.
 
     Asserted against a live `@dg.asset` rather than a spelled-out string, so the parity holds through an upstream change to how the identifier is built.
     """
@@ -913,7 +913,7 @@ def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
 
 @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
 def test_two_assets_sharing_a_name_under_different_prefixes_coexist(quarantine: bool):
-    """Dagster tolerates a repeated op name only where the two definitions compare equal. Two of these never do, because every check output name embeds its own asset key, so the collision was always fatal rather than sometimes."""
+    """Dagster tolerates a repeated op name only where the two definitions compare equal. Two of these never do, because every check output name embeds its own asset key. The collision was always fatal, not sometimes."""
     definitions = dg.Definitions(
         assets=[
             _shipments("alpha", quarantine=quarantine),
@@ -929,9 +929,9 @@ def test_two_assets_sharing_a_name_under_different_prefixes_coexist(quarantine: 
 
 
 def test_a_downstream_asset_binds_to_the_node_that_owns_its_key():
-    """The collision's second face, and the expensive one. In a graph of any size it surfaces later than the name clash, and it reads as a dependency wired to the wrong node.
+    """The collision's second face, and the expensive one. In a graph of any size it shows up later than the name clash, as a dependency wired to the wrong node.
 
-    `dependency_structure` is undocumented but not private, and the only place the resolved edge is readable as a node name. `graph.dependencies` holds the same edge wrapped in a `BlockingAssetChecksDependencyDefinition`, which the shape check puts there and which says nothing extra here.
+    `dependency_structure` is undocumented but not private, and the only place the resolved edge reads as a node name. `graph.dependencies` holds the same edge wrapped in a `BlockingAssetChecksDependencyDefinition`, which the column-schema check puts there and which adds nothing here.
     """
 
     @dg.asset(ins={"upstream": dg.AssetIn(key=dg.AssetKey(["beta", "shipments"]))})
@@ -952,8 +952,7 @@ def test_a_downstream_asset_binds_to_the_node_that_owns_its_key():
 
 
 # --- the decorator's own contract with dagster ---
-# The decorator-owned parameters with no `@dg.asset` counterpart at all. `key_prefix` is not
-# one of them: it is `dg.asset` vocabulary that the decorator happens to own the meaning of.
+# The decorator-owned parameters with no `@dg.asset` counterpart. `key_prefix` is not one of them: it is `dg.asset` vocabulary whose meaning the decorator owns.
 _NO_DG_ASSET_COUNTERPART = {
     "schema",
     "quarantine",
@@ -964,11 +963,11 @@ _NO_DG_ASSET_COUNTERPART = {
     "row_sample",
 }
 
-# Parameters `dg.asset` has that the decorator deliberately does not, each for a reason that is not "nobody thought about it".
+# Parameters `dg.asset` has that the decorator leaves out on purpose, each with its reason.
 _NOT_ON_THE_DECORATOR = {
     "check_specs",  # decorator-owned: derived from the schema, never contested
     "key",  # decorator-owned: `key_prefix` plus `name` already say it, once
-    "output_required",  # decorator-owned: the column-schema check and abort paths must be able to skip
+    "output_required",  # decorator-owned: the column-schema check and the failures that write nothing must be able to skip
     "dagster_type",  # ruled out (#3): runs before the IO manager, no severity dial
     "is_virtual",  # a virtual asset has no compute, so there is nothing to decorate
     "io_manager_def",  # the forwarded `resource_defs` covers it, keyed rather than positional
@@ -978,7 +977,7 @@ _NOT_ON_THE_DECORATOR = {
 def test_the_decorator_speaks_dg_assets_vocabulary():
     """`dg.asset` is both the mechanism and the vocabulary, so anything it can say about an asset is sayable here under the same name.
 
-    Asserted in both directions, so the parameter list neither breaks silently nor silently lags a new Dagster feature (#15): nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is missing here without a line above saying why.
+    Asserted in both directions (#15): nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is missing here without a line above saying why.
     """
     decorator = set(inspect.signature(dy_asset).parameters) - _NO_DG_ASSET_COUNTERPART
     upstream = set(inspect.signature(dg.asset).parameters) - {"compute_fn", "kwargs"}
@@ -990,7 +989,7 @@ def test_the_decorator_speaks_dg_assets_vocabulary():
 
 
 def test_the_schema_is_the_one_positional_parameter_and_is_required():
-    """It is the whole reason the decorator exists, so it reads as `@dy_asset(Orders, ...)` rather than as one keyword among thirty, and no default can make it optional."""
+    """The schema is the reason the decorator exists, so it reads as `@dy_asset(Orders, ...)` rather than as one keyword among thirty. No default can make it optional."""
     parameters = inspect.signature(dy_asset).parameters
     positional = [
         name

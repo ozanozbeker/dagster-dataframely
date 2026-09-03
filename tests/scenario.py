@@ -1,14 +1,14 @@
-"""The one `Orders` schema and the frames the whole effort runs against.
+"""The one `Orders` schema and the frames every test runs against.
 
-It covers the cases the whole effort needs: the dtypes a round trip or a metadata emission could get wrong, and the rule shapes the naming and description fallbacks have to distinguish.
+The schema covers the dtypes a round trip or a metadata emission could get wrong, and the rule kinds the naming and description fallbacks have to distinguish.
 
-Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants than as fixture indirection. `Orders` also has to be importable at class-definition time to decorate an asset.
+Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants. `Orders` also has to be importable at class-definition time to decorate an asset.
 
-`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the column-schema check loudly in every runtime test, instead of being silently rebuilt to match.
+`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the column-schema check loudly in every runtime test, instead of being rebuilt to match.
 
-`storage` is here for the same reason the frames are: every run test needs somewhere to write, and only a handful care which manager writes it. It builds `dagster-polars`' parquet manager, which ADR-0004 makes this package's recommendation, so a test that merely needs storage exercises what a user will actually run.
+`storage` builds `dagster-polars`' parquet manager, the one ADR-0004 recommends, so a test that only needs somewhere to write exercises what a user runs.
 
-`warehouse` is its opposite number, for the handful of tests that care that the manager is a database rather than a filesystem. Delegation is meant to place a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
+`warehouse` builds a database manager for the few tests that need one. Delegation places a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
 """
 
 import datetime as dt
@@ -22,12 +22,12 @@ import polars as pl
 from dagster_duckdb_polars import DuckDBPolarsIOManager
 from dagster_polars import PolarsParquetIOManager
 
-#: The database schema `warehouse` writes into, and therefore the prefix the assets under it carry. `DbIOManager` addresses a table as `<schema>.<name>`, so the two have to agree.
 WAREHOUSE_SCHEMA = "analytics"
+"""The database schema `warehouse` writes into, so also the prefix the assets under it carry. `DbIOManager` addresses a table as `<schema>.<name>`, so the two have to agree."""
 
 
 def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
-    """Build the resources a run needs when all it needs is somewhere to write.
+    """Build the resources for a run that only needs somewhere to write.
 
     Parameters
     ----------
@@ -42,11 +42,11 @@ def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
 
 
 def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
-    """Build the resources a run needs when it has to write into a database.
+    """Build the resources for a run that writes into a database.
 
-    The other of the two base classes Dagster ships. `PolarsParquetIOManager` is a `UPathIOManager` and this is a `DbIOManager`, and between them they cover nearly every first-party manager, so a quarantine that lands natively on both is not support for two integrations (ADR-0006).
+    `PolarsParquetIOManager` is a `UPathIOManager` and this is a `DbIOManager`. Between them the two base classes cover nearly every first-party manager, so a quarantine that lands natively on both is not support for two integrations (ADR-0006).
 
-    The schema is created here rather than by the manager, which assumes one exists.
+    The schema is created here because the manager assumes one exists.
 
     Parameters
     ----------
@@ -70,7 +70,7 @@ def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
 class Table(NamedTuple):
     """What a warehouse test can ask about a table without reading its values back.
 
-    Values stay in the database on purpose. `Orders` carries a `Duration`, DuckDB stores that as an INTERVAL, and Polars refuses to import one without an unstable environment variable set. The placement tests care that the table exists, holds the right rows and carries the rule columns, and the parquet tests are where the values themselves are compared.
+    Values stay in the database. `Orders` carries a `Duration`, DuckDB stores that as an INTERVAL, and Polars refuses to import one without an unstable environment variable set. The placement tests care that the table exists, holds the right rows and carries the rule columns. The parquet tests compare the values.
 
     Attributes
     ----------
@@ -96,8 +96,8 @@ def tables(tmp_path: Path) -> dict[str, Table]:
     -------
     One description per table in the warehouse schema.
     """
-    # Interpolated rather than parameterized: an identifier cannot be bound, and every
-    # value here is this file's own literal or a name DuckDB itself reported.
+    # Interpolated, not parameterized: an identifier cannot be bound, and every value
+    # here is this file's own literal or a name DuckDB reported.
     with duckdb.connect(str(tmp_path / "warehouse.duckdb")) as connection:
         columns: dict[str, list[str]] = {}
         for name, column in connection.sql(
@@ -117,15 +117,15 @@ def tables(tmp_path: Path) -> dict[str, Table]:
 class Orders(dy.Schema):
     """Customer orders, one row per order line.
 
-    Every column and rule here earns its place by being awkward somewhere:
+    Every column and rule here is awkward somewhere:
 
     - `Decimal` crashes `TableRecord` emission unless coerced (#23).
     - `Duration` has no readable Polars string form (#23).
-    - `Binary` is the one member of the string statistics family with no string form to read, so it is the one the cast has to exempt (#23).
-    - The composite primary key is the case where a per-column `unique` constraint would be false, and `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both have to be exercised.
+    - `Binary` is the one member of the string statistics family with no string form to read, so the cast has to exempt it (#23).
+    - The composite primary key is the case where a per-column `unique` constraint would be false; `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both need exercising.
     - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, so both paths of the description fallback run (#17).
     - `email` names its check and `note` leaves it anonymous, so both paths of the check-name renderer run (#20).
-    - `email` and `tags` spell `max_length` identically and mean different things by it, bytes against elements, so both paths of the constraint renderer's length unit run (#20).
+    - `email` and `tags` both spell `max_length` and mean different things by it, bytes against elements, so both paths of the constraint renderer's length unit run (#20).
     - `amount` carries free-form `metadata=` with a non-string value, the only Dataframely attribute that reaches Dagster's column tags.
     """
 
@@ -253,7 +253,7 @@ def mixed_orders() -> pl.DataFrame:
 def cooccurring_orders() -> pl.DataFrame:
     """Three valid rows and one that trips three rules at once.
 
-    The fifth frame, added by #19. The other four fail at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look exactly like a working one.
+    The fifth frame, added by #19. The other four fail at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look like a working one.
     """
     return _frame(
         [

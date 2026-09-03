@@ -64,6 +64,10 @@ _Avoid_: root, base dir, output dir
 Dataframely's own term, from `FailureInfo.details()`.
 _Avoid_: outcome column
 
+**Step**: Dagster's unit of execution, one node of the run's execution plan.
+Only a run has one, which is how the package tells a run from a direct invocation, and it carries the output context and IO manager `delegating_writer` borrows.
+_Avoid_: execution context (Dagster's, but there it names `context` itself)
+
 **Hand-wiring**: Building a `@dg.asset` out of `dd.wiring` instead of using `dy_asset`.
 _Avoid_: the kit
 
@@ -81,6 +85,9 @@ One rule at `rule` granularity, one column's rules at `column`, every rule at `s
 _Avoid_: bucket
 
 **Collapse**: Reducing several rules into a single asset check, which is what `check_granularity` decides.
+Always name what collapses: the rules collapse into checks, and a check reporting for several of them is a collapsed check.
+Bare "collapsing" leaves the reader to work out the object.
+_Avoid_: collapsing with no object, merge, group
 
 **Column constraint**: One condition a rule states, rendered for Dagster's Columns tab.
 Dagster's name, from `dg.TableColumnConstraints`.
@@ -98,3 +105,27 @@ _Avoid_: knob, option
 `dy_` for every check name, rule column and check-result metadata key: a check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, and the metadata beside it follows the name.
 `dataframely/` for every materialization metadata key, which parallels `dagster/` and has no such limit.
 Both hardcoded, never configurable.
+
+## Coinages to avoid
+
+These name nothing in Dagster, Dataframely or Polars.
+Each hides what the code does behind a word the reader has to learn first, so say what happens instead.
+
+**split**, **halves**: `Schema.filter` separates valid rows from invalid rows, and those are the words for its two results.
+The ban is on the coined noun, not the ordinary verb: "Dagster forces the split" above is fine.
+
+**exit**: name the outcome.
+No rows failed; rows failed and no quarantine is declared; no rows survived; the decorated function returned `None`.
+
+**phase**: name the step.
+The column-schema check runs, then `Schema.filter`.
+
+**surface**: name the place.
+The Columns tab, the check name, the check description.
+"Public surface" for an export list is ordinary English and stays.
+
+**shape**: banned above for column schema, and equally for a `_Setting` subclass or a kind of rule or constraint.
+
+**green**, **red**: say what happened.
+The run succeeds, the run fails, the check passes, the check fails.
+The colours are the Dagster UI's rendering of those facts, not the facts.

@@ -1,10 +1,10 @@
-"""The package's exception family, all subclassing `DagsterDataframelyError` so they can be caught together.
+"""The package's exception family. All subclass `DagsterDataframelyError`, so they can be caught together.
 
-**The one module in this package with a public name.** Every other module is underscore-private so the file tree stays free to change. Eleven error names in the package's root namespace would be eleven of its twenty-six: a namespace where what a user reaches for most is outnumbered by what they reach for when something already went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0 to finish the move. Dataframely keeps its four in `dataframely.exc`. What is given up is the freedom to rename or split this file, which is worth nothing here: a leaf that holds one class per failure has nothing to split along.
+This is the one module in the package with a public name. Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root namespace would be eleven of its twenty-six, and what a user reaches for most would be outnumbered by what they reach for after something went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0. Dataframely keeps its four in `dataframely.exc`. The cost is the freedom to rename or split this file, which is worth nothing: a leaf holding one class per failure has nothing to split along.
 
-`errors` rather than `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
+`errors`, not `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
 
-Every message names the schema, the culprit and the fix, because the message is the whole of what a user sees. It carries no colon: Python already prints `ModuleError: ` ahead of it, and a second colon in the first clause reads as a stutter. Each error takes its culprits as data and builds its own message. None of them knows how the culprits were found.
+Every message names the schema, the culprit and the fix, because the message is all a user sees. It carries no colon: Python already prints `ModuleError: ` ahead of it, and a second colon in the first clause reads as a stutter. Each error takes its culprits as data and builds its own message. None knows how the culprits were found.
 """
 
 from collections.abc import Mapping, Sequence
@@ -31,7 +31,7 @@ class DagsterDataframelyError(Exception):
 class InvalidSettingError(DagsterDataframelyError):
     """A setting resolved to a value outside its vocabulary.
 
-    Raised on resolve, from whichever source supplied the value, so a typo is a failure at the place it was written rather than a silent misconfiguration everywhere downstream.
+    Raised on resolve, from whichever source supplied the value, so a typo fails where it was written instead of misconfiguring everything downstream.
     """
 
     def __init__(
@@ -51,7 +51,7 @@ class InvalidSettingError(DagsterDataframelyError):
         value
             The value that was refused.
         allowed
-            The setting's whole vocabulary. A closed one arrives as its own members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because printing every value it accepts cannot be done.
+            The setting's whole vocabulary. A closed one arrives as its members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because every value it accepts cannot be printed.
         source
             Where this value came from, worded as a phrase.
         env_var
@@ -70,7 +70,7 @@ class InvalidSettingError(DagsterDataframelyError):
 class ReservedColumnError(DagsterDataframelyError):
     """A user column sits inside the reserved `dy_` namespace.
 
-    Raised at definition time. Left to runtime, the collision would surface as a check name that quietly means two different things.
+    Raised at definition time. Left to runtime, the collision would appear as a check name that means two different things.
     """
 
     def __init__(self, schema_name: str, columns: list[str], prefix: str) -> None:
@@ -97,7 +97,7 @@ class ReservedColumnError(DagsterDataframelyError):
 class CheckNameCollisionError(DagsterDataframelyError):
     """Two rules rewrite to the same asset-check name.
 
-    Raised at definition time, ahead of Dagster's own `Duplicate check specs`, which names the collision but not the rules that caused it.
+    Raised at definition time, ahead of Dagster's own `Duplicate check specs`, which names the collision but not the rules behind it.
     """
 
     def __init__(self, schema_name: str, first: str, second: str, name: str) -> None:
@@ -122,7 +122,7 @@ class CheckNameCollisionError(DagsterDataframelyError):
 class CollectionNotSupportedError(DagsterDataframelyError):
     """`schema=` received a `dy.Collection`.
 
-    Raised at decoration time. The guard exists because a Collection is real, adjacent, and the most plausible wrong thing a Dataframely user reaches for. It is deliberately not generalised into a type check on `schema=`.
+    Raised at decoration time. The guard exists because a Collection is real, adjacent, and the most plausible wrong thing a Dataframely user reaches for. It is not generalised into a type check on `schema=`.
     """
 
     def __init__(self, collection_name: str) -> None:
@@ -141,15 +141,15 @@ class CollectionNotSupportedError(DagsterDataframelyError):
 class MaterializeResultValueError(DagsterDataframelyError):
     """A returned `dg.MaterializeResult` carries no frame on `value`.
 
-    Raised before the column-schema check, because there is nothing to check. The frame is what this package validates, filters and writes, so a result without one describes a materialization the asset never made.
+    Raised before the column-schema check, because there is nothing to check. This package validates, filters and writes the frame, so a result without one describes a materialization the asset never made.
     """
 
     def __init__(self, asset: str) -> None:
         """Name the asset and all three routes out.
 
-        Two readers write this, and `value=` answers neither on its own. One wanted metadata on a table this package does write, and the `context` route is what they were reaching for. Sending them to build a returned result around a frame they were not returning anyway would answer a question they did not ask. The other manages their own storage and has no frame at any point, which is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
+        Two kinds of user hit this, and `value=` answers neither on its own. One wants metadata on a table this package does write; the `context` route is the one they need. Sending them to build a returned result around a frame they were not returning would answer a question they did not ask. The other manages their own storage and has no frame at any point. That is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
 
-        The `context` route is named bare. A decorated function produces one asset, so `add_asset_metadata` has one materialization to land on and needs no `asset_key=` to say which.
+        The `context` route is named bare. A decorated function produces one asset, so `add_asset_metadata` has one materialization to land on and needs no `asset_key=`.
 
         Parameters
         ----------
@@ -164,7 +164,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
 class MaterializeResultFieldError(DagsterDataframelyError):
     """A returned `dg.MaterializeResult` sets a field the decorator owns.
 
-    Raised before the column-schema check. Both fields are decided by the declaration rather than by the decorated function, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit is worth more than dropping it silently, which would leave a user's check result nowhere and say nothing about why.
+    Raised before the column-schema check. The declaration decides both fields, not the decorated function, so a returned one contends with what the step already yields instead of adding to it. Naming the culprit beats dropping it silently, which would leave a user's check result nowhere and say nothing about why.
     """
 
     def __init__(self, asset: str, field: str) -> None:
@@ -185,7 +185,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
 class ColumnSchemaError(DagsterDataframelyError):
     """A frame arrived with wrong dtypes or missing columns.
 
-    A pipeline defect rather than a data defect, so the whole asset aborts: no rows are filtered and nothing is written.
+    A pipeline defect, not a data defect, so the whole asset aborts: no rows are filtered and nothing is written.
     """
 
     def __init__(self, schema_name: str, problems: Sequence[Mapping[str, str]]) -> None:
@@ -209,14 +209,14 @@ class ColumnSchemaError(DagsterDataframelyError):
 
 
 def _culprits(counts: Mapping[str, int]) -> str:
-    """Render a `FailureInfo.counts()` as prose, for the two errors that report damage."""
+    """Render a `FailureInfo.counts()` as prose for the two errors that report damage."""
     return ", ".join(f"{count} by '{rule}'" for rule, count in counts.items())
 
 
 class ValidationAbortError(DagsterDataframelyError):
     """Rows failed validation and no quarantine is declared, so the asset writes nothing.
 
-    Without somewhere to route invalid rows, every row has to be valid. Writing the survivors and dropping the rest is the failure this package exists to make visible, so configuration cannot reach it. A drop is a line the engineer writes in the asset body, the way a cast is.
+    Without somewhere to route invalid rows, every row has to be valid. Writing the survivors and dropping the rest is the failure this package exists to make visible, so no configuration can reach it. A drop is a line the engineer writes in the asset body, the way a cast is.
     """
 
     def __init__(
@@ -224,7 +224,7 @@ class ValidationAbortError(DagsterDataframelyError):
     ) -> None:
         """State the damage per rule, and the three fixes.
 
-        Naming `quarantine=` makes this error the one place a user who has not read the README learns the keyword exists. It could only be named once the decorator accepted the keyword (#19). Before that it would have sent the reader to a `TypeError`.
+        Naming `quarantine=` makes this error the one place a user who has not read the README learns the keyword exists. That became possible once the decorator accepted the keyword (#19); before, it would have sent the reader to a `TypeError`.
 
         Parameters
         ----------
@@ -244,7 +244,7 @@ class ValidationAbortError(DagsterDataframelyError):
 class NothingSurvivedError(DagsterDataframelyError):
     """Every row failed validation, so only the quarantine was written.
 
-    The valid rows are skipped rather than materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce, so consenting to partial data is never consent to no data.
+    The valid rows are skipped, not materialized empty. An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce. Consenting to partial data is never consent to no data.
     """
 
     def __init__(
@@ -265,7 +265,7 @@ class NothingSurvivedError(DagsterDataframelyError):
         counts
             Failure count per rule, for the rules anything failed.
         address
-            Where the writer put the rows, rendered, so the message says where to look. An asset key under delegation and a file path under the fallback, because the answer can be a database table.
+            Where the writer put the rows, rendered, so the message says where to look. An asset key under delegation, a file path under the fallback.
         """
         plural = "" if invalid_count == 1 else "s"
         super().__init__(
@@ -276,9 +276,9 @@ class NothingSurvivedError(DagsterDataframelyError):
 class QuarantineDirError(DagsterDataframelyError):
     """A quarantined asset reached `file_writer` with no `quarantine_dir` set.
 
-    Raised at run time, and only where there is no IO manager to delegate to, which is a decorated asset called directly rather than run. A run always has one, so this cannot reach a deployment.
+    Raised at run time, and only where there is no IO manager to delegate to: a decorated asset called directly rather than run. A run always has a manager, so this cannot reach a deployment.
 
-    Choosing a directory instead was considered and declined. The rows are evidence, and writing them somewhere nobody named is how evidence gets lost.
+    Choosing a directory instead was considered and declined. The rows are evidence, and writing them somewhere nobody named loses them.
     """
 
     def __init__(self, asset: str) -> None:

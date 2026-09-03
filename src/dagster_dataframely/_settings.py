@@ -1,17 +1,17 @@
 """Every setting resolves in order: the package default, then a `DAGSTER_DATAFRAMELY_*` environment variable, then the argument on the asset.
 
-A platform engineer sets a house style once for a whole code location, and an asset overrides it where that style is wrong. The environment variables are named for the package because they are machine configuration a deployment sets, and `DAGSTER_DATAFRAMELY_` is long enough that nothing else will claim it.
+A platform engineer sets a house style once for a code location. An asset overrides it where that style is wrong. The environment variables carry the package name because a deployment sets them, and `DAGSTER_DATAFRAMELY_` is long enough that nothing else claims it.
 
-The chain validates on resolve, whichever source supplied the value, the package's own included. Nothing here trusts a value because of where it came from, so a typo raises at the source that wrote it instead of quietly becoming something else three modules later.
+Every source validates on resolve, the package default included. A typo raises at the source that wrote it instead of becoming something else three modules later.
 
-A setting is one of four shapes.
+A setting is one of four subclasses.
 
-- A `_Choice` holds a closed vocabulary of strings, so resolving is validating and nothing parses.
-- A `_Flag` holds a `bool`, and it is the first shape that has to parse. The environment variable arrives as a string whatever the shape holds, and only a flag's other two sources hold something that is not one.
-- A `_Count` holds a non-negative `int` and parses for the same reason. Its vocabulary is a range rather than a list, so it is the one shape with something left to refuse after a type checker has narrowed a source.
-- A `_Directory` holds a filesystem path, the shape with no vocabulary at all. Every string names a legal directory, so all that is left to check is that one was written.
+- A `_Choice` holds a closed vocabulary of strings. Resolving is validating; nothing parses.
+- A `_Flag` holds a `bool`. The environment variable arrives as a string whatever the setting holds, so a flag parses that one source.
+- A `_Count` holds a non-negative `int` and parses for the same reason. Its vocabulary is a range, so it is the one subclass with something left to refuse after a type checker has narrowed a source.
+- A `_Directory` holds a filesystem path and has no vocabulary. Every string names a legal directory, so the only check is that one was written.
 
-There is deliberately no fourth source and no `set_default_*()` function. Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control, and the same asset would derive different checks depending on which module happened to be imported first.
+There is no fourth source and no `set_default_*()` function. Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control. The same asset would derive different checks depending on which module imported first.
 """
 
 import os
@@ -21,18 +21,18 @@ from typing import Literal, override
 
 from dagster_dataframely.errors import InvalidSettingError
 
-#: How many asset checks a schema's rules collapse into.
 type Granularity = Literal["rule", "column", "schema"]
+"""How many asset checks a schema's rules collapse into."""
 
-#: Where the rules that no single column owns land at `column` granularity.
 type MultiColumnRules = Literal["schema", "per_rule"]
+"""Where the rules that no single column owns land at `column` granularity."""
 
 
 @dataclass(frozen=True)
 class _Setting[T](ABC):
     """One setting and the three sources it resolves through.
 
-    The precedence lives here and nowhere else, so a setting of a new shape cannot come to read its sources in a different order. A shape decides only how a source's value is checked, and which source has to be read out of a string.
+    The precedence lives here and nowhere else, so a new subclass cannot read its sources in a different order. A subclass decides only how a source's value is checked, and which source has to be read out of a string.
 
     Attributes
     ----------
@@ -52,7 +52,7 @@ class _Setting[T](ABC):
 
     @property
     def _environment_source(self) -> str:
-        """How an error names the environment variable. Every shape refuses something from it, so the phrase is written once."""
+        """How an error names the environment variable. Written once because every subclass refuses something from it."""
         return f"the environment variable {self.env_var}"
 
     def resolve(self, argument: T | None) -> T:
@@ -61,7 +61,7 @@ class _Setting[T](ABC):
         Parameters
         ----------
         argument
-            What the caller passed, or `None` for a caller that passed nothing. `None` is the whole test for "unset". That is why every setting on the decorator defaults to `None` rather than to the value the package ships, and why a flag a caller turned off reads as off rather than as unset.
+            What the caller passed, or `None` for nothing. `None` alone means unset. So every setting on the decorator defaults to `None` rather than to the package value, and a flag a caller turned off reads as off, not as unset.
 
         Returns
         -------
@@ -79,16 +79,16 @@ class _Setting[T](ABC):
             return self._environment(environment)
         return self._checked(self.default, "the package default")
 
-    def _checked(self, value: T, source: str) -> T:  # noqa: ARG002 - the source is for whichever shape has something to refuse
+    def _checked(self, value: T, source: str) -> T:  # noqa: ARG002 - the source is for whichever subclass has something to refuse
         """Validate a value that arrived as the setting's own type.
 
-        Both sources that do are already inside the type a setting holds, so a shape whose values are Python values has nothing to check here. A shape with a vocabulary of its own overrides this.
+        The argument and the package default are already inside the setting's type, so a subclass whose values are Python values has nothing to check here. A subclass with a vocabulary of its own overrides this.
         """
         return value
 
     @abstractmethod
     def _environment(self, value: str) -> T:
-        """Read the one source that arrives as a string whatever the shape holds."""
+        """Read the one source that arrives as a string whatever the setting holds."""
 
 
 @dataclass(frozen=True)
@@ -105,12 +105,14 @@ class _Choice[T: str](_Setting[T]):
 
     @override
     def _environment(self, value: str) -> T:
-        # Nothing parses: the vocabulary is strings, so matching it is the whole check.
+        # Nothing parses: the vocabulary is strings, so matching is the only check.
         return self._checked(value, self._environment_source)
 
     @override
     def _checked(self, value: str, source: str) -> T:
-        """Return the vocabulary's own member rather than the value that matched it, which carries the literal type out without a cast.
+        """Return the vocabulary member the value matched.
+
+        Returning the member rather than the value carries the literal type out without a cast.
 
         Parameters
         ----------
@@ -132,15 +134,15 @@ class _Choice[T: str](_Setting[T]):
         )
 
 
-#: What the environment variable spells a flag's two values as. Case is not part of the vocabulary: `TRUE` in a deployment's environment is the same instruction as `true`, and refusing it would buy nothing.
 _FLAG_WORDS = {"true": True, "false": False}
+"""The two words the environment variable spells a flag as. Case does not matter: `TRUE` is the same instruction as `true`, and refusing it buys nothing."""
 
 
 @dataclass(frozen=True)
 class _Flag(_Setting[bool]):
     """One two-valued setting.
 
-    Its own shape rather than a `_Choice` over `('true', 'false')`, because the two sources that are not the environment carry a real `bool`. The argument on the asset is typed `bool | None`, and the package default is a value rather than a word. Only the environment has to be read as one, and that is what this shape is.
+    Its own subclass rather than a `_Choice` over `('true', 'false')`, because the argument and the package default carry a real `bool`. Only the environment has to be read as a word.
     """
 
     @override
@@ -150,7 +152,7 @@ class _Flag(_Setting[bool]):
         Raises
         ------
         InvalidSettingError
-            The word is neither of the two. `1`, `yes` and `on` are all plausible and all wrong, so the vocabulary stays closed and the error names it.
+            The word is neither `true` nor `false`. `1`, `yes` and `on` are plausible and wrong, so the vocabulary stays closed and the error names it.
         """
         parsed: bool | None = _FLAG_WORDS.get(value.lower())
         if parsed is None:
@@ -161,7 +163,7 @@ class _Flag(_Setting[bool]):
     def _checked(self, value: bool, source: str) -> bool:
         """Refuse everything a `bool` annotation does not.
 
-        The annotation alone is not enough, and this is the shape where trusting it fails silently rather than loudly. `statistics="false"` is a non-empty string, so an unchecked argument resolves to the word and turns the pass *on*, the opposite of what was written. The environment variable spells the same instruction exactly that way, which makes the mistake reachable rather than hypothetical.
+        Trusting the annotation fails silently here. `statistics="false"` is a non-empty string, so an unchecked argument turns the pass on, the opposite of what was written. The environment variable spells the same instruction that way, so the mistake is reachable.
 
         Raises
         ------
@@ -173,7 +175,7 @@ class _Flag(_Setting[bool]):
         return value
 
     def _rejected(self, value: object, source: str) -> InvalidSettingError:
-        """Build the error every source raises, so no two of them can word the same refusal differently."""
+        """Build the error every source raises, so no two sources word the same refusal differently."""
         return InvalidSettingError(
             self.name,
             str(value),
@@ -183,15 +185,15 @@ class _Flag(_Setting[bool]):
         )
 
 
-#: What a count accepts, worded rather than listed: the vocabulary is a range, so there is nothing to enumerate.
 _COUNT_VOCABULARY = "non-negative integers"
+"""What a count accepts, worded because a range has nothing to enumerate."""
 
 
 @dataclass(frozen=True)
 class _Count(_Setting[int]):
     """One setting over the non-negative integers.
 
-    Its own shape rather than a `_Choice` over the numbers somebody might write, because there is no such list. It is also the one shape a type checker cannot finish. `_Choice` narrows an argument to its vocabulary and `_Flag` to two values, while `int` is only half of what this setting accepts and the other half is checked here.
+    Its own subclass because no list of the numbers somebody might write exists. It is also the one subclass a type checker cannot finish: `int` narrows the type, and this subclass refuses the negatives.
     """
 
     @override
@@ -201,7 +203,7 @@ class _Count(_Setting[int]):
         Raises
         ------
         InvalidSettingError
-            The word is not a number, or is a negative one. Both are the same mistake to a deployment reading the failure, so they raise the same error.
+            The word is not a number, or is negative. Both are the same mistake to a deployment reading the failure, so they raise the same error.
         """
         try:
             count = int(value)
@@ -218,13 +220,13 @@ class _Count(_Setting[int]):
         InvalidSettingError
             The value is negative, or is not an `int` at all.
         """
-        # `type` rather than `isinstance`, because `bool` subclasses `int`: a setting confused with `statistics` would otherwise resolve `True` to one row and say nothing.
+        # `type`, not `isinstance`: `bool` subclasses `int`, so a `True` meant for `statistics` would otherwise resolve to one row and say nothing.
         if type(value) is not int or value < 0:
             raise self._rejected(value, source)
         return value
 
     def _rejected(self, value: object, source: str) -> InvalidSettingError:
-        """Build the error every source raises, so no two of them can word the same refusal differently."""
+        """Build the error every source raises, so no two sources word the same refusal differently."""
         return InvalidSettingError(
             self.name,
             str(value),
@@ -234,29 +236,29 @@ class _Count(_Setting[int]):
         )
 
 
-#: What a directory accepts, worded rather than listed, like a count's: every string names a legal directory, so there is nothing to enumerate.
 _DIRECTORY_VOCABULARY = "filesystem paths"
+"""What a directory accepts, worded like a count's: every string names a legal directory, so there is nothing to enumerate."""
 
 
 @dataclass(frozen=True)
 class _Directory(_Setting[str | None]):
-    """One setting over the filesystem paths, and over the absence of one.
+    """One setting over the filesystem paths, or the absence of one.
 
-    Its own shape rather than a `_Choice`, because a path has no vocabulary. The whole point is that nothing here knows which directories a deployment has. It is also the shape with the least to do, since the environment variable already arrives as what the setting holds.
+    Its own subclass because a path has no vocabulary: nothing here knows which directories a deployment has. It is also the subclass with the least to do, since the environment variable already arrives as what the setting holds.
 
-    It is the one shape whose package default is `None`, and `None` reads as unset rather than as a directory chosen on the operator's behalf: the code that needs one raises when nobody named it.
+    It is the one subclass whose package default is `None`. `None` reads as unset, not as a directory chosen on the operator's behalf: the code that needs one raises when nobody named it.
     """
 
     @override
     def _environment(self, value: str) -> str | None:
-        # Nothing parses: a path is a string from every source, because the environment variable can spell it no other way.
+        # Nothing parses: a path is a string from every source.
         return self._checked(value, self._environment_source)
 
     @override
     def _checked(self, value: str | None, source: str) -> str | None:
         """Refuse everything that is not a written path.
 
-        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would report a setting nobody wrote when somebody wrote one wrong. The refusal names the variable instead, so the fix lands where the mistake is.
+        An empty value raises rather than reading as unset. `DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty. Reading that as unset would report a setting nobody wrote when somebody wrote one wrong. The refusal names the variable, so the fix lands where the mistake is.
 
         Raises
         ------
@@ -276,24 +278,24 @@ class _Directory(_Setting[str | None]):
         return value
 
 
-#: How many checks a schema's rules become. Definition-time: see `dy_asset` for what changing it costs a check's history.
 CHECK_GRANULARITY = _Choice[Granularity](
     name="check_granularity", default="rule", allowed=("rule", "column", "schema")
 )
+"""How many checks a schema's rules become. Definition-time: see `dy_asset` for what changing it costs a check's history."""
 
-#: Where the rules no single column owns land at `column` granularity. Read nowhere else, because the other two granularities have no second place to put them.
 MULTI_COLUMN_RULES = _Choice[MultiColumnRules](
     name="multi_column_rules", default="schema", allowed=("schema", "per_rule")
 )
+"""Where the rules no single column owns land at `column` granularity. The other two granularities have no second place to put them, so nothing else reads it."""
 
-#: Whether a materialization carries the four statistics tables. On by default: a distribution read is what a data consumer opens an asset for, and the pass is one aggregate per family over a frame that is already in memory. Whoever is paying for that pass is the one who can turn it off.
 STATISTICS = _Flag(name="statistics", default=True)
+"""Whether a materialization carries the four statistics tables. On by default: a data consumer opens an asset to read its distribution, and the pass is one aggregate per family over a frame already in memory. Whoever pays for that pass can turn it off."""
 
-#: How many of the rows that failed a rule reach that rule's check metadata. On by default, because what three of the failing rows look like is the question a red check raises and the counts cannot answer. It is deliberately not the `statistics` setting: consenting to summary statistics is not consenting to raw values.
 MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
+"""How many of the rows that failed a rule reach that rule's check metadata. On by default, because a failing check asks what the rows that failed look like and the counts cannot answer. Separate from `statistics`: consenting to summary statistics is not consenting to raw values."""
 
-#: How many of the valid rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what failed and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
+"""How many of the valid rows a materialization carries. On by default on the same terms. Separate from the failure sample and from `statistics`: seeing what failed and seeing what was kept are different consents."""
 
-#: Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources rather than three: `dy_asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a quarantined asset that reaches `file_writer` raises rather than choosing a directory on the operator's behalf.
 QUARANTINE_DIR = _Directory(name="quarantine_dir", default=None)
+"""Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources: `dy_asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a quarantined asset that reaches `file_writer` raises rather than choosing a directory on the operator's behalf."""

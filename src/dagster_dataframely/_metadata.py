@@ -1,4 +1,4 @@
-"""What the asset definition declares about its data, before it has ever run.
+"""What the asset definition declares about its data, before it has run.
 
 The asset body owns what the data is. The IO manager owns where and how it was written. A schema says what the data is, so it lives here and no IO manager has to emit it.
 """
@@ -15,7 +15,7 @@ _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 def _tags(column: dy.Column) -> dict[str, str] | None:
     """Render a column's free-form metadata as Dagster tags.
 
-    Values are stringified because `TableColumn.tags` is `Mapping[str, str]` and Dagster rejects anything else at definition time. That is a display rendering, not a cast: no data is touched. Refusing instead would mean a `metadata={"pii": False}` that Dataframely explicitly permits could not be attached to an asset at all.
+    Values are stringified because `TableColumn.tags` is `Mapping[str, str]` and Dagster rejects anything else at definition time. That is a display rendering, not a cast: no data is touched. Refusing would mean a `metadata={"pii": False}`, which Dataframely permits, could not be attached to an asset at all.
     """
     if not column.metadata:
         return None
@@ -29,7 +29,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
     `unique` is read from the column's own flag and never derived from `primary_key`. Dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`. Deriving would claim a per-column uniqueness that nothing enforces.
 
-    Tags come from `Column.metadata`, which Dataframely stores and never reads. It is the one Dataframely attribute with no other home here, and free-form key/value annotation is exactly what Dagster's column tags are for.
+    Tags come from `Column.metadata`, which Dataframely stores and never reads. It is the one Dataframely attribute with no other home here, and Dagster's column tags exist for free-form key/value annotation.
 
     Parameters
     ----------
@@ -63,11 +63,11 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Project the quarantine's column schema onto its own Columns tab.
 
-    The schema's columns mirrored, keeping dtype, description and tags but **no constraints**. These rows are here precisely because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row in the table. The primary key above all: that is why it is stated table-level on the valid table and nowhere here. The invalid rows are exactly where a duplicate key ends up.
+    The schema's columns mirrored, keeping dtype, description and tags but no constraints. These rows are here because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row. The same goes for the primary key: it is stated at table level on the valid table and nowhere here, because the invalid rows are where a duplicate key ends up.
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 
-    Then one `String` column per rule, named exactly as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
+    Then one `String` column per rule, named as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
 
     Parameters
     ----------
@@ -138,7 +138,7 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Build the metadata a quarantine declares about its own column schema.
 
-    Its own Columns tab, because every constraint the valid table states is one these rows are here for breaking.
+    Its own Columns tab, because every constraint the valid table states is one these rows break.
 
     Parameters
     ----------

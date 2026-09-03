@@ -1,8 +1,8 @@
 """The statistics pass, asserted through the metadata a materialization carries.
 
-The families and the duration rendering are never called directly. A data consumer meets them only as the tables on a materialization, so that is the one place they are asserted. A pass that computed the same numbers somewhere unreachable would fail every test here.
+The families and the duration rendering are never called directly. A data consumer meets them only as tables on a materialization, so that is where they are asserted.
 
-Statistics are opt-out, so almost every asset in this file declares nothing about them. A materialization carries the tables until someone turns them off.
+Statistics are opt-out, so almost every asset here declares nothing about them.
 """
 
 import datetime as dt
@@ -23,11 +23,11 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 
 class Shipment(dy.Schema):
-    """The dtypes `Orders` does not carry, one per gap it leaves.
+    """The dtypes `Orders` does not carry.
 
-    `Orders` already exercises `Int32`, `Decimal`, `String`, `Enum`, `Binary`, `Datetime`, `Duration` and a `List`. What it has no column of is `Float64`, `Date`, `Time`, `Categorical`, `Bool` and `Struct`, which is exactly this schema. Between the two, every dtype the four tables claim reaches a table, and both shapes that claim none reach nothing.
+    `Orders` exercises `Int32`, `Decimal`, `String`, `Enum`, `Binary`, `Datetime`, `Duration` and `List`. This schema adds `Float64`, `Date`, `Time`, `Categorical`, `Bool` and `Struct`. Between the two, every dtype the four tables claim reaches a table, and both nested dtypes reach none.
 
-    Every column is nullable so one row can be entirely null. A null separates `count` from `null_count`, and an all-null column is the case where a `min` does not exist.
+    Every column is nullable so one row can be entirely null. A null separates `count` from `null_count`, and an all-null column has no `min`.
     """
 
     weight = dy.Float64(nullable=True)
@@ -49,19 +49,19 @@ _SHIPMENT_SCHEMA: dict[str, pl.DataType] = {
     "address": pl.Struct({"city": pl.String()}),
 }
 
-#: The three durations the ticket names, `8d`, `1m 30s` and `2h 5m`, plus the null every column here carries.
 _DURATIONS: list[dt.timedelta | None] = [
     dt.timedelta(days=8),
     dt.timedelta(minutes=1, seconds=30),
     dt.timedelta(hours=2, minutes=5),
     None,
 ]
+"""The three durations the ticket names, `8d`, `1m 30s` and `2h 5m`, plus the null every column carries."""
 
 
 def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
-    """Four rows: three carrying values and one entirely null.
+    """Build four rows: three with values and one entirely null.
 
-    `weight` is deliberately awkward: its mean and standard deviation both run past four decimal places while its minimum is a value someone stored, so one frame shows both halves of the rounding rule.
+    `weight`'s mean and standard deviation run past four decimal places while its minimum is a stored value, so one frame shows both arms of the rounding rule.
     """
     return pl.DataFrame(
         {
@@ -74,7 +74,7 @@ def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
             ],
             "opens_at": [dt.time(1, 0), dt.time(3, 5), dt.time(2, 0), None],
             "fulfilled_in": durations,
-            # An empty string beside two of different lengths, so `n_empty` and the two length bounds each report something of their own.
+            # An empty string beside two of different lengths, so `n_empty` and both length bounds each report something.
             "region": ["US", "CANADA", "", None],
             "is_gift": [True, False, False, None],
             "address": [{"city": "NY"}, {"city": "LA"}, {"city": "SF"}, None],
@@ -113,7 +113,7 @@ def _materialized(
 def _metadata(
     tmp_path: Path, asset: dg.AssetsDefinition, key: str = "orders"
 ) -> Mapping[str, dg.MetadataValue[Any]]:
-    """The metadata on one of them."""
+    """Read the metadata of one materialization."""
     return _materialized(tmp_path, asset)[key]
 
 
@@ -132,7 +132,7 @@ def _families(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
 
 
 def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    """Every column that reached a table, whichever family it landed in."""
+    """List every column that reached a table, whichever family it landed in."""
     return {
         column
         for family in _families(metadata)
@@ -210,7 +210,7 @@ def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
 
 
 def test_a_computed_cell_is_rounded_and_an_observed_one_is_exact(tmp_path: Path):
-    """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough of them."""
+    """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough."""
     weight = _table(_metadata(tmp_path, _shipment, key="shipment"), "numeric")["weight"]
 
     assert weight["min"] == 1.23456789
@@ -218,7 +218,7 @@ def test_a_computed_cell_is_rounded_and_an_observed_one_is_exact(tmp_path: Path)
 
 
 def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
-    """The numeric family picks up `Decimal`, and the aggregate returns a Python `Decimal` that the table record type rejects outright, so a money column would otherwise take the whole materialization down."""
+    """The numeric family picks up `Decimal`, and the aggregate returns a Python `Decimal` that `TableRecord` rejects, so a money column would otherwise take the whole materialization down."""
     amount = _table(_metadata(tmp_path, _orders), "numeric")["amount"]
 
     assert amount["min"] == 10.0
@@ -257,7 +257,7 @@ def test_a_temporal_column_reports_the_span_between_its_bounds(tmp_path: Path):
 
 
 def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
-    """`8d`, `1m 30s`, `2h 5m`. The obvious call gives a reader ISO-8601, and a span is the one cell nobody can read that way."""
+    """`8d`, `1m 30s`, `2h 5m`. The default rendering gives ISO-8601, which nobody reads a span off."""
     fulfilled_in = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
@@ -268,7 +268,7 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
 
 
 def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
-    """A duration is a difference, so it is signed. Statistics that dropped the sign would read as their own opposite."""
+    """A duration is signed. Statistics that dropped the sign would read as their opposite."""
 
     @dy_asset(Shipment, name="shipment")
     def refunds() -> pl.DataFrame:
@@ -312,7 +312,7 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
 
 # --- the string family ---
 def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
-    """The one rule the setting does not cover, so the whole row is asserted rather than the absence of one cell. A `min` here would print a real address permanently into a shared, exported event log."""
+    """The setting does not cover this rule, so the whole row is asserted, not the absence of one cell. A `min` here would print a real address into a shared, exported event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert string["email"] == {
@@ -369,7 +369,7 @@ def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
 def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
     tmp_path: Path,
 ):
-    """Opt-out, on by default. The asset declares nothing and the tables are there."""
+    """Opt-out: the asset declares nothing and the tables are there."""
     assert _families(_metadata(tmp_path, _orders))
 
 
@@ -401,9 +401,9 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
 
 
 def test_the_quarantine_carries_no_statistics(tmp_path: Path):
-    """A statistic summarises a table somebody consumes, and nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). What the run does say about the held-back rows is their count, which rules rejected them together, and a sample.
+    """Nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). The run says three things about the held-back rows: their count, which rules rejected them together, and a sample.
 
-    Nothing is computed rather than computed and dropped, so the pass a reader is paying for is the one over the table they asked for.
+    Nothing is computed, rather than computed and dropped, so a reader pays only for the pass over the table they asked for.
     """
 
     @dy_asset(Orders, name="orders", quarantine=True)
@@ -421,9 +421,9 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
 
 # --- how the numbers are computed ---
 def test_no_module_routes_through_describe():
-    """`describe()` stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in a single column.
+    """`describe()` stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, strings and dates in one column.
 
-    Asserted against the source because the alternative is asserting every wrong rendering it would produce, one at a time, forever.
+    Asserted against the source, because the alternative is asserting every wrong rendering one at a time, forever.
     """
     sources = list(Path(next(iter(dagster_dataframely.__path__))).glob("*.py"))
     calls = [

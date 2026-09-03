@@ -1,8 +1,8 @@
 """A decorated function that returns a `dg.MaterializeResult` instead of a bare frame.
 
-`@dg.asset` accepts one, and it is what Dagster's own docs teach for attaching metadata, so refusing it cost parity with the decorator this one is modelled on (#77). The result's `value` is the frame to validate; its metadata, data version and tags fold into the materialization the package yields for the valid out.
+`@dg.asset` accepts one, and Dagster's own docs teach it for attaching metadata, so refusing it cost parity with the decorator this one is modelled on (#77). The result's `value` is the frame to validate. Its metadata, data version and tags fold into the materialization the package yields for the valid out.
 
-Every shape is asserted twice where both can see it, once by calling and once through `dg.materialize`. Metadata survives either route, but a data version and tags are event-level. A call hands back the `dg.MaterializeResult` carrying them, and a run is where they become event tags, so both are worth pinning.
+Every field is asserted twice where both routes can see it: once by calling, once through `dg.materialize`. Metadata survives either route. A data version and tags are event-level: a call hands back the `dg.MaterializeResult` carrying them, and a run turns them into event tags, so both routes need pinning.
 """
 
 import re
@@ -59,7 +59,7 @@ def _materialize(tmp_path: Path, asset: dg.AssetsDefinition):
 def _materializations(
     result: dg.ExecuteInProcessResult,
 ) -> dict[dg.AssetKey, dg.AssetMaterialization]:
-    """Every materialization the run emitted, whole, because tags matter here as well as metadata."""
+    """Every materialization the run emitted, whole: this file asserts tags as well as metadata."""
     return {
         event.asset_key: event.step_materialization_data.materialization
         for event in result.get_asset_materialization_events()
@@ -103,9 +103,9 @@ def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: P
 
 
 def test_the_packages_own_key_wins_a_collision():
-    """The precedence the decorator already uses for definition metadata, applied to the returned result. `dagster/row_count` specifically: Dagster reads it, and a decorated function that overwrote it would make the catalog state a count nothing counted.
+    """The same precedence the decorator applies to definition metadata. `dagster/row_count` matters most: Dagster reads it, and a decorated function that overwrote it would put a count nothing counted in the catalog.
 
-    Asserted on the call rather than through a run. An IO manager that counts the rows itself writes the same key last, so a run's materialization cannot tell the package's precedence from the manager's.
+    Asserted on the call, not through a run. An IO manager that counts rows writes the same key last, so a run's materialization cannot tell the package's precedence from the manager's.
     """
 
     @dy_asset(Orders, name="orders")
@@ -120,7 +120,7 @@ def test_the_packages_own_key_wins_a_collision():
 
 
 def test_a_returned_data_version_and_tags_reach_the_valid_result():
-    """Neither has any other route. `context.set_data_version` carries no `@public`, and the context exposes nothing at all for a materialization's tags."""
+    """Neither has another route. `context.set_data_version` carries no `@public`, and the context exposes nothing for a materialization's tags."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -137,7 +137,7 @@ def test_a_returned_data_version_and_tags_reach_the_valid_result():
 
 
 def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path: Path):
-    """Where they end up is Dagster's business, and both land as tags on the materialization event."""
+    """Dagster decides where they land: both become tags on the materialization event."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -154,7 +154,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
 
 
 def test_a_lazy_return_folds_the_same_way():
-    """The fold sits over what `process` yields, and the split in between takes both returns through the same call, so it changes nothing about it."""
+    """`fold` sits over what `process` yields. `Schema.filter` takes both frame kinds through the same call, so laziness changes nothing."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:
@@ -166,9 +166,9 @@ def test_a_lazy_return_folds_the_same_way():
     assert_frame_equal(result.value, clean_orders())
 
 
-# --- what a quarantine changes about the fold ---
+# --- what a quarantine changes about `fold` ---
 def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
-    """There is one, because the quarantine is written rather than materialized. So the returned result has exactly one place to land, and the package's own keys still win a collision."""
+    """The quarantine is written, not materialized, so the returned result has one place to land. The package's own keys still win a collision."""
 
     @dy_asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -191,16 +191,16 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
 
 
 # --- what stays refused ---
-# Every refusal is asserted twice, once by calling and once through a run. The unwrap runs inside
-# the wrapper's generator, so nothing happens until something advances it: a refusal that only
+# Every refusal is asserted twice, once by calling and once through a run. `unwrap` runs inside
+# the wrapper's generator, so nothing happens until something advances it. A refusal that only
 # surfaced on a direct call would let a run write a table the package never validated.
-# Declared as bare returns rather than as decorated assets, because the two tests below need the
-# same seven shapes and a decorated asset cannot be re-declared per test without a name collision.
+# Declared as bare returns, not decorated assets: the two tests below share the same seven cases,
+# and a decorated asset cannot be re-declared per test without a name collision.
 _REFUSALS = [
     pytest.param(
         lambda: dg.MaterializeResult(metadata={"source": "stripe"}),
         MaterializeResultValueError,
-        # The message has to name the alternative, because attaching metadata is exactly what somebody writing this was trying to do.
+        # The message names the alternative: whoever wrote this was trying to attach metadata.
         "context.add_asset_metadata",
         id="no value",
     ),
@@ -211,7 +211,7 @@ _REFUSALS = [
         id="a value that is not a frame",
     ),
     pytest.param(
-        # A bare `None` is the skip, and this is not that. A returned result exists to put something on a materialization, and a skipped run has none, so there is nowhere for the rest of this object to go (#95).
+        # A bare `None` is the skip; this is not. A returned result puts something on a materialization, and a skipped run has none, so the rest of this object has nowhere to go (#95).
         lambda: dg.MaterializeResult(value=None, metadata={"delivered": False}),
         MaterializeResultValueError,
         "carries no frame",
@@ -235,14 +235,14 @@ _REFUSALS = [
         id="check_results",
     ),
     pytest.param(
-        # The legacy spelling, which Dagster's own docs steer away from in greenfield code. It reaches the frame guard, where everything unreadable ends up.
+        # The legacy spelling, which Dagster's docs steer away from in new code. It reaches the frame guard like everything else unreadable.
         lambda: dg.Output(clean_orders(), metadata={"source": "stripe"}),
         dg.DagsterInvariantViolationError,
         "'orders' returned a Output",
         id="dg.Output",
     ),
     pytest.param(
-        # Not `None`, which the guard now lets through as the skip (#95). A string is the nearest thing that is still nothing but a mistake.
+        # Not `None`, which the guard lets through as the skip (#95). A string is the nearest thing that is still a mistake.
         lambda: "orders",
         dg.DagsterInvariantViolationError,
         "'orders' returned a str",
@@ -254,7 +254,7 @@ _REFUSALS = [
 def _refusing(fn: Callable[[], object]) -> dg.AssetsDefinition:
     """Declare the asset under the one name every message above expects.
 
-    The decorated functions are annotated nowhere, because there is nothing to annotate them as: every one of them returns what the decorator's own type says it cannot.
+    The decorated functions carry no annotation: each returns what the decorator's own type says it cannot.
     """
     return dy_asset(Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
@@ -280,9 +280,9 @@ def test_a_refused_return_fails_the_run_and_writes_nothing(
     assert not list(tmp_path.rglob("*.parquet"))
 
 
-# --- an exit with no valid materialization to fold onto ---
-def test_an_exit_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
-    """Nothing survived, so the fold has only the checks to pass through and no materialization to land on. The error `process` raises has to reach the caller unchanged rather than being swallowed by the stage wrapping it."""
+# --- no valid materialization to fold onto ---
+def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
+    """Nothing survived, so `fold` has only checks to pass through and no materialization to land on. The error `process` raises must reach the caller unchanged; the stage wrapping it must not swallow it."""
 
     @dy_asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -295,7 +295,7 @@ def test_an_exit_that_writes_no_table_still_raises_its_own_error(tmp_path: Path)
 
 
 def test_an_abort_with_no_quarantine_still_raises_its_own_error():
-    """The exit that yields no materialization at all, only checks. The fold has nothing to fold onto and must not invent one."""
+    """Rows failed and no quarantine is declared, so the run yields only checks and no materialization. `fold` has nothing to land on and must not invent one."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -306,7 +306,7 @@ def test_an_abort_with_no_quarantine_still_raises_its_own_error():
 
 
 def test_the_frame_guard_names_every_route_out():
-    """Giving up the schema used to be the whole of the advice, which is wrong for anyone who wanted metadata on a validated table. It is now the last of four, and right for the one reader it is left for: an asset that writes its own storage and never holds a frame at all."""
+    """Giving up the schema used to be the only advice, which was wrong for anyone who wanted metadata on a validated table. It is now the last of four routes, aimed at the one reader it fits: an asset that writes its own storage and never holds a frame."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
         _call(_refusing(lambda: "orders"))
     message = str(raised.value)
@@ -320,7 +320,7 @@ def test_the_frame_guard_names_every_route_out():
 
 # --- what a bare frame still does ---
 def test_a_bare_frame_carries_no_data_version_and_no_tags():
-    """The guarantee the fold rests on: an asset that returns a frame produces exactly what it produced before #77."""
+    """The guarantee `fold` rests on: an asset that returns a frame produces what it produced before #77."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> pl.DataFrame:
