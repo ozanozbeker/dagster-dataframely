@@ -86,9 +86,6 @@ _Avoid_: bucket
 Dagster's name, from `dg.TableColumnConstraints`.
 _Avoid_: pill, chip
 
-**Staging**: The local temporary file a lazy frame streams to before it is validated.
-_Avoid_: landing, spill, scratch
-
 ### Configuration
 
 **Setting**: One configurable value, resolved in order: the `dy_asset` argument, then `DAGSTER_DATAFRAMELY_*`, then the package default.

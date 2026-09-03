@@ -1,12 +1,12 @@
-"""What a schema-backed asset runs after its decorated function: check the column schema, stage, filter, then one of six exits.
+"""What a schema-backed asset runs after its decorated function: check the column schema, split the rows, then one of six exits.
 
 The asset's declaration is the failure policy. There is no lenient/strict flag anywhere, so the failure behaviour is visible in the definition rather than in an argument's value, and it cannot disagree with what the asset actually declares. Declaring a quarantine splits four exits into six. It is the consent to partial data, and its absence is the refusal.
 
 The sixth exit is the skip, and it is the one the asset's declaration does not decide. A decorated function that returns `None` says this partition has no source data and never will, which is neither a failure nor an empty table. Nothing is validated and nothing materializes, so the partition stays unmaterialized rather than going green with zero rows (#95).
 
-A decorated function's return type decides whether the middle phase runs at all. See `_staged_frame` for what a plan buys by staging.
+A decorated function's return type decides nothing past the column-schema check. `Schema.filter` takes a plan, so one call splits both return types, on the streaming engine. A `DataFrame` costs a free `.lazy()`. A `LazyFrame` executes once, at the split, with its intermediates streamed and only what it produced held. The peak is that frame plus one boolean column per rule, in the engine's cache, and the two halves it is split into.
 
-Validation itself is eager and stays that way. This package does not promise to write a file. It promises to write a file and report on it. `dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and no exit can be chosen without counting both halves of the split. `docs/research/lazyframe-end-to-end.md` has the measurements.
+Validation materializes both halves, and stays that way. This package does not promise to write a file. It promises to write a file and report on it. Every exit past the split counts, samples, writes or profiles the halves, and none can be chosen without counting both. `docs/research/lazyframe-end-to-end.md` has the measurements, and its §12 has why the split runs in the engine rather than through a file on disk.
 """
 
 from collections.abc import Iterator, Mapping
@@ -16,7 +16,7 @@ import dataframely as dy
 import polars as pl
 
 from dagster_dataframely._checks import rule_results
-from dagster_dataframely._frames import column_schema_problems, staging
+from dagster_dataframely._frames import column_schema_problems
 from dagster_dataframely._naming import (
     COLUMN_SCHEMA_CHECK,
     check_name,
@@ -28,7 +28,6 @@ from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
     STATISTICS,
-    TEMP_DIR,
     Granularity,
     MultiColumnRules,
 )
@@ -74,38 +73,6 @@ def _require_frame(frame: object, asset: str) -> None:
         return
     wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. `dy_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
-
-
-def _staged_frame(frame: pl.LazyFrame, *, temp_dir: str | None) -> pl.DataFrame:
-    """Stream a plan to a local parquet, read it back whole, and remove the file.
-
-    What this buys is the peak. The plan's high-water mark becomes the size of the frame it produced, which is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory. What it costs is one local write and one local read of that frame, which is why an eager return never comes here. A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
-
-    The file is gone before this returns, so no exit can leave one behind. That includes the two exits whose whole purpose is that nothing is written.
-
-    Promoting the staged file to where the IO manager would write, rather than letting it write the frame again, was considered and declined. The read back above is structural, so promotion saves one write and costs a boundary. `docs/research/lazyframe-end-to-end.md` §11 has the measurement.
-
-    Parameters
-    ----------
-    frame
-        The plan to stage.
-    temp_dir
-        Where the staging file goes, or `None` for wherever `tempfile` puts things. That absence is why the package default is not `tempfile.gettempdir()`. The decorator resolves every setting where the asset is *declared*, so an unset setting has to mean the temp directory of whichever process stages the frame.
-
-    Returns
-    -------
-    The frame the plan produced, read back whole.
-
-    Raises
-    ------
-    FileNotFoundError
-        `temp_dir` names a directory that does not exist.
-    """
-    with staging(temp_dir) as directory:
-        path = directory / "staged.parquet"
-        # Named rather than left to `auto`, because the streaming engine is the whole reason to stage: an engine that chose to collect would pay the write and keep the peak.
-        frame.sink_parquet(path, engine="streaming")
-        return pl.read_parquet(path)
 
 
 def _shape_failure(
@@ -249,11 +216,10 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
-    temp_dir: str | None = None,
 ) -> AssetYield:
     """Validate a decorated function's output and report it to Dagster.
 
-    Three phases and six exits. The skip takes the first exit and runs no phase at all. Otherwise the column-schema check runs first, so a frame whose columns do not match never pays to be staged or filtered. A lazy frame is then staged to a local parquet and read back whole, which keeps the peak at the frame's size rather than the plan's. An eager one bypasses that phase, having nothing left to stream. Finally `Schema.filter` splits the rows, with `cast=False`. It is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
+    Two phases and six exits. The skip takes the first exit and runs no phase at all. Otherwise the column-schema check runs first, off `collect_schema()`, so a frame whose columns do not match never executes. Then `Schema.filter` splits the rows, with `cast=False`, in one `collect_all` on the streaming engine. A `DataFrame` return takes the same call after a free `.lazy()`, so there is one split path and nothing downstream of it can tell the two returns apart. It is the only validation call, because `validate()` carries per-rule detail as a string and this package needs structured counts.
 
     Which of the other five a run reaches is decided by the asset's declaration, never by an argument's value. `quarantine_writer` is the whole policy. With it, invalid rows are written to the quarantine and the run stays green. Without it, the same rows fail the run. The one case it does not rescue is nothing surviving, where the table is skipped rather than materialized empty.
 
@@ -281,8 +247,6 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
     row_sample
         How many rows reach the materialization metadata, of what was written and of what was held back. Unset resolves through the settings chain, which ships five.
-    temp_dir
-        Where a lazy frame is staged. Unset resolves through the settings chain, which ships the system temp directory. Read only on the lazy path, so an eager frame is unaffected by whatever it holds.
 
     Yields
     ------
@@ -294,8 +258,6 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         A setting resolved to a value outside its vocabulary.
     DagsterInvariantViolationError
         The decorated function returned something that is neither a Polars frame nor `None`.
-    FileNotFoundError
-        `temp_dir` names a directory that does not exist, on a run that had a plan to stage.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema.
     ValidationAbortError
@@ -308,7 +270,6 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    staging_dir: str | None = TEMP_DIR.resolve(temp_dir)
 
     if frame is None:
         # Exit: no source data. Neither output is yielded, so the partition stays unmaterialized rather than going green with zero rows, and the run stays green rather than reporting a defect that is not one.
@@ -333,18 +294,13 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
         yield _shape_failure(problems, asset_key=valid_key)
         raise ColumnSchemaError(schema.__name__, problems)
 
-    # --- Phase 2: staging ---
-    # A plan streams to a local parquet and comes back as the frame it produced. An eager frame passes straight through, because there is nothing left to stream.
-    materialized: pl.DataFrame = (
-        _staged_frame(frame, temp_dir=staging_dir)
-        if isinstance(frame, pl.LazyFrame)
-        else frame
+    # --- Phase 2: the split ---
+    # A plan executes here, once: `collect_all` runs both halves off one cached evaluation, so the source is not read twice.
+    # The engine is named rather than left to `auto`. Polars falls back to the in-memory engine for anything streaming cannot run, so naming it never fails a plan. An `auto` that chose to collect would keep the plan's own peak.
+    result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
+        engine="streaming"
     )
-
-    # --- Phase 3: the row filter ---
-    # Eager either way by now, which is what `filter` would have done anyway: it collects internally, and `row_count` needs the length.
-    result, failure = schema.filter(materialized, cast=False)
-    # Annotated because `filter` returns Dataframely's phantom `dy.DataFrame[Schema]`, and the asset is declared as a plain Polars frame.
+    # Annotated because `collect_all` returns Dataframely's phantom `dy.DataFrame[Schema]`, and the asset is declared as a plain Polars frame.
     valid: pl.DataFrame = result
     invalid_count: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.

@@ -17,9 +17,9 @@ from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
     MULTI_COLUMN_RULES,
+    QUARANTINE_DIR,
     ROW_SAMPLE,
     STATISTICS,
-    TEMP_DIR,
     _Choice,
     _Count,
     _Directory,
@@ -30,7 +30,7 @@ from dagster_dataframely.errors import InvalidSettingError
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
-_TEMP_DIR_ENV = "DAGSTER_DATAFRAMELY_TEMP_DIR"
+_QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. That is what a user without one gets.
 _WRONG: Any = "per_column"
@@ -64,7 +64,7 @@ def test_a_setting_nobody_touched_is_the_package_default():
     assert STATISTICS.resolve(None) is True
     assert MAX_FAILURE_SAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
-    assert TEMP_DIR.resolve(None) is None
+    assert QUARANTINE_DIR.resolve(None) is None
 
 
 def test_the_environment_variable_beats_the_package_default(
@@ -90,7 +90,7 @@ def test_every_setting_names_its_environment_variable_after_itself():
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
-    assert TEMP_DIR.env_var == _TEMP_DIR_ENV
+    assert QUARANTINE_DIR.env_var == _QUARANTINE_DIR_ENV
 
 
 def test_a_flag_parses_the_environment_source_rather_than_matching_it(
@@ -221,34 +221,34 @@ def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """The shape with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
-    monkeypatch.setenv(_TEMP_DIR_ENV, "/scratch/staging")
+    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "/scratch/quarantine")
 
-    assert TEMP_DIR.resolve(None) == "/scratch/staging"
-    assert TEMP_DIR.resolve("/mnt/volume") == "/mnt/volume"
+    assert QUARANTINE_DIR.resolve(None) == "/scratch/quarantine"
+    assert QUARANTINE_DIR.resolve("/mnt/volume") == "/mnt/volume"
 
 
 def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
+    """`DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
 
-    Reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off. That is the failure the setting exists to prevent, and nobody would see it until the disk filled.
+    Reading that as unset would report a setting nobody wrote when somebody wrote one wrong. The refusal names the variable instead, so the fix lands where the mistake is.
     """
-    monkeypatch.setenv(_TEMP_DIR_ENV, "   ")
+    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "   ")
 
     with pytest.raises(InvalidSettingError) as raised:
-        TEMP_DIR.resolve(None)
+        QUARANTINE_DIR.resolve(None)
     message = str(raised.value)
 
-    assert "temp_dir" in message
+    assert "quarantine_dir" in message
     assert "filesystem paths" in message
-    assert _TEMP_DIR_ENV in message
+    assert _QUARANTINE_DIR_ENV in message
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
     """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every source for this setting spells a path as a string, because the environment variable can spell it no other way."""
     with pytest.raises(InvalidSettingError) as raised:
-        TEMP_DIR.resolve(_PATH_OBJECT)
+        QUARANTINE_DIR.resolve(_PATH_OBJECT)
 
     assert "/scratch" in str(raised.value)
     assert "argument" in str(raised.value)

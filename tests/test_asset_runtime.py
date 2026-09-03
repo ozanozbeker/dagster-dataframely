@@ -124,19 +124,6 @@ def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
     assert 'col("amount")' in str(metadata["dy_rule__expr"].value)
 
 
-def test_a_lazy_return_lands_and_is_read_back_whole(tmp_path: Path):
-    """The round trip through the staged parquet has to be lossless, and this schema is where that is worth asserting. `Decimal`, `Duration`, `Enum`, `Binary` and `List` are the dtypes a round trip could quietly change. The shape check has already run by the time the staging happens, so a changed dtype would surface as a filter failure rather than as a shape one."""
-
-    @dy_asset(Orders, name="orders_lazy")
-    def lazy_orders() -> pl.LazyFrame:
-        return clean_orders().lazy()
-
-    assert _materialize(tmp_path, lazy_orders).success
-    assert_frame_equal(
-        pl.read_parquet(tmp_path / "orders_lazy.parquet"), clean_orders()
-    )
-
-
 def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
     """The column-schema check reads columns and dtypes off the return value, so a forgotten annotation would otherwise surface as an `AttributeError` two frames inside the package. Dagster's own error, not the package's. This is a wiring mistake, not a data one.
 
@@ -160,7 +147,7 @@ def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
 # --- the object returned decides, never the annotation ---
 # `@dg.asset` infers the output's `dagster_type` from the return annotation and fails the run
 # on a mismatch. This decorator cannot: the annotation describes what the decorated function handed
-# over, `dagster_type` describes what the output stores, and validation is eager, so the output holds
+# over, `dagster_type` describes what the output stores, and the split materializes both halves, so the output holds
 # a `DataFrame` however the decorated function arrived at it. Both mismatches below therefore run green,
 # and `tests/test_upstream_characterization.py` pins the plain-asset half of the contrast.
 @pytest.mark.parametrize(
@@ -763,7 +750,7 @@ def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
     assert len(_evaluations(result)) == len(list(orders_by_hand.check_specs))
 
 
-# --- the temp file ---
+# --- the lazy return ---
 # One entry per exit, each as the frame that reaches it and the quarantine that decides it.
 _EXITS = [
     pytest.param(clean_orders, False, id="everything survived"),
@@ -775,21 +762,18 @@ _EXITS = [
 
 
 def _both_ways(
-    frame: Callable[[], pl.DataFrame],
-    quarantine: bool,
-    *,
-    temp_dir: str | None = None,
+    frame: Callable[[], pl.DataFrame], quarantine: bool
 ) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
     """The same decorated function declared twice, handing back the same frame eagerly and lazily.
 
     Same name, same schema, same rows: the two runs differ in the return type and in nothing else, which is what makes their events comparable.
     """
 
-    @dy_asset(Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir)
+    @dy_asset(Orders, name="orders", quarantine=quarantine)
     def eager() -> pl.DataFrame:
         return frame()
 
-    @dy_asset(Orders, name="orders", quarantine=quarantine, temp_dir=temp_dir)
+    @dy_asset(Orders, name="orders", quarantine=quarantine)
     def lazy() -> pl.LazyFrame:
         return frame().lazy()
 
@@ -834,7 +818,7 @@ def _written(directory: Path) -> dict[str, pl.DataFrame]:
 def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
     tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
-    """The staging file moves where the data is materialized, not what happens to it afterwards.
+    """One split path, so nothing past it can tell the two returns apart.
 
     Asserted at every exit and over everything the package emits: whether the table materialized, the row counts, the statistics, the samples, the invalid-row keys, every check with its severity and metadata, and the bytes on disk.
     """
@@ -850,94 +834,68 @@ def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
         assert_frame_equal(table, _written(tmp_path / "eager")[name])
 
 
-@pytest.mark.parametrize(("frame", "quarantine"), _EXITS)
-def test_the_staging_file_is_removed_whichever_exit_the_run_takes(
-    tmp_path: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
-):
-    """Including the two exits whose whole purpose is that nothing is written, which are the ones a `finally` would be needed for if the file outlived the read-back."""
-    staging = tmp_path / "staging"
-    staging.mkdir()
-    _, lazy = _both_ways(frame, quarantine, temp_dir=str(staging))
-
-    _materialize(tmp_path / "store", lazy, raise_on_error=False)
-
-    assert list(staging.iterdir()) == []
-
-
-def test_the_staging_file_is_written_with_the_streaming_engine(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("lazily", [False, True], ids=["eager", "lazy"])
+def test_the_split_runs_on_the_streaming_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lazily: bool
 ):
     """The one clause of this design with no observable consequence, and the one the whole argument rests on.
 
-    A staging step that collected the plan and wrote the frame would produce byte-identical results, pass every other assertion here, and keep exactly the peak the staging exists to remove. So the call is covered rather than the output: `sink_parquet`, with the engine named.
-
-    Counted as a set rather than a list, because Polars reaches its own `sink_parquet` again on the way through and the number of times it does is its business, not this package's.
+    A split on the in-memory engine would produce byte-identical results and pass every other assertion here. It would also keep the plan's own peak, which the streaming engine exists to remove. So the call is covered rather than the output: `pl.collect_all`, with the engine named. Both return types, because there is one split path and a `DataFrame` return takes it too.
     """
     engines: list[object] = []
-    sink = pl.LazyFrame.sink_parquet
+    collect_all = pl.collect_all
 
-    def spy(frame: pl.LazyFrame, path: Path, **kwargs: Any) -> Any:
+    def spy(frames: Any, **kwargs: Any) -> Any:
         engines.append(kwargs.get("engine"))
-        return sink(frame, path, **kwargs)
+        return collect_all(frames, **kwargs)
 
-    monkeypatch.setattr(pl.LazyFrame, "sink_parquet", spy)
-    _, lazy = _both_ways(clean_orders, quarantine=False)
+    monkeypatch.setattr(pl, "collect_all", spy)
+    eager, lazy = _both_ways(clean_orders, quarantine=False)
+
+    assert _materialize(tmp_path, lazy if lazily else eager).success
+    assert engines == ["streaming"]
+
+
+def _counted(frame: pl.DataFrame) -> tuple[pl.LazyFrame, list[int]]:
+    """A plan over `frame` that records the height of every batch the engine pulls through it.
+
+    Executions are then read off as rows seen over rows held: the streaming engine may split a frame into batches, but every execution pulls every row through exactly once.
+    """
+    seen: list[int] = []
+
+    def count(batch: pl.DataFrame) -> pl.DataFrame:
+        seen.append(batch.height)
+        return batch
+
+    return frame.lazy().map_batches(count, streamable=True), seen
+
+
+def test_a_lazy_return_executes_its_plan_once(tmp_path: Path):
+    """`collect_all` runs the two halves off one cached evaluation, so the source is pulled through once.
+
+    A split that collected each half on its own would pass every other assertion here and read the source twice, which for a plan with an expensive upstream is the whole cost of the run.
+    """
+    plan, seen = _counted(clean_orders())
+
+    @dy_asset(Orders, name="orders")
+    def lazy() -> pl.LazyFrame:
+        return plan
 
     assert _materialize(tmp_path, lazy).success
-    assert set(engines) == {"streaming"}
+    assert sum(seen) == clean_orders().height
 
 
-def test_an_eager_return_is_never_staged(tmp_path: Path):
-    """A frame the user already materialized has nothing left to stream, so staging it would be pure cost.
+def test_a_plan_that_fails_the_column_schema_check_never_executes(tmp_path: Path):
+    """Resolving a plan's columns and dtypes costs nothing, so a frame whose columns do not match is refused before a single row is pulled through it."""
+    plan, seen = _counted(wrong_dtype_orders())
 
-    Asserted by pointing the staging file at a directory that does not exist: a run that would stage there cannot succeed, and this one does.
-    """
-    eager, _ = _both_ways(
-        clean_orders, quarantine=False, temp_dir=str(tmp_path / "absent")
-    )
-
-    assert _materialize(tmp_path / "store", eager).success
-
-
-def test_a_lazy_return_lands_where_temp_dir_says(tmp_path: Path):
-    """The other half of the same assertion, and the reason the setting exists: the default is the container's ephemeral disk, so a deployment has to be able to move it.
-
-    A missing directory raises rather than being created, deliberately. The setting is set to move the staging file off that disk, so a mistyped path quietly created there is the failure somebody set it to avoid.
-    """
-    absent = tmp_path / "absent"
-    _, lazy = _both_ways(clean_orders, quarantine=False, temp_dir=str(absent))
-
-    with pytest.raises(FileNotFoundError) as raised:
-        _materialize(tmp_path / "store", lazy)
-
-    assert str(absent) in str(raised.value)
-
-
-def test_the_temp_dir_environment_variable_reaches_the_staging_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """The house-style source, asserted through a materialization rather than through `resolve`. The decorator reads the variable where the asset is declared, so the value it resolved has to survive the trip to the executing step and reach the staging file."""
-    absent = tmp_path / "absent"
-    monkeypatch.setenv("DAGSTER_DATAFRAMELY_TEMP_DIR", str(absent))
-    _, lazy = _both_ways(clean_orders, quarantine=False)
-
-    with pytest.raises(FileNotFoundError) as raised:
-        _materialize(tmp_path / "store", lazy)
-
-    assert str(absent) in str(raised.value)
-
-
-def test_the_column_schema_check_runs_before_staging(tmp_path: Path):
-    """Resolving a plan's columns and dtypes costs nothing, so a frame whose columns do not match is refused before a single row is streamed.
-
-    Asserted through a staging file that cannot work: the column-schema error is what arrives, so nothing ever tried to write there.
-    """
-    _, lazy = _both_ways(
-        wrong_dtype_orders, quarantine=False, temp_dir=str(tmp_path / "absent")
-    )
+    @dy_asset(Orders, name="orders")
+    def lazy() -> pl.LazyFrame:
+        return plan
 
     with pytest.raises(ColumnSchemaError):
-        _materialize(tmp_path / "store", lazy)
+        _materialize(tmp_path, lazy)
+    assert seen == []
 
 
 # --- collapsed checks ---

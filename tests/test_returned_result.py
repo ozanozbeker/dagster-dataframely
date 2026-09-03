@@ -154,7 +154,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
 
 
 def test_a_lazy_return_folds_the_same_way():
-    """The fold sits over what `process` yields, so the staging phase in between changes nothing about it."""
+    """The fold sits over what `process` yields, and the split in between takes both returns through the same call, so it changes nothing about it."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:

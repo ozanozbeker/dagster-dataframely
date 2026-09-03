@@ -319,6 +319,195 @@ Decided 2026-08-12.
 
 ---
 
+## 12. Addendum, after #118: the split moves into the engine
+
+Verified against the installed `dagster 1.13.20`, `dataframely 3.0.0`, `polars 1.44.1`, on 2026-09-02.
+Same tags as above: **[RAN]** executed and read off the result, **[READ]** traced through library source.
+One M-series laptop, one run each, so the ordering is the finding and the absolute figures are not.
+
+**What shipped.** [#118](https://github.com/ozanozbeker/dagster-dataframely/issues/118) replaces recommendation B with one split path for both return types:
+
+```python
+result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
+    engine="streaming"
+)
+```
+
+The staging file, `temp_dir`, `TEMP_DIR` and `DAGSTER_DATAFRAMELY_TEMP_DIR` are gone.
+`_Directory` stays, for `quarantine_dir`.
+
+### 12.1 The guide that prompted this is stale
+
+Dataframely's lazy-validation guide documents an `eager: bool` on `Schema.validate`, `Schema.filter` and the two `Collection` counterparts.
+**[READ]** That parameter left in 3.0.0 ([Quantco/dataframely#372](https://github.com/Quantco/dataframely/pull/372), "Replace `eager: bool` with lazy-in-lazy-out"), and the guide was not updated with it.
+The 3.0.0 rule is the one banked finding 1 already relied on: a `DataFrame` in runs now, a `LazyFrame` in appends to the plan.
+`Collection.validate` and `Collection.filter` keep a `lazy: bool`.
+
+### 12.2 The primary-key penalty is gone
+
+§2 measured `collect_all` at 10x with a `primary_key` on polars 1.43.2.
+**[RAN]** On 1.44.1 the plan executes once with a primary key, and `collect_all` is never slower than the eager split.
+
+Executions, read off a `map_batches` spy as rows seen over rows held, 2M rows, unsorted primary key:
+
+| strategy | executions |
+| --- | --- |
+| `collect_all`, in-memory engine | 1.00 |
+| `collect_all`, streaming engine | 1.00 |
+| `collect_all` over two lazy `sink_parquet` nodes and one aggregate | 3.00 |
+
+The last row kills the other idea the guide invites, sinking both halves from the plan in one `collect_all`.
+`pl.explain_all` shows two `CACHE` nodes, and the engine still pulls the source through once per output.
+
+The race, four strategies, 10% failures, peak RSS read off `ru_maxrss` in a fresh process each:
+
+| workload | eager | temp landing | `collect_all` in-memory | `collect_all` streaming |
+| --- | --- | --- | --- | --- |
+| cheap upstream, unsorted pk, 10M rows | 0.46s / 1224 MB | 0.22s / 1627 MB | 0.42s / 1120 MB | 0.15s / 1052 MB |
+| 5x fan-out, unsorted pk, 10M rows | 0.80s / 1318 MB | 0.25s / 1644 MB | 0.74s / 1319 MB | 0.18s / 1165 MB |
+| 5x fan-out, unsorted pk, 4M rows | 0.29s / 676 MB | 0.10s / 1033 MB | 0.28s / 598 MB | 0.08s / 757 MB |
+| 5x fan-out, sorted pk, 4M rows | 0.29s / 639 MB | 0.10s / 991 MB | 0.26s / 644 MB | 0.07s / 759 MB |
+| 5x fan-out, no pk, 4M rows | 0.25s / 585 MB | 0.06s / 560 MB | 0.25s / 586 MB | 0.04s / 471 MB |
+
+"Unsorted pk" is `(id * 7919) % n`, a bijection with the sorted flag broken, because `int_range` sets one and a flagged key is not the general case.
+"5x fan-out" explodes every row into five and filters back to one, which is the exploding-intermediate case §8 built temp landing for.
+The second row is this document's own shape from §1, at its own size.
+
+Three readings:
+
+- **The streaming `collect_all` is the fastest strategy in every row, by 2x to 4x.**
+- **Temp landing came out heaviest in every row with a primary key.**
+  That is the opposite of §1's table.
+  The workload differs from the workbench's, the polars version differs, and the workbench is gone (§12.5), so which change did it cannot be said.
+  What can be said is that the memory case for the staging file did not reproduce, and §1 already found there was no time case.
+- **An eager input is a wash.**
+  A 10M-row `DataFrame` already in memory, 630 MB, split three ways: `Schema.filter(df)` 0.08s / 1182 MB, `filter(df.lazy()).collect_all(engine="in-memory")` 0.09s / 1222 MB, `engine="streaming"` 0.08s / 1149 MB.
+  So one path costs an eager return nothing measurable, and buys the deletion of the branch.
+
+### 12.3 What the streaming engine changes about the split: nothing observable
+
+**[RAN]** 2M rows, unsorted key, three injected duplicates, 10% `min` failures.
+`collect_all(engine="streaming")` returned the same `counts()` as the eager split (`primary_key: 6`, `v|min: 200003`), the same valid rows in the same order (`DataFrame.equals`), and the same invalid rows.
+**[READ]** Polars documents the fallback: "If the selected engine cannot run the query, Polars falls back to the in-memory engine."
+So naming the engine never fails a plan, which is why it is not a setting.
+
+### 12.4 Streaming to the destination stays dead
+
+The guide's other suggestion, a lazy `validate` sunk straight to storage through the IO manager, was re-checked rather than assumed. **[RAN]**
+
+- `S.validate(lf).sink_parquet("dest.parquet")` with one failing row at index 1.5M of 2M raised `ComputeError` with the full rule message, and left `dest.parquet` on disk at 0 bytes, unreadable: "A Parquet file must contain a header and footer with at least 12 bytes".
+- **[READ]** `UPathIOManager.handle_output` calls `dump_to_path` on the final path.
+  No temp file, no rename.
+  So a `pl.LazyFrame`-typed output through `dagster-polars` sinks straight to the destination, and a failing plan replaces the last-known-good table with an empty file.
+- **[READ]** `dagster-polars` reports schema only for a `LazyFrame` output, and no row count.
+- `dagster_duckdb_polars.DuckDBPolarsTypeHandler.supported_types` is `[pl.DataFrame]`. **[RAN]**
+  A lazy output cannot go through it at all.
+
+§3 and §4 stand.
+The split materializes both halves because every exit past it counts, samples, writes or profiles them, and no exit can be chosen before it has.
+
+### 12.5 The workbench is gone
+
+The `prototype/issue-27-lazyframe` branch named at the top of this document and in #53 does not exist on origin or locally.
+Every number above comes from the script below, kept here so the instrument survives with the readings this time.
+Run it from any directory with the repo's venv: `python bench.py <strategy> <pk|pkhash|nopk> <cheap|fanout> <rows>`.
+The strategies are `eager`, `temp_land`, `collect_all_frames`, `collect_all_streaming` and `collect_all_sinks`.
+
+```python
+import sys, time, resource, json
+import polars as pl, dataframely as dy
+
+strategy, pk, upstream, n = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+
+
+class S(dy.Schema):
+    id = dy.Int64(primary_key=True) if pk != "nopk" else dy.Int64()
+    v = dy.Int64(min=0)
+    s = dy.String(nullable=False)
+
+
+base = pl.LazyFrame({"id": pl.int_range(0, n, eager=True)})
+# A bijection on [0, n) with no sorted flag: 7919 is prime and does not divide n.
+if pk == "pkhash":
+    base = base.with_columns(((pl.col("id") * 7919) % n).alias("id"))
+# A 5x intermediate, then back to 1x: the case temp landing was built for.
+if upstream == "fanout":
+    base = (
+        base.with_columns(pl.lit([0, 1, 2, 3, 4]).alias("k"))
+        .explode("k")
+        .with_columns((pl.col("id") * 5 + pl.col("k")).alias("wide"))
+        .filter(pl.col("k") == 2)
+        .drop("k", "wide")
+    )
+src = base.with_columns(
+    ((pl.col("id") * 7) % 1000 - 100).alias("v"),
+    (pl.col("id") % 97).cast(pl.String).str.zfill(6).alias("s"),
+)
+
+t0 = time.perf_counter()
+if strategy == "eager":
+    good, fail = S.filter(src.collect())
+    counts = fail.counts()
+    ngood = len(good)
+    good.write_parquet("out.parquet")
+elif strategy == "temp_land":
+    src.sink_parquet("landed.parquet", engine="streaming")
+    good, fail = S.filter(pl.read_parquet("landed.parquet"))
+    counts = fail.counts()
+    ngood = len(good)
+    good.write_parquet("out.parquet")
+elif strategy in ("collect_all_frames", "collect_all_streaming"):
+    good_lf, fail = S.filter(src)
+    eng = "streaming" if strategy.endswith("streaming") else "in-memory"
+    good, fail_df = pl.collect_all([good_lf, fail._lf], engine=eng)
+    counts = dy.FailureInfo(fail_df.lazy(), fail._rule_columns).counts()
+    ngood = len(good)
+    good.write_parquet("out.parquet")
+elif strategy == "collect_all_sinks":
+    good_lf, fail = S.filter(src)
+    res = pl.collect_all(
+        [
+            good_lf.sink_parquet("out.parquet", lazy=True),
+            fail._lf.sink_parquet("invalid.parquet", lazy=True),
+            fail._lf.select((~pl.col(fail._rule_columns)).sum()),
+        ]
+    )
+    counts = {k: v for k, v in res[2].row(0, named=True).items() if v > 0}
+    ngood = pl.scan_parquet("out.parquet").select(pl.len()).collect().item()
+elapsed = time.perf_counter() - t0
+rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+rss_mb = rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
+print(
+    json.dumps(
+        {
+            "strategy": strategy,
+            "pk": pk,
+            "upstream": upstream,
+            "n": n,
+            "s": round(elapsed, 2),
+            "peak_mb": round(rss_mb),
+            "good": ngood,
+            "counts": counts,
+        }
+    )
+)
+```
+
+### 12.6 What this addendum changes in the sections above
+
+- §1 and §2: the primary-key penalty and temp landing's memory advantage were polars 1.43.2 findings, and neither reproduced on 1.44.1.
+- §3: `FailureInfo` collecting is still true and still not the binding constraint, as §10 already narrowed it.
+- §8 recommendation B: superseded.
+  Recommendation A, lazy reads, is unaffected.
+- §9 item 1, a lazy `FailureInfo.counts()`: never filed, and no longer wanted.
+  It would spare holding the invalid rows on the abort exit only; every other exit writes, samples or co-occurrence-counts them.
+- §9 item 2, the landing location: moot.
+- §11: moot, since there is no staged file to promote.
+
+Decided 2026-09-02.
+
+---
+
 ## Uncertainty ledger
 
 Verified by running code or reading installed source:

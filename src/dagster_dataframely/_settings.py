@@ -244,7 +244,7 @@ class _Directory(_Setting[str | None]):
 
     Its own shape rather than a `_Choice`, because a path has no vocabulary. The whole point is that nothing here knows which directories a deployment has. It is also the shape with the least to do, since the environment variable already arrives as what the setting holds.
 
-    It is the one setting whose package default is `None`, and that reads as "wherever `tempfile` puts things" rather than as unset. The deferral is deliberate. The decorator resolves every setting where the asset is *declared*, so a default of `tempfile.gettempdir()` would bake the code location's temp directory into an asset whose frames are staged on a worker.
+    It is the one shape whose package default is `None`, and `None` reads as unset rather than as a directory chosen on the operator's behalf: the code that needs one raises when nobody named it.
     """
 
     @override
@@ -256,7 +256,7 @@ class _Directory(_Setting[str | None]):
     def _checked(self, value: str | None, source: str) -> str | None:
         """Refuse everything that is not a written path.
 
-        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_TEMP_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would stage the frame on the ephemeral disk the setting was set to move it off. That failure is silent, and the disk it fills is the one the pod dies on.
+        An empty value raises rather than reading as unset, which is the one decision in this shape worth arguing. `DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty, and reading that as unset would report a setting nobody wrote when somebody wrote one wrong. The refusal names the variable instead, so the fix lands where the mistake is.
 
         Raises
         ------
@@ -294,9 +294,6 @@ MAX_FAILURE_SAMPLES = _Count(name="max_failure_samples", default=5)
 
 #: How many of the valid rows a materialization carries. On by default on the same terms, and separate from the failure sample for the same reason the two are separate from `statistics`: seeing what failed and seeing what was kept are different consents.
 ROW_SAMPLE = _Count(name="row_sample", default=5)
-
-#: Which disk a lazy plan is staged on: `dy_asset` stages a lazy return before validating it. Unset is the system temp directory, which in a container is its ephemeral disk, and that is the whole reason the setting exists: a staged frame bigger than what the pod has spare fills it.
-TEMP_DIR = _Directory(name="temp_dir", default=None)
 
 #: Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources rather than three: `dy_asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a quarantined asset that reaches `file_writer` raises rather than choosing a directory on the operator's behalf.
 QUARANTINE_DIR = _Directory(name="quarantine_dir", default=None)

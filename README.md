@@ -112,9 +112,9 @@ Declare `context` when you want to reach the run itself: the partition key, the 
 Nothing rewrites your signature, so what you decorate stays a function you can read.
 
 **What you return decides what happens, not how you annotated it.**
-A `LazyFrame` is staged and validated whichever way the signature spells it, and a `dg.MaterializeResult` is unwrapped the same way.
+A `LazyFrame` is split by the same call as a `DataFrame` whichever way the signature spells it, and a `dg.MaterializeResult` is unwrapped the same way.
 `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it.
-This decorator can't, because validation is eager, so the asset always stores a `DataFrame` however the decorated function arrived at one.
+This decorator can't, because the split materializes both halves, so the asset always stores a `DataFrame` however the decorated function arrived at one.
 Annotate it anyway and a type checker will hold you to it instead.
 Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker refuses.
 
@@ -565,7 +565,7 @@ def rollup(orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
 
 Every value is now that partition's scan rather than its rows, so the concat is one plan over every partition and nothing is read until the sink runs.
 That's the difference worth having at a hundred partitions: the eager spelling holds all of them in memory at once, and this one holds the engine's buffers.
-The keys are the same either way, and so is the validation that follows: the plan is staged, read back and filtered exactly as [`LazyFrame`s](#lazyframes) describes for a single one.
+The keys are the same either way, and so is the validation that follows: the plan is split exactly as [`LazyFrame`s](#lazyframes) describes for a single one.
 
 **A `MultiPartitionsDefinition` needs nothing special either.**
 It forwards like any other, so a grid partitions the asset and the quarantine cell for cell:
@@ -657,9 +657,9 @@ What you can't do is treat it as an event source, and that's a property of it be
 
 Two seams meet a `pl.LazyFrame`, and they read it differently on purpose.
 A read has no object yet, so the annotation is the only signal it has.
-Validation refuses to stay lazy at all.
+Validation takes the plan and executes it, once, at the split.
 
-A `dy_asset` sinks your plan to a staging file on the streaming engine and reads the result back, because the rules can only be evaluated over rows in memory.
+A `dy_asset` hands your plan to `Schema.filter` and collects both halves in one pass on the streaming engine, because the rules can only be reported over rows in memory.
 The engine still does the work; what this pays for is holding what the engine produced.
 
 ```mermaid
@@ -667,11 +667,10 @@ flowchart TB
     subgraph validated["@dd.dy_asset"]
         direction TB
         V1["LazyFrame returned"] --> V2["column-schema check"]
-        V2 --> V3["sink_parquet, streaming engine"]
-        V3 --> V4["staging file"]
-        V4 --> V5["read back whole"]
-        V5 --> V6["Schema.filter, per-rule checks"]
-        V6 --> V7["DataFrame handed to the IO manager"]
+        V2 --> V3["Schema.filter, streaming engine"]
+        V3 --> V4["valid rows and invalid rows, in memory"]
+        V4 --> V5["per-rule checks"]
+        V5 --> V6["DataFrame handed to the IO manager"]
     end
 ```
 
@@ -690,9 +689,10 @@ Annotate `pl.DataFrame` instead and the file is read whole.
 
 ### Validation materializes
 
-`Schema.filter` collects, so a validated frame is a frame in memory.
+`Schema.filter` takes a plan and hands back two: the valid rows and the invalid rows.
+This package collects both, together, in one `collect_all` on the streaming engine.
 
-**A `LazyFrame` return streams to a local parquet first, then is read back whole and validated exactly as a `DataFrame` return is.**
+**A `LazyFrame` return executes there, once, and is validated exactly as a `DataFrame` return is.**
 
 ```python
 @dd.dy_asset(Orders)
@@ -700,23 +700,20 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
 ```
 
-Your joins, filters and aggregations therefore run in the streaming engine, which the sink names rather than leaves to `auto`: an engine that chose to collect would pay the write and keep the peak anyway.
-What comes back into memory is what the plan produced, not the plan.
-Peak memory is then the size of that result rather than the plan's own high-water mark.
+Your joins, filters and aggregations therefore run in the streaming engine, which the split names rather than leaves to `auto`.
+Polars falls back to the in-memory engine for anything streaming can't run, so naming it never fails a plan.
+An `auto` that chose to collect would keep the plan's own peak.
+What comes into memory is what the plan produced, not the plan.
+Peak memory is that frame plus one boolean column per rule, held once while the two halves are cut from it, rather than the plan's own high-water mark.
 That is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
-A `DataFrame` return skips the staging, because a frame you already materialized has nothing left to stream and staging it would be pure cost.
-The column-schema check runs before the staging, so a frame whose columns disagree with the schema is refused before a single row is streamed, and the staging file is removed whichever way the run ends.
-
-> [!IMPORTANT]
-> The staging file goes to the system temp directory, which in a container is its **ephemeral disk**.
-> A staged frame bigger than what the pod has spare fills it.
-> `temp_dir` points it at a mounted volume instead.
+A `DataFrame` return takes the same call after a free `.lazy()`, so there is one path and nothing past the split can tell the two apart.
+The column-schema check runs before the split, off `collect_schema()`, so a frame whose columns disagree with the schema is refused before a single row is pulled through the plan.
 
 What stays eager is storage, not the computation.
 This package doesn't promise to write a table.
 It promises to write a table and report on it.
-`dy.FailureInfo` is eager by construction, the statistics pass runs two global aggregates, and validation can't choose among its exits without counting both halves of the split.
-So the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that.
+Every exit past the split counts, samples, writes or profiles the two halves, and validation can't choose among its exits without counting both.
+So the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that, and a sink straight to storage would have written before it knew.
 A plain `@dg.asset` streams end to end, sink to storage with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
@@ -736,7 +733,6 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `statistics` | whether each materialization carries statistics for what it wrote | `true` |
 | `max_failure_samples` | how many of the rows that failed a rule reach that rule's check | `5` |
 | `row_sample` | how many rows reach the materialization, of what was written and of what failed | `5` |
-| `temp_dir` | which disk a `LazyFrame` is staged on, before it's validated | the system temp directory |
 | `quarantine_dir` | where invalid rows go when the asset is called rather than run | unset, and calling raises |
 
 `quarantine_dir` is the one with two sources rather than three: there is no argument for it, because that would be the override ADR-0006 defers.
@@ -792,29 +788,6 @@ DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 
 Turning the samples off leaves `statistics` on.
 The string family deliberately carries no value-bearing statistic at any setting, only lengths and cardinality: consenting to summary statistics is not consenting to raw values.
-
-### `temp_dir` decides which disk a lazy frame is staged on
-
-One path reads it, and it is the lazy one, so an asset that returns a `DataFrame` is unaffected by whatever it holds.
-
-Unset, the staging file goes wherever `tempfile` puts things, which in a container is the ephemeral disk its `/tmp` sits on.
-That disk is usually small, it's shared with everything else in the pod, and filling it takes the pod down rather than failing the asset.
-Point it at a volume for the whole code location:
-
-```bash
-DAGSTER_DATAFRAMELY_TEMP_DIR=/mnt/staging
-```
-
-Or per asset, where one of them is the one with the large intermediate:
-
-```python
-@dd.dy_asset(Orders, temp_dir="/mnt/staging")
-def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
-    return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
-```
-
-A directory that doesn't exist raises rather than being created, and an empty value raises rather than reading as unset.
-Both are the same decision: you set this to move the staging file off the ephemeral disk, so a typo that quietly stages there anyway is the failure it exists to prevent.
 
 ## Naming
 
@@ -1106,7 +1079,7 @@ It is worth reading for what it doesn't do:
 - The checks have no descriptions, so a red one names the rule and never what it meant.
 - No statistics, no row sample, no failure samples, no `invalid_by_rules` table: a red check says how many rows failed and nothing about what they held.
 - No `check_granularity`, so a 40-column schema is 40-odd checks and stays that way.
-- A `LazyFrame` return is yours to collect and stage.
+- A `LazyFrame` return is yours to execute and validate; nothing splits it for you.
 - Three exits rather than six.
   A run where every row failed goes green here, with the valid out skipped and nobody told.
   The decorator fails it with `NothingSurvivedError`, because consenting to partial data was never consent to no data.
@@ -1122,6 +1095,12 @@ It is worth reading for what it doesn't do:
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders.select("order_id", "amount")
 ```
+
+## Upgrading from 0.7
+
+`temp_dir` and `DAGSTER_DATAFRAMELY_TEMP_DIR` are gone.
+A `LazyFrame` return is split in the engine, so there is no staging file to place: drop the argument and the variable, and nothing else changes.
+The measurements behind it are §12 of [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
 ## Upgrading from 0.6
 
@@ -1149,7 +1128,7 @@ Both are breaking, and both are ADRs: [0004](docs/adr/0004-the-quarantine-is-a-f
 | `dy_rejected_rules` | `dataframely/invalid_by_rules` | |
 
 `dy_failed_count` and `dy_failed_sample` are unchanged.
-So are `check_granularity`, `multi_column_rules`, `statistics`, `max_failure_samples`, `row_sample` and `temp_dir`, and every asset key and rule column, so your check history survives everything except the column-schema rename.
+So are `check_granularity`, `multi_column_rules`, `statistics`, `max_failure_samples` and `row_sample`, and every asset key and rule column, so your check history survives everything except the column-schema rename.
 
 Two behaviours also moved:
 

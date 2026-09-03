@@ -373,7 +373,7 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 ):
     """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
 
-    # #77 documents that `dy_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and validation is eager, so the asset holds a `DataFrame` however the decorated function arrived at it.
+    # #77 documents that `dy_asset` does the opposite, and the claim is only worth making while this half of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and the split materializes both halves, so the asset holds a `DataFrame` however the decorated function arrived at it.
     # Undocumented as a contrast, though each half is documented alone. What a reader carries over from `@dg.asset` is exactly the expectation this breaks.
     @dg.asset(name="mismatch")
     def mismatch() -> pl.DataFrame:

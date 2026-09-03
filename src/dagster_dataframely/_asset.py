@@ -40,7 +40,6 @@ from dagster_dataframely._settings import (
     QUARANTINE_DIR,
     ROW_SAMPLE,
     STATISTICS,
-    TEMP_DIR,
     Granularity,
     MultiColumnRules,
 )
@@ -149,7 +148,6 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
-    temp_dir: str | None = None,
     # --- forwarded to @dg.asset, verbatim, except `description`, which resolves against the schema first, and `metadata`, which the schema's Columns tab is applied over ---
     name: str | None = None,
     key_prefix: str | Sequence[str] | None = None,
@@ -186,7 +184,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
         pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
         None
 
-    **The object returned decides what happens, never the annotation.** A `LazyFrame` streams to a local parquet before it is validated whichever way the signature spells it. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch. This decorator cannot: the annotation describes what the decorated function handed over, while `dagster_type` describes what the asset stores, and those differ here. Validation is eager, so the asset always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
+    **The object returned decides what happens, never the annotation.** A `LazyFrame` is split by the same call as a `DataFrame` whichever way the signature spells it, and executes there, once, on the streaming engine. `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it and failing the run on a mismatch. This decorator cannot: the annotation describes what the decorated function handed over, while `dagster_type` describes what the asset stores, and those differ here. The split materializes both halves, so the asset always holds a `DataFrame` however the decorated function arrived at it. Annotate it anyway and a type checker holds you to it instead. Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker rejects.
 
     **Returning `None` skips the asset.** Nothing is validated, nothing materializes, and the run stays green, so a partition with no source data stays unmaterialized instead of going green with zero rows or red with an error. It is for the partition that has no data and never will, which is neither an empty report nor a broken pipeline:
 
@@ -236,8 +234,6 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
         Whether the materialization carries `skimr`-style statistics for what it wrote: one table per dtype family present. Opt-out rather than opt-in, so `False` is what turns the pass off. The string family deliberately carries no value-bearing statistic at either value, only lengths and cardinality: consenting to summary statistics is not consenting to raw values. That is what the two sample settings are for, which is why they are separate from this one. The quarantine carries none at any value, because nothing consumes it. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then the package default `true`.
     row_sample
         How many rows reach the materialization metadata, of what was written under `dataframely/valid_sample` and of what was held back under `dataframely/invalid_sample`. Opt-out on the same terms as `max_failure_samples`, with the same consequence: **these are real rows in the event log**, and `0` is what turns them off. One number for both, so consenting to a sample is one decision. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then the package default `5`.
-    temp_dir
-        Where a `LazyFrame` return is staged before it is validated. Read on that path only, so an asset returning a `DataFrame` is unaffected by it. **Unset, the staging file goes to the system temp directory, which in a container is its ephemeral disk**, and a staged frame bigger than what the pod has spare fills it. Pointing this at a mounted volume is the fix. A directory that does not exist raises rather than being created, because a mistyped path silently created on that disk is the failure this setting was set to avoid. Unset resolves through `DAGSTER_DATAFRAMELY_TEMP_DIR`.
     name
         Asset name. Defaults to the function name.
     key_prefix
@@ -325,7 +321,6 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    staging_dir: str | None = TEMP_DIR.resolve(temp_dir)
     quarantine_root: str | None = QUARANTINE_DIR.resolve(None)
 
     forwarded: dict[str, Any] = {
@@ -381,7 +376,6 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
                     max_failure_samples=failure_samples,
                     statistics=emit_statistics,
                     row_sample=sampled_rows,
-                    temp_dir=staging_dir,
                 ),
                 returned_result,
                 valid_key=key,

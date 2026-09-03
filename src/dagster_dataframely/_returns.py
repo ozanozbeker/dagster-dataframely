@@ -21,7 +21,7 @@ from dagster_dataframely.errors import (
 #: A `dg.MaterializeResult` a decorated function returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would accept neither.
 ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.LazyFrame]
 
-#: Everything a decorated function is allowed to return. A static promise only. `unwrap` and the staging decision both read the object that arrives, never the annotation it was declared under, so a wrongly annotated function still behaves as whatever it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it. This decorator cannot: `dagster_type` describes what the asset stores, validation is eager, and the asset holds a `DataFrame` however the decorated function arrived at it.
+#: Everything a decorated function is allowed to return. A static promise only. `unwrap` reads the object that arrives, never the annotation it was declared under, so a wrongly annotated function still behaves as whatever it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it. This decorator cannot: `dagster_type` describes what the asset stores, the split materializes both halves, and the asset holds a `DataFrame` however the decorated function arrived at it.
 #:
 #: `None` is the skip, and it is a value rather than an exception on purpose. The decorator cannot tell a source file that is legitimately absent from a path that is misconfigured, so it never catches one to decide. The author writes the test that returns `None` (#95).
 DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None

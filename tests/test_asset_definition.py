@@ -962,7 +962,6 @@ _NO_DG_ASSET_COUNTERPART = {
     "max_failure_samples",
     "statistics",
     "row_sample",
-    "temp_dir",
 }
 
 # Parameters `dg.asset` has that the decorator deliberately does not, each for a reason that is not "nobody thought about it".
