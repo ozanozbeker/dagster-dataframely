@@ -1,10 +1,10 @@
 """Calling a `@dy_asset` instead of running it.
 
-Direct invocation is Dagster's documented unit-testing path, and it costs nothing: no run, no IO manager, no instance. `MaterializeResult` carries the frame on `value`, so a call hands back the validated rows and every check outcome as ordinary Python objects.
+Direct invocation is Dagster's documented unit-testing path: no run, no IO manager, no instance. `MaterializeResult` carries the frame on `value`, so a call hands back the validated rows and every check outcome as ordinary Python objects.
 
-Both shapes here are asserted twice, once by calling and once through `dg.materialize`. The property worth having is not that a call yields a key, but that it yields *the same* key a run writes under.
+Both failure policies here are asserted twice, once by calling and once through `dg.materialize`. The property worth having is that a call yields the same key a run writes under, not only that it yields a key.
 
-A call reaches no IO manager, so a quarantined asset falls back to the file writer under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` (ADR-0006). That is what makes the held-back rows assertable here at all: a run puts them wherever the manager puts things, and a call puts them somewhere the test named.
+A call reaches no IO manager, so a quarantined asset falls back to the file writer under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` (ADR-0006). That makes the held-back rows assertable here: a run puts them wherever the manager puts things, and a call puts them somewhere the test named.
 """
 
 from collections.abc import Callable
@@ -32,7 +32,7 @@ _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefinition:
-    """The same decorated function under whichever declaration a shape asks for."""
+    """The same decorated function under whichever declaration a case asks for."""
 
     @dy_asset(Orders, name="orders", **settings)
     def orders() -> pl.DataFrame:
@@ -44,13 +44,13 @@ def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefi
 def _called(asset: dg.AssetsDefinition, *, quarantine: bool) -> _Yielded:
     """Call the asset, supplying the context a quarantined one declares.
 
-    `quarantine=True` adds a `context` parameter whether or not the decorated function asked for one, because the writer is built from it and nothing else can reach it.
+    `quarantine=True` adds a `context` parameter whether or not the decorated function asked for one. The writer is built from it and nothing else can reach it.
     """
     return _events(asset, *((dg.build_asset_context(),) if quarantine else ()))
 
 
-# The two failure policies, each with the frame that reaches its middle exit.
-# `cooccurring_orders` rather than `mixed_orders` for the quarantined shape: it splits 3 valid against 1 invalid, where `mixed_orders` splits 3 against 3, and an even split leaves the rows that were written and the rows that were held back indistinguishable by count.
+# The two failure policies, each with the frame that materializes rows under it.
+# `cooccurring_orders` rather than `mixed_orders` for the quarantined policy: it yields 3 valid rows against 1 invalid, where `mixed_orders` yields 3 against 3. Equal counts leave the written rows and the held-back rows indistinguishable.
 _SHAPES = [
     pytest.param(clean_orders, False, id="no quarantine"),
     pytest.param(cooccurring_orders, True, id="quarantine"),
@@ -61,7 +61,7 @@ _SHAPES = [
 def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point `file_writer` at a directory this test owns.
 
-    Set before the asset is declared, because the decorator resolves every setting where the asset is declared rather than where it runs.
+    Set before the asset is declared, because the decorator resolves every setting where the asset is declared, not where it runs.
     """
     directory = tmp_path / "quarantine"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(directory))
@@ -71,7 +71,7 @@ def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _events(asset: dg.AssetsDefinition, *args: object) -> _Yielded:
     """Call the asset and drain what comes back.
 
-    `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator, which is what the ignore asserts and what `tests/test_upstream_characterization.py` pins.
+    `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator. The ignore asserts that, and `tests/test_upstream_characterization.py` pins it.
     """
     return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
 
@@ -119,7 +119,7 @@ def test_calling_the_asset_hands_back_its_frame(
 def test_calling_the_asset_reports_every_check_it_declares(
     quarantine_dir: Path, frame: Callable[[], pl.DataFrame], quarantine: bool
 ):
-    """Standalone results, one per spec. Bundling them onto the materialization is what direct invocation refuses."""
+    """Standalone results, one per spec. Direct invocation refuses to bundle them onto the materialization."""
     asset = _orders(frame, quarantine=quarantine)
 
     checks = _checks(_called(asset, quarantine=quarantine))
@@ -136,7 +136,7 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
 ):
     """The property the whole change rests on. Resolving the key at definition time is only safe while it agrees with what Dagster derives at run time.
 
-    Compared by row count as well as by key, which is why the frames above split unevenly: a call that reported the held-back rows as the written ones would still yield the right key.
+    Compared by row count as well as by key, so the frames above hold uneven counts of valid and invalid rows: a call that reported the held-back rows as the written ones would still yield the right key.
     """
     asset = _orders(frame, quarantine=quarantine)
     result = _run(tmp_path, asset)
@@ -171,7 +171,7 @@ def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
 
 
 def test_a_column_schema_drift_raises_out_of_the_call():
-    """The error a user is meant to read, rather than a step failure they have to open a run to find."""
+    """The error a user is meant to read, not a step failure they have to open a run to find."""
     asset = _orders(wrong_dtype_orders)
 
     with pytest.raises(ColumnSchemaError) as raised:
@@ -183,9 +183,9 @@ def test_a_column_schema_drift_raises_out_of_the_call():
 def test_a_called_quarantine_writes_a_real_file_under_the_configured_root(
     quarantine_dir: Path,
 ):
-    """The middle exit, reached by calling: three rows handed back and three on disk where the setting says.
+    """Rows failed and a quarantine took them, reached by calling: three rows handed back and three on disk where the setting says.
 
-    A test that wants the placement a run would give runs the asset. This is the other half: the rows a call held back, in a file the test named, so a unit test can open them.
+    A test that wants the placement a run would give runs the asset. This test covers the other route: the rows a call held back, in a file the test named, so a unit test can open them.
     """
     asset = _orders(mixed_orders, quarantine=True)
 
@@ -199,7 +199,7 @@ def test_a_called_quarantine_writes_a_real_file_under_the_configured_root(
 
 
 def test_a_called_quarantine_with_no_root_says_so_rather_than_choosing_one():
-    """The rows are evidence, and writing them somewhere nobody named is how evidence gets lost."""
+    """The rows are evidence. Writing them somewhere nobody named loses them."""
     asset = _orders(mixed_orders, quarantine=True)
 
     with pytest.raises(QuarantineDirError) as raised:
@@ -212,7 +212,7 @@ def test_a_called_quarantine_with_no_root_says_so_rather_than_choosing_one():
 def test_a_called_partitioned_quarantine_lands_under_its_partition(
     quarantine_dir: Path,
 ):
-    """`build_asset_context(partition_key=...)` is the whole of what the fallback reads off the context, and one file per partition is what a backfill of one partition rewrites."""
+    """The fallback reads only the partition key off the context, and `build_asset_context(partition_key=...)` supplies it. One file per partition means a backfill of one partition rewrites one file."""
 
     @dy_asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
     def orders() -> pl.DataFrame:
@@ -224,7 +224,7 @@ def test_a_called_partitioned_quarantine_lands_under_its_partition(
 
 
 def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_built_one():
-    """`dg.build_asset_context` is what makes a partitioned asset testable by calling it. It cannot set the ContextVar `AssetExecutionContext.get()` reads, which is why the wrapper no longer reads one."""
+    """`dg.build_asset_context` makes a partitioned asset testable by calling it. It cannot set the ContextVar `AssetExecutionContext.get()` reads, so the wrapper no longer reads one."""
     seen: dict[str, str] = {}
 
     @dy_asset(Orders, name="orders", partitions_def=_DAYS)
@@ -241,7 +241,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
 
 
 def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too():
-    """The context comes first and the frames follow, exactly as Dagster orders them."""
+    """The context comes first and the frames follow, as Dagster orders them."""
 
     @dy_asset(Orders, name="orders")
     def orders(

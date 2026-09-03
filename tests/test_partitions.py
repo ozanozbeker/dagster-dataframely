@@ -1,8 +1,8 @@
-"""What a partitioned `@dy_asset` actually does, asserted rather than assumed.
+"""What a partitioned `@dy_asset` does, asserted rather than assumed.
 
-Partitioning is forwarded, not designed around (#25). The risk was never that the mechanics are wrong. It is that nobody looked. This file is the executable half of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document quietly wrong.
+Partitioning is forwarded, not designed around (#25). The risk was not wrong mechanics but that nobody looked. This file is the executable version of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document wrong.
 
-Static partitions throughout, except where a test says otherwise. They name the frame each partition gets, which makes the fixture readable. A date would only obscure it.
+Static partitions throughout, except where a test says otherwise. Their keys name the frame each partition gets, which keeps the fixture readable. A date would obscure it.
 """
 
 from pathlib import Path
@@ -31,7 +31,7 @@ _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 
 @dy_asset(Orders, name="orders", quarantine=True, partitions_def=_PARTITIONS)
 def _orders() -> pl.DataFrame:
-    # Reached through `.get()` rather than through a `context` parameter, which this decorated function is free to declare (ADR-0002). Both work inside a run, and covering the accessor here is what keeps a Dagster release that broke it visible.
+    # Reached through `.get()` rather than a `context` parameter, which this decorated function is free to declare (ADR-0002). Both work inside a run. Covering the accessor here keeps a Dagster release that broke it visible.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
 
 
@@ -103,7 +103,7 @@ def test_the_quarantine_lands_under_the_partition_that_produced_it(tmp_path: Pat
 
 
 def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
-    """Same rule as unpartitioned, which is what makes an empty quarantine partition mean something."""
+    """Same rule as unpartitioned, so an empty quarantine partition means something."""
     result = _materialize(tmp_path, "clean")
 
     assert set(_partitions(result)) == {_GOOD_KEY}
@@ -163,7 +163,7 @@ def test_a_drifting_partition_leaves_every_other_partition_alone(tmp_path: Path)
 def test_every_partition_reports_its_own_checks_and_names_no_partition(
     tmp_path: Path, partition_key: str, failing: set[str]
 ):
-    """Each partition's checks are decided by its own frame, and none of them says which partition that was. That is the finding this ticket exists to record: Dagster stamps a partition onto an evaluation only when the check's own spec carries a `partitions_def`, which is a preview API this package does not use, so every rule reports against the asset instead."""
+    """Each partition's own frame decides its checks, and none of them says which partition that was. This is the finding the ticket records. Dagster stamps a partition onto an evaluation only when the check's own spec carries a `partitions_def`, a preview API this package does not use, so every rule reports against the asset."""
     result = _materialize(tmp_path, partition_key, raise_on_error=False)
     evaluations = _evaluations(result)
 
@@ -172,12 +172,12 @@ def test_every_partition_reports_its_own_checks_and_names_no_partition(
 
 
 def test_check_history_across_a_backfill_is_one_timeline_per_check(tmp_path: Path):
-    """A backfill is one run per partition, and every run appends to the same per-check timeline. The failing partition ran first here, so the catalog's latest word on `amount|min` is the clean partition's: a partition-scoped failure is legible only by walking the history."""
+    """A backfill is one run per partition, and every run appends to the same per-check timeline. The failing partition ran first here, so the catalog's latest word on `amount|min` is the clean partition's. A partition-scoped failure is legible only by walking the history."""
     with dg.DagsterInstance.ephemeral() as instance:
         _materialize(tmp_path, "mixed", instance=instance)
         _materialize(tmp_path, "clean", instance=instance)
 
-        # Private upstream storage, and the only route that answers "what would the catalog show" without a webserver. Newest first.
+        # Private upstream storage: the only route to what the catalog would show without a webserver. Newest first.
         history = instance.event_log_storage.get_asset_check_execution_history(
             check_key=_AMOUNT_MIN, limit=10
         )
@@ -194,7 +194,7 @@ def test_check_history_across_a_backfill_is_one_timeline_per_check(tmp_path: Pat
 def test_a_history_row_is_traceable_to_its_partition_through_the_materialization(
     tmp_path: Path,
 ):
-    """The one route back. Dagster scopes `target_materialization_data` to the step's partition even when the check itself is unpartitioned, so a history row can be attributed after the fact, by hand, off the storage id it points at."""
+    """The one route back. Dagster scopes `target_materialization_data` to the step's partition even when the check is unpartitioned, so a history row can be attributed by hand, after the fact, through the storage id it points at."""
     with dg.DagsterInstance.ephemeral() as instance:
         _materialize(tmp_path, "mixed", instance=instance)
         _materialize(tmp_path, "clean", instance=instance)
@@ -219,9 +219,9 @@ def test_a_history_row_is_traceable_to_its_partition_through_the_materialization
 
 
 def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
-    """Dagster's behaviour, not this package's, and the reason the finding above is worse on dates than on the static partitions the rest of this file uses.
+    """Dagster's behaviour, not this package's. It makes the finding above worse on dates than on the static partitions the rest of this file uses.
 
-    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none, and the update that would close the row matches on partition, so it misses. The planned row is left behind for good, and the result is inserted as a second, partition-less row. The catalog therefore holds one never-executed row per partition alongside a timeline that names none of them.
+    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none. The update that would close the row matches on partition, so it misses. The planned row stays for good, and the result is inserted as a second, partition-less row. The catalog then holds one never-executed row per partition beside a timeline that names none of them.
     """
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
@@ -250,7 +250,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 
 # --- backfill policy ---
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
-    """`backfill_policy` forwards like every other `dg.asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage. `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write. So the decorator leaves it alone rather than rejecting a policy it cannot know the manager for."""
+    """`backfill_policy` forwards like every other `dg.asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, names the fix, and arrives on the first run rather than after a wrong write. So the decorator does not reject the policy; it cannot know which manager will run."""
 
     @dy_asset(
         Orders,
@@ -283,7 +283,7 @@ def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
 
 
 # --- a partition with no source data ---
-# The motivating shape (#95): a monthly x distributor grid where one distributor left the
+# The motivating case (#95): a monthly x distributor grid where one distributor left the
 # marketplace. Its historical cells hold real data and must stay. Its recent cells have no file
 # and never will, which is neither a failure nor an empty report.
 _GRID = dg.MultiPartitionsDefinition(
@@ -320,7 +320,7 @@ def _materialize_cell(
 
 
 def test_a_partition_with_no_source_data_stays_unmaterialized(tmp_path: Path):
-    """Green with zero rows would read as an empty report arriving, and red would read as a broken pipeline. Neither happened, so the cell is left with no materialization at all and the run still succeeds."""
+    """Writing zero rows would read as an empty report arriving, and failing the run would read as a broken pipeline. Neither happened, so the cell gets no materialization and the run still succeeds."""
     result = _materialize_cell(tmp_path, _DEPARTED)
 
     assert result.success
@@ -329,7 +329,7 @@ def test_a_partition_with_no_source_data_stays_unmaterialized(tmp_path: Path):
 
 
 def test_a_skipped_partition_leaves_every_other_cell_alone(tmp_path: Path):
-    """The whole reason the exit is per-partition. A distributor that left still owns its history, and skipping this month's cell cannot touch last month's file."""
+    """The reason the skip is per-partition. A departed distributor still owns its history, so skipping this month's cell cannot touch last month's file."""
     kept = dg.MultiPartitionKey({"month": "2026-01", "distributor": "departed"})
 
     assert _materialize_cell(tmp_path, kept).success
@@ -341,7 +341,7 @@ def test_a_skipped_partition_leaves_every_other_cell_alone(tmp_path: Path):
 
 
 def test_a_skipped_partition_still_reports_its_checks(tmp_path: Path):
-    """Answering the check list is what keeps the step green, so this is the assertion the exit rests on rather than a nicety."""
+    """A step that leaves a check spec unanswered fails outright, so the skip rests on this assertion."""
     result = _materialize_cell(tmp_path, _DEPARTED)
     evaluations = _evaluations(result)
 
@@ -352,7 +352,7 @@ def test_a_skipped_partition_still_reports_its_checks(tmp_path: Path):
 def test_a_skip_does_not_stamp_a_later_check_onto_an_earlier_partitions_table(
     tmp_path: Path,
 ):
-    """`test_a_history_row_is_traceable_to_its_partition_through_the_materialization` shows a check's only route back to a partition is `target_materialization_data`. A skipped run writes no materialization, so that route is empty rather than pointing at the last cell that did have data."""
+    """`test_a_history_row_is_traceable_to_its_partition_through_the_materialization` shows a check's only route back to a partition is `target_materialization_data`. A skipped run writes no materialization, so that route is empty; it must not point at the last cell that had data."""
     with dg.DagsterInstance.ephemeral() as instance:
         traded = dg.MultiPartitionKey({"month": "2026-01", "distributor": "trading"})
         _materialize_cell(tmp_path, traded, instance=instance)

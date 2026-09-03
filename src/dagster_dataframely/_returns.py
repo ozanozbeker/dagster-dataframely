@@ -1,12 +1,12 @@
-"""What a decorated function may hand back, and what a returned `dg.MaterializeResult` does to the materialization.
+"""What a decorated function may return, and what a returned `dg.MaterializeResult` does to the materialization.
 
-A decorated function returns the frame to validate, or a `dg.MaterializeResult` carrying it, or `None` to skip the asset entirely. Dagster's own docs teach the second spelling for attaching metadata, and it is the only route to a materialization's tags and data version. Refusing it would cost parity with the `@dg.asset` this decorator is modelled on (#77).
+A decorated function returns the frame to validate, a `dg.MaterializeResult` carrying it, or `None` to skip the asset. Dagster's docs teach the second spelling for attaching metadata, and it is the only route to a materialization's tags and data version. Refusing it would cost parity with `@dg.asset` (#77).
 
-`None` carries nothing, so the unwrap has nothing to take off it and the fold has nothing to land on. That asymmetry is the reason `dg.MaterializeResult(value=None)` stays refused: a skipped run writes no materialization, so there is nowhere for its `metadata`, `tags` and `data_version` to go (#95).
+`None` carries nothing, so `unwrap` has nothing to take off it and `fold` has nothing to land on. So `dg.MaterializeResult(value=None)` stays refused: a skipped run writes no materialization, so its `metadata`, `tags` and `data_version` would have nowhere to go (#95).
 
-Two halves, and neither reads without the other. The unwrap runs between calling the decorated function and handing the frame to `process`. The fold runs over what `process` yields. `process` itself is untouched by both, so a hand-wired asset still hands it a frame and its own guard still says so.
+Two functions. `unwrap` runs between calling the decorated function and handing the frame to `process`. `fold` runs over what `process` yields. `process` itself is untouched by both, so a hand-wired asset still hands it a frame and its own guard still says so.
 
-The unwrap takes `value`. The fold takes `metadata`, `data_version` and `tags`. That is four of the six fields. The other two are refused here, because the decorator decides the asset key from what it was declared with and the check results from the schema's rules.
+`unwrap` takes `value`. `fold` takes `metadata`, `data_version` and `tags`. The other two fields are refused here: the decorator decides the asset key from its declaration and the check results from the schema's rules.
 """
 
 import dagster as dg
@@ -18,13 +18,14 @@ from dagster_dataframely.errors import (
     MaterializeResultValueError,
 )
 
-#: A `dg.MaterializeResult` a decorated function returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would accept neither.
 ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.LazyFrame]
+"""A `dg.MaterializeResult` a decorated function returned. Both frame types are spelled out because `MaterializeResult` is generic and invariant in its value, so one parameterized on the union would accept neither."""
 
-#: Everything a decorated function is allowed to return. A static promise only. `unwrap` reads the object that arrives, never the annotation it was declared under, so a wrongly annotated function still behaves as whatever it returned. `@dg.asset` holds its annotation by inferring the output's `dagster_type` from it. This decorator cannot: `dagster_type` describes what the asset stores, the split materializes both halves, and the asset holds a `DataFrame` however the decorated function arrived at it.
-#:
-#: `None` is the skip, and it is a value rather than an exception on purpose. The decorator cannot tell a source file that is legitimately absent from a path that is misconfigured, so it never catches one to decide. The author writes the test that returns `None` (#95).
 DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None
+"""Everything a decorated function may return. A static promise only: `unwrap` reads the object that arrives, never the annotation, so a wrongly annotated function still behaves as whatever it returned.
+
+`None` is the skip, and it is a value rather than an exception. The decorator cannot tell a source file that is legitimately absent from a misconfigured path, so it never catches an exception to decide. The author writes the condition that returns `None` (#95).
+"""
 
 
 def unwrap(
@@ -32,14 +33,14 @@ def unwrap(
 ) -> tuple[pl.DataFrame | pl.LazyFrame | None, ReturnedResult | None]:
     """Separate the frame to validate from the fields to fold in.
 
-    A bare frame passes straight through with nothing to fold. Returning one is therefore byte-for-byte what it was: no metadata, tags or data version can appear on that path that did not appear before. `None` passes through the same way, and `process` reads it as the skip.
+    A bare frame passes straight through with nothing to fold, so that path is unchanged: no metadata, tags or data version appear on it. `None` passes through the same way, and `process` reads it as the skip.
 
-    Every refusal is raised here rather than inside `process`, and all three are pipeline defects that no run should reach twice. The frame guard in `process` is deliberately left alone and still refuses a `dg.MaterializeResult` handed to it directly. That is what hand-wiring gets.
+    Every refusal is raised here, not inside `process`. All three are pipeline defects no run should reach twice. The frame guard in `process` stays as it is and still refuses a `dg.MaterializeResult` handed to it directly. Hand-wiring gets that guard and nothing more.
 
     Parameters
     ----------
     returned
-        Whatever the decorated function returned, frame or result or `None` alike.
+        Whatever the decorated function returned: frame, result or `None`.
     asset
         The asset key, rendered, for the messages.
 
@@ -52,7 +53,7 @@ def unwrap(
     MaterializeResultFieldError
         The result sets `asset_key` or `check_results`.
     MaterializeResultValueError
-        The result carries no frame on `value`. A result is how metadata reaches a materialization, and a skipped run has none, so `value=None` is refused rather than read as the skip.
+        The result carries no frame on `value`. A result exists to carry metadata onto a materialization, and a skipped run has none, so `value=None` is refused rather than read as the skip.
     """
     if not isinstance(returned, dg.MaterializeResult):
         return returned, None
@@ -61,7 +62,7 @@ def unwrap(
         raise MaterializeResultFieldError(asset, "asset_key")
     if returned.check_results:
         raise MaterializeResultFieldError(asset, "check_results")
-    # `value` defaults to a sentinel rather than to `None`, so one check covers both a result carrying nothing and one carrying something that is not a frame.
+    # `value` defaults to a sentinel, not `None`, so one check covers a result carrying nothing and one carrying something that is not a frame.
     if not isinstance(returned.value, (pl.DataFrame, pl.LazyFrame)):
         raise MaterializeResultValueError(asset)
     return returned.value, returned
@@ -75,13 +76,13 @@ def fold(
 ) -> AssetYield:
     """Carry the returned result's remaining three fields onto the asset's materialization.
 
-    Three, because the unwrap already took `value`. Whatever it still holds is the frame `process` has since validated, so nothing here reads it.
+    Three, because `unwrap` already took `value`. Whatever `value` still holds is the frame `process` has since validated, so nothing here reads it.
 
-    The table only. Nothing reaches the quarantine, which materializes no event to carry a tag or a data version: it is evidence of a run rather than an asset (ADR-0004).
+    The table only. The quarantine materializes no event to carry a tag or a data version: it is evidence of a run, not an asset (ADR-0004).
 
-    The two metadata mappings combine with the package's own keys last, so a returned `dagster/row_count` loses to the one this package counted. The decorator already uses that precedence for definition metadata, and for the same reason: those keys are this package's surface, and a collision is a mistake.
+    The two metadata mappings combine with the package's own keys last, so a returned `dagster/row_count` loses to the one this package counted. The decorator uses the same precedence for definition metadata: those keys belong to this package, and a collision is a mistake.
 
-    The materialization is rebuilt rather than mutated, because `dg.MaterializeResult` is immutable. Every field is named, so a seventh field added upstream would silently drop. `tests/test_upstream_characterization.py` pins the six and fails there instead.
+    The materialization is rebuilt, not mutated, because `dg.MaterializeResult` is immutable. Every field is named, so a seventh field added upstream would silently drop. `tests/test_upstream_characterization.py` pins the six and fails there instead.
 
     Parameters
     ----------

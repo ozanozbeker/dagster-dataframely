@@ -1,6 +1,6 @@
 """What the validation path reads off a frame before it decides anything about it.
 
-Comparing a frame against its schema is about the frame alone. It reads no schema rule, no check name and no asset context. Every other step in `_runtime` needs all three, so this one sits apart from it.
+The column-schema comparison reads no rule, check name, or asset context. Every other step in `_runtime` needs all three, so it lives apart.
 """
 
 import dataframely as dy
@@ -12,9 +12,7 @@ def column_schema_problems(
 ) -> list[dict[str, str]]:
     """Compare the frame's columns and dtypes against the schema, naming every mismatch.
 
-    An explicit pre-check, not a `try`/`except` around `filter`. The split takes a plan, so a column-schema mismatch would surface only at `collect_all`, after the plan had executed, as whatever Polars raises for the first column it tripped over. This runs first, executes nothing, and names every offending column at once.
-
-    Only public API, and none of it executes. `collect_schema()` resolves a `LazyFrame`'s column schema without running it.
+    An explicit pre-check, not a `try`/`except` around `filter`. `Schema.filter` takes a plan, so a mismatch would appear only at `collect_all`, after the plan had run, as whatever Polars raises for the first bad column. This runs first, executes nothing, and names every offending column at once. `collect_schema()` resolves a `LazyFrame`'s column schema without running it.
 
     Parameters
     ----------

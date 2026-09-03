@@ -1,10 +1,10 @@
 """What a quarantine is called, where it goes, and who puts it there.
 
-Three surfaces, one naming rule. `quarantine_path` and `build_quarantine_spec` are pure, so most of this file needs no run. The writers are not, and the delegation tests are the only ones in the suite that care which IO manager is behind the asset.
+`quarantine_path` and `build_quarantine_spec` are pure, so most of this file needs no run. The writers are not. The delegation tests are the only ones in the suite that care which IO manager is behind the asset.
 
-**Delegation is asserted against two managers, and it has to be** (ADR-0006). The whole claim is that nothing in the package knows where the rows are going, and one manager cannot show that. `PolarsParquetIOManager` is a `UPathIOManager` and `DuckDBPolarsIOManager` is a `DbIOManager`, which is one from each base class Dagster ships.
+Delegation is asserted against two managers (ADR-0006). The claim is that nothing in the package knows where the rows go, and one manager cannot show that. `PolarsParquetIOManager` is a `UPathIOManager` and `DuckDBPolarsIOManager` is a `DbIOManager`: one from each base class Dagster ships.
 
-The multi-partition spelling is asserted here against a literal and pinned against `UPathIOManager`'s own path in `test_upstream_characterization.py`. Two assertions rather than one: this file says what the rule is, that one says whose rule it is.
+The multi-partition spelling is asserted here against a literal and pinned against `UPathIOManager`'s own path in `test_upstream_characterization.py`. This file says what the rule is; that one says whose rule it is.
 """
 
 from collections.abc import Callable, Sequence
@@ -45,14 +45,14 @@ _GRID = dg.MultiPartitionsDefinition(
 
 
 def _invalid_rows() -> pl.DataFrame:
-    """The frame a quarantine actually holds: invalid rows plus a rule column each."""
+    """Build the frame a quarantine holds: invalid rows plus a rule column each."""
     _, failure = Orders.filter(mixed_orders())
     return quarantine_frame(Orders, failure)
 
 
 # --- the path ---
 def test_the_leaf_carries_the_suffix_so_a_shared_root_cannot_overwrite(tmp_path: Path):
-    """The whole point of `_quarantine` on the leaf. `UPathIOManager` writes `orders.parquet` under the same quarantine_dir, so the two sit beside each other rather than one over the other. The delegating writer puts the same suffix on the asset key, so both routes name one thing."""
+    """`UPathIOManager` writes `orders.parquet` under the same quarantine_dir, so the suffix keeps the two side by side instead of one over the other. The delegating writer puts the same suffix on the asset key, so both routes name one thing."""
     path = quarantine_path(_ORDERS, tmp_path)
 
     assert path == UPath(tmp_path) / "orders_quarantine.parquet"
@@ -104,7 +104,7 @@ def test_a_multi_partition_key_is_spelled_in_dimension_name_order(tmp_path: Path
     ids=["unpartitioned", "partitioned", "multi_partitioned"],
 )
 def test_a_cloud_root_is_the_same_rule(partition_key: str | None, tail: str):
-    """One rule and one `UPath`, so nothing about the path changes when the quarantine_dir moves to object storage. Every form, because a `/` in the tail is exactly where a scheme-aware path could have behaved differently."""
+    """One rule and one `UPath`, so nothing about the path changes when the quarantine_dir moves to object storage. Every form, because a `/` in the tail is where a scheme-aware path could behave differently."""
     path = quarantine_path(
         dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse", partition_key
     )
@@ -126,7 +126,7 @@ def test_a_partition_key_cannot_climb_out_of_the_root(
 ):
     """A partition key can come from data, and both of these resolve outside the quarantine_dir unescaped: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks `..` upward at write time.
 
-    `FilesystemIOManager`'s pair of escapes rather than the `UPathIOManager` base class's one, which is upstream's own documented advice for a hierarchical filesystem.
+    `FilesystemIOManager`'s pair of escapes, not the `UPathIOManager` base class's one, as upstream documents for a hierarchical filesystem.
     """
     path = quarantine_path(_ORDERS, tmp_path, partition_key)
 
@@ -162,7 +162,7 @@ def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from():
 
 
 def test_the_spec_takes_the_partitions_off_the_definition():
-    """Read rather than passed, so the spec cannot disagree with the asset whose invalid rows it holds."""
+    """Read, not passed, so the spec cannot disagree with the asset whose invalid rows it holds."""
     assert build_quarantine_spec(Orders, orders).partitions_def == _DAYS
 
 
@@ -174,7 +174,7 @@ def test_the_description_names_the_asset_the_rows_came_from():
 
 
 def test_the_columns_tab_states_no_constraint():
-    """These rows are here for breaking the constraints, so a `not null` on a column full of nulls would be false about every row in the table."""
+    """These rows broke the constraints, so a `not null` on a column full of nulls would be false about every row."""
     table = build_quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
 
     assert isinstance(table, dg.TableSchema)
@@ -201,7 +201,7 @@ def test_the_columns_tab_carries_a_column_for_every_rule():
 def test_a_key_form_is_keyed_exactly_as_the_definition_form(
     form: dg.AssetKey | Sequence[str],
 ):
-    """For a generated or foreign asset there is no definition to read, and the answer has to be the same one."""
+    """A generated or foreign asset has no definition to read, and the answer must be the same."""
     assert build_quarantine_spec(Orders, form).key == dg.AssetKey(
         ["sales", "orders_quarantine"]
     )
@@ -239,7 +239,7 @@ def test_a_key_form_takes_the_partitions_it_is_given(
 
 
 def test_a_definition_and_a_partitions_def_together_raise():
-    """Two sources of one fact, and nothing decides which wins. Raising at call time is the only answer that cannot silently drift."""
+    """Two sources of one fact, and nothing decides which wins. Raising at call time is the only answer that cannot drift."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
         build_quarantine_spec(Orders, orders, partitions_def=_DAYS)
 
@@ -256,7 +256,7 @@ def _loaded(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Write a real quarantine frame where the rule says, then read it back downstream.
 
-    The quarantine_dir is the manager's `base_dir`, which is the arrangement all three of these tests exist to prove. Nothing in the run knows about this package: the spec supplies a key and `PolarsParquetIOManager` resolves it to the file already sitting there.
+    The quarantine_dir is the manager's `base_dir`, the arrangement all three of these tests prove. Nothing in the run knows about this package: the spec supplies a key and `PolarsParquetIOManager` resolves it to the file already there.
 
     Returns
     -------
@@ -286,7 +286,7 @@ def _loaded(
 def test_a_downstream_asset_loads_the_file_with_no_help_from_this_package(
     tmp_path: Path,
 ):
-    """What the fallback buys when it is the one in use. Every column survives, rule columns included, so what a reader depends on is the file itself rather than a projection of it."""
+    """Every column survives, rule columns included, so a reader depends on the file itself, not a projection of it."""
     loaded, written = _loaded(tmp_path)
 
     assert_frame_equal(loaded, written)
@@ -318,14 +318,14 @@ def test_a_multi_partitioned_file_lands_where_the_manager_looks(tmp_path: Path):
 _DAY = "2026-08-01"
 _ONE_DAY = dg.StaticPartitionsDefinition([_DAY])
 
-#: What `DbIOManager` needs to delete a partition before rewriting it, and what a user already declares for their own partitioned table. It is forwarded because the borrowed context copies definition metadata, never because anything here reads it.
 _PARTITION_EXPR = {"partition_expr": "ordered_at"}
+"""What `DbIOManager` needs to delete a partition before rewriting it, and what a user already declares for their own partitioned table. The borrowed context copies definition metadata, so it comes along; nothing here reads it."""
 
-#: The two exits with failing rows and somewhere to put them. The third has no writer by definition, so there is nothing for it to place.
 _REJECTING = [
     pytest.param(mixed_orders, 3, False, id="partial"),
     pytest.param(hopeless_orders, 2, True, id="nothing survived"),
 ]
+"""The two outcomes with failing rows and somewhere to put them. The third has no writer, so nothing to place."""
 
 
 def _delegating(
@@ -360,7 +360,7 @@ def _run(
     partitioned: bool,
     aborts: bool,
 ) -> None:
-    """Materialize the asset, tolerating the abort that is the point of one of the exits."""
+    """Materialize the asset, tolerating the abort one of the outcomes raises."""
     result = dg.materialize(
         [asset],
         resources=resources,
@@ -380,7 +380,7 @@ def test_a_filesystem_manager_puts_the_quarantine_beside_the_table(
     aborts: bool,
     partitioned: bool,
 ):
-    """A parquet file beside the table, with no configuration. The path is the manager's own answer to the quarantine's asset key, and the layout it gives a partition comes along with it."""
+    """A parquet file beside the table, with no configuration. The path is the manager's own answer to the quarantine's asset key, partition layout included."""
     _run(
         _delegating(frame, partitioned=partitioned),
         storage(tmp_path),
@@ -405,9 +405,9 @@ def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     aborts: bool,
     partitioned: bool,
 ):
-    """The case a quarantine_dir cannot express. A warehouse stores tables, so the invalid rows belong in one beside the table they came from rather than in a file somewhere else.
+    """The case a quarantine_dir cannot express. A warehouse stores tables, so the invalid rows belong in one beside the table they came from, not in a file elsewhere.
 
-    The partitioned runs are also where `partition_expr` is forwarded off the definition metadata: without it `DbIOManager` refuses, which the test below asserts.
+    The partitioned runs also forward `partition_expr` off the definition metadata. Without it `DbIOManager` refuses, as the test below asserts.
     """
     _run(
         _delegating(frame, partitioned=partitioned),
@@ -434,7 +434,7 @@ def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):
 
 
 def test_a_partitioned_database_asset_fails_with_the_managers_own_error(tmp_path: Path):
-    """`partition_expr` is `DbIOManager`'s requirement, not this package's, and the user already has to declare it for their own partitioned table. The failure is left as upstream words it, because a guard here would state the requirement twice."""
+    """`partition_expr` is `DbIOManager`'s requirement, not this package's, and the user already declares it for their own partitioned table. The failure stays as upstream words it; a guard here would state the requirement twice."""
     result = dg.materialize(
         [_delegating(mixed_orders, partitioned=True, partition_expr=False)],
         resources=warehouse(tmp_path),
@@ -448,7 +448,7 @@ def test_a_partitioned_database_asset_fails_with_the_managers_own_error(tmp_path
 
 
 def test_the_address_is_the_key_the_manager_resolved(tmp_path: Path):
-    """What the run reports is the asset key, not a path. The manager's own `path` or `Query` goes nowhere, because the borrowed context is not a real output, so the package says the one thing it knows (ADR-0006)."""
+    """The run reports the asset key, not a path. The manager's own `path` or `Query` goes nowhere, because the borrowed context is not a real output, so the package says the one thing it knows (ADR-0006)."""
     result = dg.materialize(
         [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
     )
@@ -461,9 +461,9 @@ def test_the_address_is_the_key_the_manager_resolved(tmp_path: Path):
 
 
 def test_the_managers_own_metadata_does_not_reach_the_materialization(tmp_path: Path):
-    """The risk the copy carries. A copied context reaches the same `add_output_metadata` the real output does, and `dagster-polars` calls it with the path and row count of whatever it just wrote.
+    """The risk the copy carries. A copied context reaches the same `add_output_metadata` the real output does, and `dagster-polars` calls it with the path and row count of whatever it wrote.
 
-    It rebinds the mapping on the object it was called on, so the quarantine's numbers land on the copy and the step reads the original. The frame here splits 3 valid against 1 held back, so a leak would be visible as a row count of 1.
+    `add_output_metadata` rebinds the mapping on the object it was called on, so the quarantine's numbers land on the copy and the step reads the original. The filter leaves 3 valid rows against 1 held back, so a leak would show as a row count of 1.
     """
     result = dg.materialize(
         [_delegating(cooccurring_orders, partitioned=False)],
@@ -479,7 +479,7 @@ def test_the_managers_own_metadata_does_not_reach_the_materialization(tmp_path: 
 
 # --- the file writer ---
 def test_the_file_writer_writes_where_the_path_rule_says(tmp_path: Path):
-    """Asserted through `process` with no run at all, which is the whole point of a writer: no context, no manager, no instance."""
+    """Asserted through `process` with no run: no context, no manager, no instance."""
     events = list(
         process(
             Orders,
@@ -513,7 +513,7 @@ def test_the_file_writer_puts_a_partition_under_the_leaf(tmp_path: Path):
 
 
 def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(tmp_path: Path):
-    """Built at one exit and called at another, so a writer that made its directory eagerly would leave an empty one on every clean run."""
+    """Built before any row fails and called only if one does, so a writer that made its directory eagerly would leave an empty one on every clean run."""
     file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
 
     assert list(tmp_path.iterdir()) == []

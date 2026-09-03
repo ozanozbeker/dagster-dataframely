@@ -1,6 +1,6 @@
 """The reserved namespace, the rule-name rewrite, and the two definition-time collision errors.
 
-`dy_` is hardcoded rather than configurable. A reserved namespace is not a preference. Its whole value is being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
+`dy_` is hardcoded, not configurable. Its value lies in being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
 """
 
 import inspect
@@ -15,12 +15,14 @@ from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnEr
 # Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
 RESERVED_PREFIX = "dy_"
 
-#: The column-schema check. Present at every granularity, always blocking.
 COLUMN_SCHEMA_CHECK = "dy_schema__columns"
+"""The column-schema check. Present at every granularity, always blocking."""
 
-#: The check the rules no single column owns report through when they are collapsed.
-#: Deliberately not `dy_col__schema`, which would collide with a user column named `schema`, and `schema` is a column somebody has.
 SCHEMA_RULES_CHECK = "dy_schema__rules"
+"""The check the rules no single column owns report through when they are collapsed.
+
+Not `dy_col__schema`, which would collide with a user column named `schema`, a column somebody has.
+"""
 
 
 def check_name(rule_name: str) -> str:
@@ -28,7 +30,7 @@ def check_name(rule_name: str) -> str:
 
     `amount|min` becomes `dy_rule__amount__min`, the same string wherever the rule shows up.
 
-    The rewrite is forced, not chosen. Every check spec becomes an op output named `<asset>_<check>`, and Dagster validates that against `^[A-Za-z0-9_]+$`, which `|` fails.
+    The rewrite is forced. Every check spec becomes an op output named `<asset>_<check>`, and Dagster validates that against `^[A-Za-z0-9_]+$`, which `|` fails.
 
     Parameters
     ----------
@@ -73,7 +75,7 @@ def column_check_name(column: str) -> str:
 def split_rule(rule_name: str) -> tuple[str, str] | None:
     """Split a column rule into the column it belongs to and its own kind.
 
-    The one place the package reads Dataframely's delimiter rather than rewriting it. A rule that belongs to no single column has no delimiter and returns `None`. A Python identifier cannot contain `|`, so its presence is the whole test.
+    The one place the package reads Dataframely's delimiter instead of rewriting it. A rule no single column owns has no delimiter and returns `None`. A Python identifier cannot contain `|`, so the presence of `|` alone decides.
 
     Parameters
     ----------
@@ -115,7 +117,7 @@ def validation_rules(schema: type[dy.Schema]) -> dict[str, Rule]:
 def rule_description(schema: type[dy.Schema], rule_name: str) -> str | None:
     """Return a rule's docstring, or `None` for a rule with no place to carry one.
 
-    A `@dy.rule()` leaves its `RuleFactory` on the class, so the decorated function and its docstring stay reachable by name long after the metaclass has built the `Rule`. Column rules are generated from column arguments and have no function at all. Their `|` makes the lookup miss, so no branch is needed.
+    A `@dy.rule()` leaves its `RuleFactory` on the class, so the decorated function and its docstring stay reachable by name after the metaclass has built the `Rule`. Column rules are generated from column arguments and have no function. Their `|` makes the lookup miss, so no branch is needed.
 
     Parameters
     ----------

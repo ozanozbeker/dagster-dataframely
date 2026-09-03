@@ -1,8 +1,8 @@
 """The settings chain, asserted at the one call every setting resolves through.
 
-`resolve` is where the three sources meet, so precedence and validation are both testable without going near an asset. The settings the package ships are exercised through it. A fake one covers the source a shipped setting cannot reach, because a shipped default is valid by construction.
+The three sources meet in `resolve`, so precedence and validation are both testable without going near an asset. The shipped settings are exercised through it. A fake one covers the default source, because a shipped default is valid by construction.
 
-Each extra shape covers a source the ones before it cannot reach. A flag has to parse the environment variable rather than match it, because the environment arrives as a string whatever the shape holds. A count's vocabulary is a range, so it is the only shape with something left to reject in a source a type checker has already narrowed. A directory ships a package default of `None`, and that is a value this shape means something by rather than the absence of one.
+Each extra subclass covers a source the ones before it cannot reach. A flag has to parse the environment variable, not match it, because the environment arrives as a string whatever the setting holds. A count's vocabulary is a range, so it is the only subclass with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`. `_Directory` means something by that value; it is not the absence of one.
 """
 
 import importlib
@@ -32,29 +32,29 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 
-# The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. That is what a user without one gets.
+# The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. A user without a type checker gets the same.
 _WRONG: Any = "per_column"
 
-# The same, for the shape whose vocabulary a type checker narrows to `int`.
+# The same, for `_Count`, whose vocabulary a type checker narrows to `int`.
 _FRACTION: Any = 2.5
 _YES: Any = True
 
-# The same, for the two-valued shape. It is the environment variable's own spelling, which makes it the word somebody writes into the argument by mistake.
+# The same, for the two-valued subclass. It is the environment variable's own spelling, so it is the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
 
-# The same, for the shape that holds a path. A `Path` is what a user reaches for, and the shape holds the string spelling instead.
+# The same, for the subclass that holds a path. A user reaches for a `Path`; `_Directory` holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated rather than trusted.
+# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted.
 _BROKEN = _Choice[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
 
-# The same, one shape along: a count whose default is a number it does not accept.
+# The same, one subclass along: a count whose default is a number it does not accept.
 _BROKEN_COUNT = _Count(name="fake_count", default=-1)
 
 # And one along again: a flag whose default is the word for a value rather than the value.
 _BROKEN_FLAG = _Flag(name="fake_flag", default=_WORD)
 
-# And the last: a directory whose default is the empty path, which is the only wrong value this shape has.
+# And the last: a directory whose default is the empty path, the only wrong value `_Directory` has.
 _BROKEN_DIRECTORY = _Directory(name="fake_directory", default="")
 
 
@@ -84,7 +84,7 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 
 
 def test_every_setting_names_its_environment_variable_after_itself():
-    """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously machine surface. It is derived rather than transcribed, so the name and the setting cannot drift."""
+    """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously meant for a machine to read. It is derived, not transcribed, so the name and the setting cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert MULTI_COLUMN_RULES.env_var == "DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES"
     assert STATISTICS.env_var == _STATISTICS_ENV
@@ -107,7 +107,7 @@ def test_a_flag_parses_the_environment_source_rather_than_matching_it(
 def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The case a truthiness test would get wrong, and the one that matters. With the source below saying on, the setting would be impossible to turn off."""
+    """The case a truthiness test would get wrong. With the source below saying on, the setting would be impossible to turn off."""
     monkeypatch.setenv(_STATISTICS_ENV, "true")
 
     assert STATISTICS.resolve(argument=False) is False
@@ -116,7 +116,7 @@ def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
 def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`1` is the plausible wrong word, and the error has to be the same one a choice raises: same setting, same allowed values, same source order."""
+    """`1` is the plausible wrong word. The error has to be the same one a choice raises: same setting, same allowed values, same source order."""
     monkeypatch.setenv(_STATISTICS_ENV, "1")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -129,9 +129,9 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
 
 
 def test_a_flag_rejects_a_word_from_the_argument():
-    """The one shape where an unvalidated argument is silently the *opposite* of what was written.
+    """The one subclass where an unvalidated argument is silently the opposite of what was written.
 
-    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment variable spells the same instruction exactly that way, which makes the mistake reachable rather than hypothetical.
+    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment variable spells the same instruction that way, so the mistake is reachable.
     """
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
@@ -145,7 +145,7 @@ def test_a_flag_rejects_a_word_from_the_argument():
 def test_a_count_reads_the_environment_source_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The other shape that has to parse rather than match, and the one where a wrong reading would be silent: `'0'` is a string every truthiness test calls true."""
+    """The other subclass that parses rather than matches. A wrong reading here would be silent: `'0'` is a string every truthiness test calls true."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "3")
     assert ROW_SAMPLE.resolve(None) == 3
 
@@ -202,7 +202,7 @@ def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
 
 
 def test_a_count_rejects_a_fraction():
-    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, exactly like a value outside a vocabulary."""
+    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, like a value outside a vocabulary."""
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_FRACTION)
 
@@ -220,7 +220,7 @@ def test_a_count_rejects_a_bool():
 def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The shape with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
+    """The subclass with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
     monkeypatch.setenv(_QUARANTINE_DIR_ENV, "/scratch/quarantine")
 
     assert QUARANTINE_DIR.resolve(None) == "/scratch/quarantine"
@@ -311,9 +311,9 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
 
 
 def test_no_module_offers_a_global_default_setter():
-    """There is deliberately no fourth source.
+    """No fourth source exists.
 
-    Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control. The same asset would derive different checks depending on which module happened to be imported first.
+    Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order the user does not control. The same asset would derive different checks depending on which module was imported first.
     """
     modules = [
         importlib.import_module(f"dagster_dataframely.{module.name}")
