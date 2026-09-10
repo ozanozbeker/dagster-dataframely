@@ -171,8 +171,8 @@ def test_every_partition_reports_its_own_checks_and_names_no_partition(
     assert all(e.partition is None for e in evaluations.values())
 
 
-def test_check_history_across_a_backfill_is_one_timeline_per_check(tmp_path: Path):
-    """A backfill is one run per partition, and every run appends to the same per-check timeline. The failing partition ran first here, so the catalog's latest word on `amount|min` is the clean partition's. A partition-scoped failure is legible only by walking the history."""
+def test_a_backfill_appends_every_partition_to_one_check_history(tmp_path: Path):
+    """A backfill is one run per partition, and every run appends to the same per-check history. The failing partition ran first here, so the catalog's latest word on `amount|min` is the clean partition's. A per-partition failure is legible only by walking the history."""
     with dg.DagsterInstance.ephemeral() as instance:
         _materialize(tmp_path, "mixed", instance=instance)
         _materialize(tmp_path, "clean", instance=instance)
@@ -221,7 +221,7 @@ def test_a_history_row_is_traceable_to_its_partition_through_the_materialization
 def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
     """Dagster's behaviour, not this package's. It makes the finding above worse on dates than on the static partitions the rest of this file uses.
 
-    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none. The update that would close the row matches on partition, so it misses. The planned row stays for good, and the result is inserted as a second, partition-less row. The catalog then holds one never-executed row per partition beside a timeline that names none of them.
+    A time-window run carries a partitions subset, so the check's planned row is stamped with the partition. The evaluation arrives with none. The update that would close the row matches on partition, so it misses. The planned row stays for good, and the result is inserted as a second, partition-less row. The catalog then holds one never-executed row per partition beside a history that names none of them.
     """
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 

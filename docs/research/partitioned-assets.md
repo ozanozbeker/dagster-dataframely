@@ -16,7 +16,7 @@ Everything the spec predicted holds: the state machine runs per partition on tha
 
 One finding is worth acting on later.
 **Asset checks are not partitioned.**
-A check accumulates one timeline for the whole asset, so the last partition to run is the catalog's latest word on every rule, and a partition that failed at `WARN` is invisible behind a later clean one.
+A check accumulates one history for the whole asset, so the last partition to run is the catalog's latest word on every rule, and a partition that failed at `WARN` is invisible behind a later clean one.
 On a time-window partitions definition it is worse: every run also leaves behind a planned check row that never resolves.
 
 Two smaller findings: a single-run backfill policy cannot reach storage through the package's IO manager, and a fan-in over every partition arrives as a `dict`.
@@ -81,7 +81,7 @@ evaluation_partition = (
 ```
 
 This package builds every spec without one, so every evaluation on a partitioned asset carries `partition=None` **[RAN]**.
-The result is one timeline per `(asset, check)` pair rather than one per partition.
+The result is one history per `(asset, check)` pair rather than one per partition.
 
 Backfilling two partitions, `mixed` first and `clean` second, leaves this history for `dy_rule__amount__min` **[RAN]**:
 

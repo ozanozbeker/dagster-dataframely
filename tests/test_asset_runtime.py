@@ -114,7 +114,7 @@ def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
 
 
 def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
-    """A tightened bound then shows in the check's own timeline instead of orphaning its history."""
+    """A tightened bound then shows in the check's own history instead of orphaning it."""
     evaluation = _evaluations(_materialize(tmp_path, _raw_orders, orders))[
         "dy_rule__amount__min"
     ]
@@ -476,7 +476,7 @@ def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
 def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
     tmp_path: Path,
 ):
-    """The two keys are unconditional. A check whose metadata appeared only on failed runs would have holes in its timeline."""
+    """The two keys are unconditional. A check whose metadata appeared only on failed runs would have holes in its history."""
     evaluations = _evaluations(_materialize(tmp_path, _quarantined))
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
@@ -948,7 +948,7 @@ def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
 
 
 def test_a_collapsed_check_carries_the_live_expression_of_every_member(tmp_path: Path):
-    """The same property a rule check has, kept per member: a tightened bound shows in the timeline instead of orphaning it."""
+    """The same property a rule check has, kept per member: a tightened bound shows in the collapsed check's history instead of orphaning it."""
     evaluation = _evaluations(_materialize(tmp_path, _by_column))["dy_col__amount"]
     table = dict(evaluation.metadata)["dy_rules"]
 
