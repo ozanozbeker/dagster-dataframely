@@ -286,9 +286,25 @@ A returned result exists to put metadata, tags or a data version on a materializ
 ## The package never casts
 
 The column-schema check compares your frame's dtypes against the schema's and aborts on a mismatch, and the filter runs with `cast=False`.
-A `Duration('ns')` arriving where the schema declares `Duration('us')` is a pipeline defect, and silently widening it is how a thousandfold error reaches a table nobody re-reads.
+A dtype that disagrees is a pipeline defect, and coercing it quietly is how a wrong number reaches a table nobody re-reads.
+A `Float64` arriving where the schema declares `Int64` is the shape of it: `1.9` becomes `1`, every rule still passes, and the row sits in the table looking fine.
 
-If you do want conformance, write the cast yourself, in your own asset body, where you can see it:
+**Extra columns are not a mismatch, and neither is column order.**
+The check reads the schema's columns, so one the schema never declared is never compared, and `Schema.filter` drops it.
+What comes back is the schema's columns, in the schema's order, however they arrived:
+
+```python
+@dd.dy_asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    # `net` is working state, and `raw_orders` carries columns `Orders` never declared.
+    # Both are dropped. What materializes is `order_id` then `amount`.
+    return raw_orders.with_columns(net=pl.col("amount") * 0.8)
+```
+
+So a transform that produces a superset needs no `select` on the way out, and no cast either.
+Narrowing to the declared table is the one job of `Schema.cast` you are already getting.
+
+**Casting is yours to write, in the asset body, where you can see it:**
 
 ```python
 @dd.dy_asset(Orders)
@@ -296,8 +312,10 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return Orders.cast(raw_orders)
 ```
 
-That is also what a warehouse read needs.
-DuckDB returns `DECIMAL` where the schema declares `Float64`, so an asset reading from `DuckDBPolarsIOManager` meets the column-schema check on its first run unless it casts ([#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88)).
+That is the intended home for it rather than a workaround, and it should be uncommon.
+An asset needs it when its source spells a dtype differently from the schema, which is mostly a warehouse read.
+DuckDB returns `DECIMAL` where the schema declares `Float64`, so an asset reading from `DuckDBPolarsIOManager` fails the column-schema check on its first run unless it casts.
+If you find yourself writing it in every asset, check whether the frames disagree on dtype at all, because narrowing alone never needs it ([#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88)).
 
 The one cast the package makes is on columns it generated itself: the quarantine's rule columns go from `Enum` to `String`, because a raw `Enum` panics the Delta writer.
 

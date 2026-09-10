@@ -169,6 +169,22 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
     )
 
 
+def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
+    """`Schema.filter` still narrows a frame to the schema's columns, in the schema's order, whatever `cast` is set to."""
+    # #88 rests the "never casts" section on this: a frame carrying extra columns, or the schema's own in another order, needs no `Schema.cast` and no `select` on the way out, because `filter` already projects. Upstream does it with `lf.select(target.column_names())`, on the cast and the no-cast path alike.
+    # Documented for neither `filter` nor `validate`, which say what happens to rows and nothing about columns. If it stopped holding, the section would be wrong silently and every asset returning a superset would fail on the release that changed it.
+    superset = _MIXED_ORDERS.select(
+        "status", "amount", pl.lit("note").alias("shipping"), "order_id"
+    )
+    expected = list(Orders.columns())
+
+    valid, _ = Orders.filter(superset, cast=False)
+    assert valid.columns == expected
+
+    lazy_valid, _ = Orders.filter(superset.lazy(), cast=False)
+    assert lazy_valid.collect_schema().names() == expected
+
+
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
     """`FailureInfo.details()` still returns the invalid rows plus one column for each rule."""
     # #19 builds the quarantine frame straight off `details()`: original columns untouched, rule columns renamed into the reserved namespace.
