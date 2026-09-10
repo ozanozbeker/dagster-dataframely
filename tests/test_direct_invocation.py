@@ -28,6 +28,7 @@ from tests.scenario import (
 )
 
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
+_QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
@@ -59,12 +60,9 @@ _SHAPES = [
 
 @pytest.fixture
 def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Point `file_writer` at a directory this test owns.
-
-    Set before the asset is declared, because the decorator resolves every setting where the asset is declared, not where it runs.
-    """
+    """Point `file_writer` at a directory this test owns."""
     directory = tmp_path / "quarantine"
-    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(directory))
+    monkeypatch.setenv(_QUARANTINE_DIR_ENV, str(directory))
     return directory
 
 
@@ -205,8 +203,36 @@ def test_a_called_quarantine_with_no_root_says_so_rather_than_choosing_one():
     with pytest.raises(QuarantineDirError) as raised:
         _called(asset, quarantine=True)
 
-    assert "DAGSTER_DATAFRAMELY_QUARANTINE_DIR" in str(raised.value)
+    assert _QUARANTINE_DIR_ENV in str(raised.value)
     assert "orders" in str(raised.value)
+
+
+def test_a_call_with_every_row_valid_needs_no_root_at_all():
+    """The setting answers where invalid rows go, so a call that holds none back never asks it (#115).
+
+    A quarantined asset used to resolve the writer ahead of its own body, which raised for rows that did not exist.
+    """
+    asset = _orders(clean_orders, quarantine=True)
+
+    tables = _tables(_called(asset, quarantine=True))
+
+    assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
+
+
+def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The setting is read where the rows are written, not where the asset is declared (#115).
+
+    A test that imports its assets and then points the variable at a `tmp_path` is the case: the import is over long before the `monkeypatch.setenv` runs.
+    """
+    asset = _orders(mixed_orders, quarantine=True)
+    directory = tmp_path / "named-late"
+    monkeypatch.setenv(_QUARANTINE_DIR_ENV, str(directory))
+
+    _called(asset, quarantine=True)
+
+    assert pl.read_parquet(directory / "orders_quarantine.parquet").height == 3
 
 
 def test_a_called_partitioned_quarantine_lands_under_its_partition(

@@ -274,9 +274,9 @@ class NothingSurvivedError(DagsterDataframelyError):
 
 
 class QuarantineDirError(DagsterDataframelyError):
-    """A quarantined asset reached `file_writer` with no `quarantine_dir` set.
+    """Invalid rows needed writing, with no `quarantine_dir` set to write them under.
 
-    Raised at run time, and only where there is no IO manager to delegate to: a decorated asset called directly rather than run. A run always has a manager, so this cannot reach a deployment.
+    Raised where the rows are handed over, and only where there is no IO manager to delegate to: a decorated asset called directly rather than run. A run always has a manager, so this cannot reach a deployment, and a call whose every row is valid never reaches it either.
 
     Choosing a directory instead was considered and declined. The rows are evidence, and writing them somewhere nobody named loses them.
     """

@@ -238,7 +238,10 @@ A call has no step, so there is no IO manager to write through.
 DAGSTER_DATAFRAMELY_QUARANTINE_DIR=/tmp/quarantine
 ```
 
-Unset, calling a quarantined asset raises `QuarantineDirError` rather than choosing a directory on your behalf.
+It's read where the rows are handed over, so a `monkeypatch.setenv` in a test counts even though the module holding the asset imported long before.
+A call whose every row is valid never reads it at all.
+
+Unset, a call with rows to hold back raises `QuarantineDirError` rather than choosing a directory on your behalf.
 The rows are evidence, and writing them somewhere nobody named is how evidence gets lost.
 
 There is deliberately no per-asset override.
@@ -359,18 +362,13 @@ Direct invocation is Dagster's documented unit-testing path, and here it costs y
 A call hands back the same materializations and check results a run yields, as ordinary Python objects, and the validated frame comes off `value`:
 
 ```python
-# conftest.py: set before your assets are imported, not inside the test.
-import os
-import tempfile
+import pytest
 
-os.environ.setdefault("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", tempfile.mkdtemp())
-```
 
-```python
-import os
-import pathlib
-
-QUARANTINE_DIR = pathlib.Path(os.environ["DAGSTER_DATAFRAMELY_QUARANTINE_DIR"])
+@pytest.fixture
+def quarantine_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(tmp_path))
+    return tmp_path
 
 
 @dd.dy_asset(Orders, quarantine=True)
@@ -378,7 +376,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders.select("order_id", "amount")
 
 
-def test_orders_quarantines_the_negative_amount():
+def test_orders_quarantines_the_negative_amount(quarantine_dir):
     raw_orders = pl.DataFrame({"order_id": ["a", "b", "c"], "amount": [1.0, 2.0, -3.0]})
 
     events = list(orders(dg.build_asset_context(), raw_orders))
@@ -395,13 +393,8 @@ def test_orders_quarantines_the_negative_amount():
 
     assert tables[dg.AssetKey(["orders"])].height == 2
     assert not checks["dy_rule__amount__min"]
-    assert pl.read_parquet(QUARANTINE_DIR / "orders_quarantine.parquet").height == 1
+    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 1
 ```
-
-> [!WARNING]
-> **`DAGSTER_DATAFRAMELY_QUARANTINE_DIR` is read when the asset is declared, not when it's called.**
-> A `monkeypatch.setenv` inside the test is too late: the module holding the asset has already imported, and the call raises `QuarantineDirError` telling you to set the variable you just set.
-> That is [#115](https://github.com/ozanozbeker/dagster-dataframely/issues/115), and until it lands the variable has to be in the environment before your assets import.
 
 Two things about that call are worth reading twice.
 
@@ -411,7 +404,7 @@ That is the same asymmetry a run has, where the rows go through the IO manager a
 
 **A quarantined asset takes a context**, because `quarantine=True` added the parameter.
 It comes first and the frames follow, exactly as Dagster orders them.
-The `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` above is what a call needs in place of the IO manager it doesn't have; see [`quarantine_dir` is for calling, not running](#quarantine_dir-is-for-calling-not-running).
+The `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` above is what a call needs in place of the IO manager it doesn't have, and only for the rows it holds back; see [`quarantine_dir` is for calling, not running](#quarantine_dir-is-for-calling-not-running).
 
 An asset without a quarantine needs neither:
 
@@ -751,9 +744,11 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
 | `statistics` | whether each materialization carries statistics for what it wrote | `true` |
 | `max_failure_samples` | how many of the rows that failed a rule reach that rule's check | `5` |
 | `row_sample` | how many rows reach the materialization, of what was written and of what failed | `5` |
-| `quarantine_dir` | where invalid rows go when the asset is called rather than run | unset, and calling raises |
+| `quarantine_dir` | where invalid rows go when the asset is called rather than run | unset, and a call with rows to hold back raises |
 
 `quarantine_dir` is the one with two sources rather than three: there is no argument for it, because that would be the override ADR-0006 defers.
+It's also the one whose value is read where the rows are written rather than where the asset is declared, because nothing about a declaration depends on it.
+A malformed one still raises where the asset is declared, so `${SCRATCH}` unexpanded is reported where you wrote it.
 
 The chain validates on resolve, whichever source supplied the value, the package's own included, so a typo raises `InvalidSettingError` naming the value and where it came from, rather than quietly becoming something else three modules later.
 

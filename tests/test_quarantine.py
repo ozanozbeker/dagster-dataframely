@@ -422,6 +422,27 @@ def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     assert "dy_rule__amount__min" in written["orders_quarantine"].columns
 
 
+def test_a_run_delegates_without_reading_the_quarantine_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A run has a step, so the setting answers nothing (#115).
+
+    The variable is set at a directory nothing else touches, so a run that read it would leave a file there to find.
+    """
+    unread = tmp_path / "unread"
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(unread))
+
+    _run(
+        _delegating(mixed_orders, partitioned=False),
+        storage(tmp_path),
+        partitioned=False,
+        aborts=False,
+    )
+
+    assert not unread.exists()
+    assert (tmp_path / WAREHOUSE_SCHEMA / "orders_quarantine.parquet").exists()
+
+
 def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):
     """ADR-0004 promised the rows survive a run that fails, and delegation keeps that promise: the writer is called inside the asset body, before anything raises."""
     with pytest.raises(NothingSurvivedError):

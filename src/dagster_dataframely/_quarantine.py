@@ -140,7 +140,7 @@ def delegating_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
 
     The manager comes off the same step output handle, not off `context.resources`. This leaves the asset free of a `required_resource_keys` declaration. Dagster validates that declaration at bind time, so every direct invocation would have to supply a manager it never uses. It also means the asset's own `io_manager_key` is followed without this function learning what it is.
 
-    The step is read here, not inside the returned writer, so an asset running outside a step fails while a caller can still choose `file_writer`, not at the moment the rows need writing.
+    The step is read here, not inside the returned writer, so an asset running outside a step fails while a caller can still choose `file_writer`, rather than part-way through a write it cannot finish.
 
     Parameters
     ----------

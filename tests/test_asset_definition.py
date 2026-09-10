@@ -565,6 +565,25 @@ def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
     assert "check_granularity" in str(raised.value)
 
 
+@pytest.mark.parametrize("quarantine", [False, True], ids=["plain", "quarantined"])
+def test_a_malformed_quarantine_dir_raises_at_definition_time(
+    monkeypatch: pytest.MonkeyPatch, quarantine: bool
+):
+    """`DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
+
+    The decorator drops the value it resolves, because the directory a call writes under is read where the rows are written (#115). It resolves anyway for this refusal, so a variable written wrong is reported where it was written. Both declarations, because a malformed variable is malformed whether or not the asset declares a quarantine.
+    """
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", "   ")
+
+    with pytest.raises(InvalidSettingError) as raised:
+
+        @dy_asset(Orders, name="misconfigured", quarantine=quarantine)
+        def _misconfigured() -> pl.DataFrame:
+            return pl.DataFrame()
+
+    assert "quarantine_dir" in str(raised.value)
+
+
 def test_the_environment_variable_sets_the_house_granularity(
     monkeypatch: pytest.MonkeyPatch,
 ):

@@ -15,6 +15,7 @@ from typing import Any
 
 import dagster as dg
 import dataframely as dy
+import polars as pl
 
 # Upstream's own rule for whether a decorated function asked for a context.
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
@@ -68,10 +69,8 @@ AssetDep = (
 """Runtime-real spelling of Dagster's `CoercibleToAssetDep`, which is typing-only."""
 
 
-def _quarantine_writer(
-    context: dg.AssetExecutionContext, *, quarantine_dir: str | None
-) -> QuarantineWriter:
-    """Choose who writes this run's invalid rows.
+def _chosen_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
+    """Choose who writes this asset's invalid rows.
 
     Delegation first. The asset's own IO manager puts the rows wherever it puts things, which needs no configuration and cannot disagree with where the valid table went (ADR-0006).
 
@@ -79,16 +78,16 @@ def _quarantine_writer(
 
     The step is asked for on its own, ahead of the writer. No predicate answers "is this a run", so the question has to be a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property raising the same error inside a real run would silently reroute the rows to a file.
 
+    `quarantine_dir` is resolved behind the same guard, so a run reads a setting it has no use for on no path at all.
+
     Parameters
     ----------
     context
         The executing asset's context.
-    quarantine_dir
-        Where the fallback writes, from `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or `None` when the deployment named none.
 
     Returns
     -------
-    The writer to hand `process`.
+    The writer for the rows in hand.
 
     Raises
     ------
@@ -102,6 +101,7 @@ def _quarantine_writer(
         pass
     else:
         return delegating_writer(context)
+    quarantine_dir: str | None = QUARANTINE_DIR.resolve(None)
     if quarantine_dir is None:
         raise QuarantineDirError(context.asset_key.to_user_string())
     return file_writer(
@@ -110,6 +110,29 @@ def _quarantine_writer(
         # Read behind the guard because `partition_key` raises on an unpartitioned asset rather than answering `None`.
         context.partition_key if context.has_partition_key else None,
     )
+
+
+def _quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
+    """Build the writer that picks its route when the invalid rows arrive.
+
+    The route is a property of the rows, not of the declaration, so nothing about it is decided until there are rows (#115). Two things follow. A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does.
+
+    Deferring costs a run nothing. `process` calls a writer once, so the choice runs at most once either way, and a run reaches the same `delegating_writer` it always did.
+
+    Parameters
+    ----------
+    context
+        The executing asset's context, held until the rows come.
+
+    Returns
+    -------
+    The writer to hand `process`.
+    """
+
+    def write(frame: pl.DataFrame) -> str:
+        return _chosen_writer(context)(frame)
+
+    return write
 
 
 def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
@@ -207,7 +230,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     schema
         The Dataframely schema the decorated function's output must satisfy. Positional-only, and the only such parameter: it is the reason this decorator exists, so it is required and never one keyword among thirty.
     quarantine
-        Whether invalid rows are kept. `True` is the consent to partial data, `False` the refusal. It needs no configuration: the rows go wherever this asset's manager puts things. **`True` adds a `context` parameter** to the asset whether or not the decorated function declared one, because the writer is built from the execution context. Calling a quarantined asset directly therefore takes a `dg.build_asset_context()` first. A direct call reaches no IO manager, so the rows go to a parquet file under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, and raise if that is unset.
+        Whether invalid rows are kept. `True` is the consent to partial data, `False` the refusal. It needs no configuration: the rows go wherever this asset's manager puts things. **`True` adds a `context` parameter** to the asset whether or not the decorated function declared one, because the writer is built from the execution context. Calling a quarantined asset directly therefore takes a `dg.build_asset_context()` first. A direct call reaches no IO manager, so the rows go to a parquet file under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, read when there are rows to write and raising then if it is unset. A call that holds nothing back needs no directory.
     check_granularity
         How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which keeps a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their histories end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
     multi_column_rules
@@ -299,13 +322,15 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
 
-    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last four affect nothing built at definition time, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run reaches it first.
+    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three affect nothing built at definition time, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run reaches it first.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    quarantine_root: str | None = QUARANTINE_DIR.resolve(None)
+    # `quarantine_dir` is the one whose value is dropped. What a deployment writes after this module imports is what a call should use, and a call holding nothing back should never have to name a directory, so the writer reads the setting itself when the rows arrive (#115).
+    # The resolve stays for the sentence above it: `${SCRATCH}` unexpanded arrives empty, and a variable written wrong is worth reporting where it was written rather than on whichever call first has a row to hold back. Unconditional, because a malformed variable is malformed whether or not this asset declares a quarantine.
+    QUARANTINE_DIR.resolve(None)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -374,8 +399,8 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
-                # Built before the body runs, so a deployment with nowhere to write finds out on its first run rather than on the first one with a failing row.
-                writer = _quarantine_writer(context, quarantine_dir=quarantine_root)
+                # Built before the body runs because the context is in hand here and nowhere else. It picks its route later, when there are rows to write, so a body that holds nothing back needs nowhere to put it.
+                writer = _quarantine_writer(context)
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
                     if declares_context
