@@ -62,7 +62,7 @@ def _require_frame(frame: object, asset: str) -> None:
 
     Dagster's own error, not the package's: this is a wiring mistake, not a data one.
 
-    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dy_asset` takes the frame off it before `process` sees anything (#77).
+    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dy_asset` takes the frame off it before `validation_results` sees anything (#77).
 
     The message names four routes. The old advice sent every reader to a plain `@dg.asset`, which was wrong for anyone who wanted metadata on a validated table. It stays right for one case: an asset that writes its own storage and never holds a frame. That reader keeps `schema_metadata`, which fills a plain asset's Columns tab without the decorator.
     """
@@ -152,7 +152,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     )
 
 
-def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decides to be passable by hand
+def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the decorator decides to be passable by hand
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame | None,
     *,

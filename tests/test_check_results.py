@@ -121,7 +121,7 @@ def test_every_result_carries_the_asset_key():
 def test_the_rule_checks_carry_the_severity_the_caller_passed(
     severity: dg.AssetCheckSeverity,
 ):
-    """`WARN` is what `process` cannot reach here: with no quarantine writer every failing run is aborting, so it grades everything `ERROR`."""
+    """`WARN` is what `validation_results` cannot reach here: with no quarantine writer every failing run is aborting, so it grades everything `ERROR`."""
     assert all(
         result.severity == severity
         for result in _rules(_results(mixed_orders(), severity))
@@ -199,7 +199,7 @@ def test_the_column_schema_failure_tabulates_every_offending_column():
 def test_no_data_reaches_the_two_errors_that_carry_the_failure_policy(
     frame: Callable[[], pl.DataFrame],
 ):
-    """`process` raises `ValidationAbortError` on the first of these frames and `NothingSurvivedError` on the second. Neither question belongs to a caller that writes nothing."""
+    """`validation_results` raises `ValidationAbortError` on the first of these frames and `NothingSurvivedError` on the second. Neither question belongs to a caller that writes nothing."""
     results = _results(frame())
 
     assert len(results) == len(check_specs(Orders, asset=KEY))

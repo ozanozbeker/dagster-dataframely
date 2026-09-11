@@ -4,6 +4,7 @@
 """
 
 import inspect
+from typing import NamedTuple
 
 import dataframely as dy
 
@@ -72,10 +73,27 @@ def column_check_name(column: str) -> str:
     return f"dy_col__{column}"
 
 
-def split_rule(rule_name: str) -> tuple[str, str] | None:
-    """Split a column rule into the column it belongs to and its own kind.
+class OwnedRule(NamedTuple):
+    """A rule a single column owns, as Dataframely's `|` delimits it.
+
+    Attributes
+    ----------
+    column
+        The column that owns the rule.
+    kind
+        The rule's own kind, which is the column argument Dataframely generated it from.
+    """
+
+    column: str
+    kind: str
+
+
+def owned_rule(rule_name: str) -> OwnedRule | None:
+    """Return the column a rule belongs to and the rule's own kind.
 
     The one place the package reads Dataframely's delimiter instead of rewriting it. A rule no single column owns has no delimiter and returns `None`. A Python identifier cannot contain `|`, so the presence of `|` alone decides.
+
+    A record rather than a tuple, so the two call sites that read both halves reach for `.column` and `.kind` instead of unpacking, and the name is the record's own.
 
     Parameters
     ----------
@@ -84,17 +102,17 @@ def split_rule(rule_name: str) -> tuple[str, str] | None:
 
     Returns
     -------
-    The column name and the rule's own kind, or `None` for a rule no column owns.
+    The column and the kind, or `None` for a rule no column owns.
 
     Examples
     --------
     ```python
-    split_rule("amount|min")  # ('amount', 'min')
-    split_rule("primary_key")  # None
+    owned_rule("amount|min")  # OwnedRule(column='amount', kind='min')
+    owned_rule("primary_key")  # None
     ```
     """
     column_name, delimiter, kind = rule_name.partition("|")
-    return (column_name, kind) if delimiter else None
+    return OwnedRule(column_name, kind) if delimiter else None
 
 
 def validation_rules(schema: type[dy.Schema]) -> dict[str, Rule]:

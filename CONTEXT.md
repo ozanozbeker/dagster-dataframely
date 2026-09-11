@@ -33,13 +33,13 @@ The per-check counts sum past `dataframely/invalid_count`, because a row that br
 _Avoid_: rejection, violation
 
 **Quarantine**: Where invalid rows are written, addressed by the asset key `<name>_quarantine`.
-Not an asset: it is evidence of a run, and it holds no place in the graph unless `build_quarantine_spec` gives it one.
+Not an asset: it is evidence of a run, and it holds no place in the graph unless `quarantine_spec` gives it one.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
 Where an asset Dagster can materialize already owns that key, the run fails rather than one of the two overwriting the other (ADR-0007).
 _Avoid_: quarantine asset, dead-letter asset
 
 **`QuarantineWriter`**: What puts the invalid rows somewhere and hands back a quarantine address.
-`process` takes one and learns nothing else about where the rows went.
+`validation_results` takes one and learns nothing else about where the rows went.
 _Avoid_: sink, emitter, exporter
 
 **`delegating_writer`**: The writer that hands the rows to the IO manager the asset is already bound to.
@@ -109,6 +109,21 @@ Those two split because Dagster forces them apart, and both name what this packa
 `<name>_quarantine` is the third, the asset key a quarantine is addressed by.
 It sits in Dagster's own key space, which the user shares, so it is the one reservation somebody else can take first.
 All three hardcoded, never configurable.
+
+**Named for its product**: A function that returns a value is named after the value, not after what it does.
+`check_specs` returns check specs, `quarantine_frame` returns the quarantine frame, `delegating_writer` returns a writer.
+Where the product has no name, name it rather than reaching for a verb: `owned_rule` returns an `OwnedRule` and `separated_return` a `SeparatedReturn`, so the function is its record's own name in snake case.
+A verb name says the function returns nothing, so `validate_quarantine_key` either raises or passes.
+No prefix: the annotation carries the type, and the prefix is a word the reader skips.
+The identifier only.
+D401 keeps every summary imperative, so `owned_rule` still opens "Return the column a rule belongs to".
+_Avoid_: get_*, build_*, make_*, compute_*
+
+**Participle for a transformer**: A function handed a thing that hands back the same thing changed is named by the participle of what changed.
+`_addressed` returns check results carrying the address, `_suffixed` returns key parts with the last suffixed, `_checked` returns a value that passed the setting's vocabulary.
+Where only part of what it was handed changes, the participle overclaims.
+Borrow Polars' `with_*` instead: `with_returned_fields` hands back the same results with three fields on one of them.
+_Avoid_: apply_*, add_*, enrich_*
 
 ## Coinages to avoid
 

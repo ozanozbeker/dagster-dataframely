@@ -20,7 +20,12 @@ from dagster_dataframely.errors import (
     NothingSurvivedError,
     ValidationAbortError,
 )
-from dagster_dataframely.wiring import AssetYield, check_specs, process, schema_metadata
+from dagster_dataframely.wiring import (
+    AssetYield,
+    check_specs,
+    schema_metadata,
+    validation_results,
+)
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -733,7 +738,7 @@ def test_a_skip_answers_whatever_check_list_the_asset_declared(
 def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
     tmp_path: Path,
 ):
-    """The README tells a hand-wirer that `output_required=False` buys the skip on a single-out asset, so this pins the claim. `process` is the same function either way (ADR-0001), so the two agree by construction."""
+    """The README tells a hand-wirer that `output_required=False` buys the skip on a single-out asset, so this pins the claim. `validation_results` is the same function either way (ADR-0001), so the two agree by construction."""
 
     @dg.asset(
         name="orders",
@@ -742,7 +747,7 @@ def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
         check_specs=check_specs(Orders, asset="orders"),
     )
     def orders_by_hand(context: dg.AssetExecutionContext) -> AssetYield:
-        yield from process(Orders, None, valid_key=context.asset_key)
+        yield from validation_results(Orders, None, valid_key=context.asset_key)
 
     result = _materialize(tmp_path, orders_by_hand)
 
@@ -992,16 +997,16 @@ def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
     assert not [name for name in quarantine.columns if name.startswith("dy_col__")]
 
 
-# --- the six outcomes, reached by calling `process` directly ---
+# --- the six outcomes, reached by calling `validation_results` directly ---
 _Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 class TestOutcomeSelection:
-    """Which of the six outcomes a frame reaches, asserted by calling `process` directly.
+    """Which of the six outcomes a frame reaches, asserted by calling `validation_results` directly.
 
     The tests above assert what Dagster ends up holding, which takes a run. These assert which objects leave the generator, which writer calls it made and which error ended it. None of that needs a run, an IO manager or a `tmp_path`.
 
-    The writer appends to a list and returns a fixed address. That is all `process` knows about a writer. `tests/test_quarantine.py` asserts a real one against a real manager.
+    The writer appends to a list and returns a fixed address. That is all `validation_results` knows about a writer. `tests/test_quarantine.py` asserts a real one against a real manager.
 
     The helpers live on this class because the module already has a `_written` and a `_reported` that answer the same questions of a run.
 
@@ -1015,7 +1020,7 @@ class TestOutcomeSelection:
     def _drained(
         cls, frame: pl.DataFrame | None, *, quarantine: bool
     ) -> tuple[_Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
-        """Run `process` to exhaustion, keeping what it yielded, what it wrote, and whatever ended it.
+        """Run `validation_results` to exhaustion, keeping what it yielded, what it wrote, and whatever ended it.
 
         Three of the six outcomes raise after yielding, so draining with `list()` alone would discard the results that say what happened.
         """
@@ -1026,7 +1031,7 @@ class TestOutcomeSelection:
             return cls.ADDRESS
 
         yielded: _Yielded = []
-        results = process(
+        results = validation_results(
             Orders,
             frame,
             valid_key=cls.VALID,
@@ -1043,7 +1048,7 @@ class TestOutcomeSelection:
     def _tables(yielded: _Yielded) -> list[dg.AssetKey]:
         """List the keys that got a materialization, in yield order.
 
-        `MaterializeResult.asset_key` is optional upstream, but `process` sets it on every result it builds. A `None` here would be a defect, and the list comparisons below would catch it.
+        `MaterializeResult.asset_key` is optional upstream, but `validation_results` sets it on every result it builds. A `None` here would be a defect, and the list comparisons below would catch it.
         """
         return [
             r.asset_key
@@ -1137,7 +1142,7 @@ class TestOutcomeSelection:
         sample = self._metadata(yielded)["dataframely/invalid_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
-        bounded = process(
+        bounded = validation_results(
             Orders,
             mixed_orders(),
             valid_key=self.VALID,
@@ -1194,7 +1199,7 @@ class TestOutcomeSelection:
     ):
         """Every outcome yields its checks standalone, including the two that write a table to bundle them onto.
 
-        No test above states this, because a run flattens the two forms into one event stream. Standalone checks keep an asset built on `process` callable in a unit test: direct invocation satisfies a check output only from a standalone result (ADR-0002).
+        No test above states this, because a run flattens the two forms into one event stream. Standalone checks keep an asset built on `validation_results` callable in a unit test: direct invocation satisfies a check output only from a standalone result (ADR-0002).
         """
         yielded, _, _ = self._drained(frame(), quarantine=quarantine)
 

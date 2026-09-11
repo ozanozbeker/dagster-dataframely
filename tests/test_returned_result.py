@@ -154,7 +154,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
 
 
 def test_a_lazy_return_folds_the_same_way():
-    """`fold` sits over what `process` yields. `Schema.filter` takes both frame kinds through the same call, so laziness changes nothing."""
+    """`with_returned_fields` sits over what `validation_results` yields. `Schema.filter` takes both frame kinds through the same call, so laziness changes nothing."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:
@@ -166,7 +166,7 @@ def test_a_lazy_return_folds_the_same_way():
     assert_frame_equal(result.value, clean_orders())
 
 
-# --- what a quarantine changes about `fold` ---
+# --- what a quarantine changes about `with_returned_fields` ---
 def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
     """The quarantine is written, not materialized, so the returned result has one place to land. The package's own keys still win a collision."""
 
@@ -191,7 +191,7 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
 
 
 # --- what stays refused ---
-# Every refusal is asserted twice, once by calling and once through a run. `unwrap` runs inside
+# Every refusal is asserted twice, once by calling and once through a run. `separated_return` runs inside
 # the wrapper's generator, so nothing happens until something advances it. A refusal that only
 # surfaced on a direct call would let a run write a table the package never validated.
 # Declared as bare returns, not decorated assets: the two tests below share the same seven cases,
@@ -282,7 +282,7 @@ def test_a_refused_return_fails_the_run_and_writes_nothing(
 
 # --- no valid materialization to fold onto ---
 def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
-    """Nothing survived, so `fold` has only checks to pass through and no materialization to land on. The error `process` raises must reach the caller unchanged; the stage wrapping it must not swallow it."""
+    """Nothing survived, so `with_returned_fields` has only checks to pass through and no materialization to land on. The error `validation_results` raises must reach the caller unchanged; the stage wrapping it must not swallow it."""
 
     @dy_asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -295,7 +295,7 @@ def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
 
 
 def test_an_abort_with_no_quarantine_still_raises_its_own_error():
-    """Rows failed and no quarantine is declared, so the run yields only checks and no materialization. `fold` has nothing to land on and must not invent one."""
+    """Rows failed and no quarantine is declared, so the run yields only checks and no materialization. `with_returned_fields` has nothing to land on and must not invent one."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -320,7 +320,7 @@ def test_the_frame_guard_names_every_route_out():
 
 # --- what a bare frame still does ---
 def test_a_bare_frame_carries_no_data_version_and_no_tags():
-    """The guarantee `fold` rests on: an asset that returns a frame produces what it produced before #77."""
+    """The guarantee `with_returned_fields` rests on: an asset that returns a frame produces what it produced before #77."""
 
     @dy_asset(Orders, name="orders")
     def orders() -> pl.DataFrame:

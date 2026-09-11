@@ -797,7 +797,7 @@ def test_a_schema_with_no_primary_key_states_no_table_constraint():
 def test_a_quarantine_adds_nothing_to_the_graph():
     """A quarantine is evidence of a run, not a `dg.AssetOut`. The rows go to the asset's own IO manager under a suffixed key, so nothing in the definition changes and nothing new appears in the lineage (ADR-0004, ADR-0006).
 
-    `build_quarantine_spec` gives a quarantine a node, and the user declares it.
+    `quarantine_spec` gives a quarantine a node, and the user declares it.
     """
 
     @dy_asset(Orders, quarantine=True)

@@ -17,9 +17,10 @@ from dagster_dataframely._frames import column_schema_problems
 from dagster_dataframely._naming import (
     COLUMN_SCHEMA_CHECK,
     SCHEMA_RULES_CHECK,
+    OwnedRule,
     check_name,
     column_check_name,
-    split_rule,
+    owned_rule,
     validate_namespace,
     validation_rules,
 )
@@ -109,11 +110,11 @@ def _rule_sets(
     unowned: list[str] = []
     alone: list[str] = []
     for rule_name in rules:
-        parts: tuple[str, str] | None = split_rule(rule_name)
-        if parts is None:
+        owned: OwnedRule | None = owned_rule(rule_name)
+        if owned is None:
             (alone if multi_column == "per_rule" else unowned).append(rule_name)
         else:
-            columns.setdefault(parts[0], []).append(rule_name)
+            columns.setdefault(owned.column, []).append(rule_name)
 
     rule_sets: list[_RuleSet] = [
         _RuleSet(
@@ -398,13 +399,13 @@ def check_results(  # noqa: PLR0913 - every setting the specs were derived with 
 
     The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. Reach for it when the checks are all you want: an asset that manages its own storage, or a `@dg.multi_asset_check` reporting on a table that has already been written.
 
-    `process` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to rejected rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
+    `validation_results` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to rejected rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
 
-    **Severity is stated, not derived.** `process` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `process` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `process` calls `ERROR`. So the caller says which, and every rule check in the run carries it.
+    **Severity is stated, not derived.** `validation_results` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`. So the caller says which, and every rule check in the run carries it.
 
-    **A column-schema mismatch reports that check and raises, as `process` does.** The rules never ran, so nothing reports for them. The raise is what stops Dagster looking for the outputs they would have answered: a generator that raises never reaches its missing-output check, so the step fails with this error rather than an opaque one about an output nobody wrote.
+    **A column-schema mismatch reports that check and raises, as `validation_results` does.** The rules never ran, so nothing reports for them. The raise is what stops Dagster looking for the outputs they would have answered: a generator that raises never reaches its missing-output check, so the step fails with this error rather than an opaque one about an output nobody wrote.
 
-    The valid rows are collected with the invalid ones and discarded. It is the same `collect_all` call `process` makes, so the two arrangements execute alike, and taking only the failure half measured worse: `FailureInfo` collects on `auto`, which keeps the plan's own peak.
+    The valid rows are collected with the invalid ones and discarded. It is the same `collect_all` call `validation_results` makes, so the two arrangements execute alike, and taking only the failure half measured worse: `FailureInfo` collects on `auto`, which keeps the plan's own peak.
 
     Parameters
     ----------
@@ -470,7 +471,7 @@ def check_results(  # noqa: PLR0913 - every setting the specs were derived with 
         yield column_schema_result(problems, asset_key=asset_key)
         raise ColumnSchemaError(schema.__name__, problems)
 
-    # One `collect_all` on the streaming engine, the call `process` makes, for the reason it makes it.
+    # One `collect_all` on the streaming engine, the call `validation_results` makes, for the reason it makes it.
     _, failure = schema.filter(frame.lazy(), cast=False).collect_all(engine="streaming")
     yield column_schema_result(asset_key=asset_key)
     yield from rule_results(

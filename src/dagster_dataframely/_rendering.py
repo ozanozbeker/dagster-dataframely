@@ -22,8 +22,9 @@ from typing import Any
 import dataframely as dy
 
 from dagster_dataframely._naming import (
+    OwnedRule,
+    owned_rule,
     rule_description,
-    split_rule,
     validation_rules,
 )
 
@@ -179,11 +180,10 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
         # A schema with no key columns has no such rule, so the name belongs to a `@dy.rule()` and there is no key to state.
         keys: list[str] = schema.primary_key()
         return f"PK: {', '.join(keys)}" if keys else None
-    parts: tuple[str, str] | None = split_rule(rule_name)
-    if parts is None:
+    owned: OwnedRule | None = owned_rule(rule_name)
+    if owned is None:
         return None
-    column_name, kind = parts
-    return _column_constraint(schema.columns()[column_name], kind)
+    return _column_constraint(schema.columns()[owned.column], owned.kind)
 
 
 def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
@@ -202,14 +202,11 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
     """
     constraints: dict[str, list[str]] = {name: [] for name in schema.columns()}
     for rule_name in validation_rules(schema):
-        parts: tuple[str, str] | None = split_rule(rule_name)
-        if parts is None:
-            continue
-        column_name, kind = parts
-        if kind in _NO_CONSTRAINT:
+        owned: OwnedRule | None = owned_rule(rule_name)
+        if owned is None or owned.kind in _NO_CONSTRAINT:
             continue
         # The fallback is the part of the rule name after `|`: the row already carries the column name, and this package shows Dataframely's `|` nowhere else.
-        constraints[column_name].append(rule_text(schema, rule_name) or kind)
+        constraints[owned.column].append(rule_text(schema, rule_name) or owned.kind)
     return constraints
 
 
@@ -230,7 +227,7 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
     return [
         rule_text(schema, rule_name) or rule_name
         for rule_name in validation_rules(schema)
-        if split_rule(rule_name) is None
+        if owned_rule(rule_name) is None
     ]
 
 
@@ -256,11 +253,10 @@ def check_description(schema: type[dy.Schema], rule_name: str) -> str:
     rendered: str | None = rule_text(schema, rule_name)
     if rendered is None:
         return rule_name
-    parts: tuple[str, str] | None = split_rule(rule_name)
-    if parts is None:
+    owned: OwnedRule | None = owned_rule(rule_name)
+    if owned is None:
         return rendered
-    column_name, _ = parts
-    return f"{column_name} {rendered}"
+    return f"{owned.column} {rendered}"
 
 
 def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> str:
@@ -299,8 +295,8 @@ def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> s
     """
     rendered: list[str] = []
     for rule_name in rule_names:
-        parts: tuple[str, str] | None = split_rule(rule_name)
+        owned: OwnedRule | None = owned_rule(rule_name)
         rendered.append(
-            rule_text(schema, rule_name) or (parts[1] if parts else rule_name)
+            rule_text(schema, rule_name) or (owned.kind if owned else rule_name)
         )
     return ", ".join(rendered)

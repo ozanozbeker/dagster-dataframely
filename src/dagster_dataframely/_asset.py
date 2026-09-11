@@ -32,8 +32,13 @@ from dagster_dataframely._quarantine import (
     file_writer,
     validate_quarantine_key,
 )
-from dagster_dataframely._returns import DecoratedReturn, fold, unwrap
-from dagster_dataframely._runtime import AssetYield, process
+from dagster_dataframely._returns import (
+    DecoratedReturn,
+    SeparatedReturn,
+    separated_return,
+    with_returned_fields,
+)
+from dagster_dataframely._runtime import AssetYield, validation_results
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
@@ -118,7 +123,7 @@ def _quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
 
     The route is a property of the rows, not of the declaration, so nothing about it is decided until there are rows (#115). Two things follow. A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does.
 
-    Deferring costs a run nothing. `process` calls a writer once, so the choice runs at most once either way, and a run reaches the same `delegating_writer` it always did.
+    Deferring costs a run nothing. `validation_results` calls a writer once, so the choice runs at most once either way, and a run reaches the same `delegating_writer` it always did.
 
     Parameters
     ----------
@@ -127,7 +132,7 @@ def _quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
 
     Returns
     -------
-    The writer to hand `process`.
+    The writer to hand `validation_results`.
     """
 
     def write(frame: pl.DataFrame) -> str:
@@ -374,13 +379,15 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
         ) -> AssetYield:
             """Validate what the decorated function handed back and report it.
 
-            One stage either side of `process`, and neither changes it (#77).
+            One stage either side of `validation_results`, and neither changes it (#77).
             """
-            frame, returned_result = unwrap(returned, asset=key.to_user_string())
-            yield from fold(
-                process(
+            separated: SeparatedReturn = separated_return(
+                returned, asset=key.to_user_string()
+            )
+            yield from with_returned_fields(
+                validation_results(
                     schema,
-                    frame,
+                    separated.frame,
                     valid_key=key,
                     quarantine_writer=writer,
                     check_granularity=granularity,
@@ -389,7 +396,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
                     statistics=emit_statistics,
                     row_sample=sampled_rows,
                 ),
-                returned_result,
+                separated.result,
                 valid_key=key,
             )
 

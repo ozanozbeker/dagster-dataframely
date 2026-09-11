@@ -132,7 +132,7 @@ The asset's description comes from the schema's docstring, which [Naming](#namin
 **The schema is a single `dy.Schema`, never a `dy.Collection`.**
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.
 Declare one asset per member instead, each with the member's own schema.
-The parts under [Hand-wiring](#hand-wiring-and-how-the-package-works-under-the-hood) are no route to one either, because `process` is single-schema by signature: assembling a Collection means reimplementing the hardest part of this package rather than composing it.
+The parts under [Hand-wiring](#hand-wiring-and-how-the-package-works-under-the-hood) are no route to one either, because `validation_results` is single-schema by signature: assembling a Collection means reimplementing the hardest part of this package rather than composing it.
 
 ## The failure policy is the asset's declaration
 
@@ -208,11 +208,11 @@ An asset without a quarantine keeps exactly the signature you wrote.
 It's evidence of a run.
 It holds no place in the graph, receives no materialization event, and nothing downstream can depend on it until you say so.
 
-`build_quarantine_spec` is how you say so:
+`quarantine_spec` is how you say so:
 
 ```python
 defs = dg.Definitions(
-    assets=[raw_orders, orders, dd.build_quarantine_spec(Orders, orders)],
+    assets=[raw_orders, orders, dd.quarantine_spec(Orders, orders)],
     resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
 )
 ```
@@ -661,7 +661,7 @@ A rule that failed is a red check with its own history, which is the surface Dag
 def triage_needed() -> dg.AssetCheckResult: ...
 ```
 
-Or read the quarantine on a schedule, through the spec `build_quarantine_spec` gives it.
+Or read the quarantine on a schedule, through the spec `quarantine_spec` gives it.
 What you can't do is treat it as an event source, and that's a property of it being evidence rather than an asset.
 
 ## `LazyFrame`s
@@ -874,7 +874,7 @@ QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid
 ```
 
 Rename your asset, or drop `quarantine=True` from `orders`.
-If that asset *is* your quarantine table, `build_quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
+If that asset *is* your quarantine table, `quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
 
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
 Under PEP 563 every annotation reaches Dagster as a string.
@@ -920,7 +920,7 @@ The docstring isn't decoration: it becomes that check's description in the catal
 
 ## Hand-wiring (and how the package works under the hood)
 
-The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `check_results`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `process`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
+The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `check_results`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `validation_results`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
 Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
 The asset is then yours to declare, out of the same parts.
 
@@ -930,9 +930,9 @@ The three arrangements below descend.
 The first is close to what the decorator builds, each one after it gives up a piece, and the last is what you'd be writing if this package didn't exist.
 `orders_frame()` stands in for whatever produces your frame, since none of them care where it came from.
 
-### The decorator is a `@dg.asset`, a writer and `process`
+### The decorator is a `@dg.asset`, a writer and `validation_results`
 
-The schema's metadata and check specs go straight on the asset, and `process` does the rest:
+The schema's metadata and check specs go straight on the asset, and `validation_results` does the rest:
 
 ```python
 @dg.asset(
@@ -942,7 +942,7 @@ The schema's metadata and check specs go straight on the asset, and `process` do
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
     dd.wiring.validate_quarantine_key(context)
-    yield from dd.wiring.process(
+    yield from dd.wiring.validation_results(
         Orders,
         orders_frame(),
         valid_key=context.asset_key,
@@ -968,11 +968,11 @@ It fails the run when another asset in the code location already materializes `<
 A call passes straight through it, since there is no graph to check against.
 
 An asset that writes its own storage and never holds a frame can still take `schema_metadata` on its own, for the Columns tab alone.
-`process` is the part that needs a frame; the metadata isn't.
+`validation_results` is the part that needs a frame; the metadata isn't.
 
 ### Split the checks off entirely
 
-The arrangement above hands its frame to `process`, and `process` is what fuses the write and the checks into one step.
+The arrangement above hands its frame to `validation_results`, and `validation_results` is what fuses the write and the checks into one step.
 Pull them apart and the asset goes back to being an ordinary one that returns a frame; the checks become a `@dg.multi_asset_check` of their own, reading the table back through the IO manager:
 
 ```python
@@ -1000,12 +1000,12 @@ The decorator would have refused to write them at all.
 
 `check_results` is the evaluating counterpart to `check_specs`.
 One declares, the other answers, and neither knows anything about storage.
-It is `process` without the writing: no materialization, no quarantine, and neither of the two errors that carry the decorator's failure policy.
+It is `validation_results` without the writing: no materialization, no quarantine, and neither of the two errors that carry the decorator's failure policy.
 A caller that writes nothing has no rows to route and no table to withhold, so it never raises `ValidationAbortError` or `NothingSurvivedError`.
 
-Two things it asks of you that `process` works out for itself:
+Two things it asks of you that `validation_results` works out for itself:
 
-- **`severity`.** `process` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
+- **`severity`.** `validation_results` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
   So you say which: `WARN` for a report beside a table that was written anyway, `ERROR` to bucket the failure with the ones that stop a run.
   Every rule check in the step carries it.
 - **The same settings the specs were derived with.**
@@ -1136,6 +1136,14 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 A `LazyFrame` return is split in the engine, so there is no staging file to place: drop the argument and the variable, and nothing else changes.
 The measurements behind it are §12 of [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
+Two functions are renamed, and nothing about either changes but the name.
+A function here is named after what it returns, which `CONTEXT.md` now writes down, and these two were the public exceptions.
+
+| 0.7 | 0.8 |
+| --- | --- |
+| `dd.build_quarantine_spec` | `dd.quarantine_spec` |
+| `dd.wiring.process` | `dd.wiring.validation_results` |
+
 ## Upgrading from 0.6
 
 0.7 moves the quarantine out of the graph and onto your own IO manager, and this package stops shipping storage.
@@ -1147,12 +1155,12 @@ Both are breaking, and both are ADRs: [0004](docs/adr/0004-the-quarantine-is-a-f
 | `quarantine=dg.AssetOut()` | `quarantine=True` | it's a `bool`, and `True` needs no configuration |
 | `dd.DataframelyParquetIOManager` | `dagster_polars.PolarsParquetIOManager` | this package ships no IO manager |
 | `dd.DataframelyCSVIOManager` | none | the CSV codecs went with it; use parquet or a warehouse |
-| the quarantine was a second out | `dd.build_quarantine_spec(Orders, orders)` | and only if you want it in the graph |
+| the quarantine was a second out | `dd.quarantine_spec(Orders, orders)` | and only if you want it in the graph |
 | `dd.errors.SchemaShapeError` | `dd.errors.ColumnSchemaError` | "shape" was Polars' word for something else |
 | `dd.errors.QuarantineSettingError` | none | nothing on the quarantine is configurable now |
 | `dd.errors.UnwritableDtypeError` | none | it belonged to the CSV writer |
 | `dd.wiring.quarantine_table_schema` | none | a quarantine spec carries its own Columns tab |
-| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](#the-decorator-is-a-dgasset-a-writer-and-process) |
+| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.validation_results(..., quarantine_writer=...)` | see [Hand-wiring](#the-decorator-is-a-dgasset-a-writer-and-validation_results) |
 | `dy_schema__dtypes` | `dy_schema__columns` | this orphans that check's history |
 | `sample` | `dataframely/valid_sample` | |
 | `stats/<family>` | `dataframely/valid_stats/<family>` | |

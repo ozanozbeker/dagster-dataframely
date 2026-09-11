@@ -27,7 +27,7 @@ class Orders(dy.Schema):
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
     dd.wiring.validate_quarantine_key(context)
-    yield from dd.wiring.process(
+    yield from dd.wiring.validation_results(
         Orders,
         pl.DataFrame({"order_id": ["a"]}),
         valid_key=context.asset_key,
@@ -46,7 +46,11 @@ from dagster_dataframely._quarantine import (
     quarantine_path,
     validate_quarantine_key,
 )
-from dagster_dataframely._runtime import AssetYield, process, quarantine_frame
+from dagster_dataframely._runtime import (
+    AssetYield,
+    quarantine_frame,
+    validation_results,
+)
 
 __all__ = [
     "AssetYield",
@@ -56,10 +60,10 @@ __all__ = [
     "check_specs",
     "delegating_writer",
     "file_writer",
-    "process",
     "quarantine_frame",
     "quarantine_path",
     "schema_metadata",
     "table_schema",
     "validate_quarantine_key",
+    "validation_results",
 ]

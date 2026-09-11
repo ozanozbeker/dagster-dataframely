@@ -405,9 +405,9 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
     assert "failed type check for Dagster type DataFrame" in str(raised.value)
 
 
-def test_materialize_result_still_takes_exactly_the_six_fields_the_fold_names():
+def test_materialize_result_still_takes_exactly_the_six_fields_the_rebuild_names():
     """`dg.MaterializeResult`'s constructor still takes exactly six fields, and `value` still defaults to a sentinel rather than to `None`."""
-    # #77 folds a returned result into the materialization `process` built, rebuilding it because it is immutable and naming every field. A seventh field added upstream would drop silently, so the field set is pinned here.
+    # #77 folds a returned result into the materialization `validation_results` built, rebuilding it because it is immutable and naming every field. A seventh field added upstream would drop silently, so the field set is pinned here.
     # The sentinel lets one `isinstance` check cover a result carrying nothing and one carrying a non-frame, so it is asserted too. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
     fields = set(inspect.signature(dg.MaterializeResult.__new__).parameters) - {"cls"}
 
@@ -692,7 +692,7 @@ def test_the_job_graph_still_narrows_to_what_the_run_selected():
 
 
 def test_a_bare_spec_is_still_unexecutable_beside_its_asset():
-    """What exempts a quarantine spec from the key guard with no marker of ours. A spec Dagster cannot materialize cannot write over a quarantine, and `build_quarantine_spec` returns exactly that."""
+    """What exempts a quarantine spec from the key guard with no marker of ours. A spec Dagster cannot materialize cannot write over a quarantine, and `quarantine_spec` returns exactly that."""
     key = dg.AssetKey(["orders"])
 
     @dg.asset(name="orders")

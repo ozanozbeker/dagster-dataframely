@@ -1,6 +1,6 @@
 """What a quarantine is called, where it goes, and who puts it there.
 
-`quarantine_path` and `build_quarantine_spec` are pure, so most of this file needs no run. The writers are not. The delegation tests are the only ones in the suite that care which IO manager is behind the asset.
+`quarantine_path` and `quarantine_spec` are pure, so most of this file needs no run. The writers are not. The delegation tests are the only ones in the suite that care which IO manager is behind the asset.
 
 Delegation is asserted against two managers (ADR-0006). The claim is that nothing in the package knows where the rows go, and one manager cannot show that. `PolarsParquetIOManager` is a `UPathIOManager` and `DuckDBPolarsIOManager` is a `DbIOManager`: one from each base class Dagster ships.
 
@@ -17,14 +17,14 @@ import pytest
 from polars.testing import assert_frame_equal
 from upath import UPath
 
-from dagster_dataframely import build_quarantine_spec, dy_asset
+from dagster_dataframely import dy_asset, quarantine_spec
 from dagster_dataframely.errors import NothingSurvivedError, QuarantineKeyCollisionError
 from dagster_dataframely.wiring import (
     file_writer,
-    process,
     quarantine_frame,
     quarantine_path,
     validate_quarantine_key,
+    validation_results,
 )
 from tests.scenario import (
     WAREHOUSE_SCHEMA,
@@ -151,25 +151,25 @@ def orders() -> None:
 
 def test_the_spec_is_keyed_as_the_file_is_named():
     """The spec and the path are one rule, so a downstream dependency on the spec resolves to the file `quarantine_path` writes."""
-    spec = build_quarantine_spec(Orders, orders)
+    spec = quarantine_spec(Orders, orders)
 
     assert spec.key == dg.AssetKey(["sales", "orders_quarantine"])
     assert spec.key.path[-1] == quarantine_path(orders.key, "/warehouse").stem
 
 
 def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from():
-    (dep,) = build_quarantine_spec(Orders, orders).deps
+    (dep,) = quarantine_spec(Orders, orders).deps
 
     assert dep.asset_key == dg.AssetKey(["sales", "orders"])
 
 
 def test_the_spec_takes_the_partitions_off_the_definition():
     """Read, not passed, so the spec cannot disagree with the asset whose invalid rows it holds."""
-    assert build_quarantine_spec(Orders, orders).partitions_def == _DAYS
+    assert quarantine_spec(Orders, orders).partitions_def == _DAYS
 
 
 def test_the_description_names_the_asset_the_rows_came_from():
-    description = build_quarantine_spec(Orders, orders).description
+    description = quarantine_spec(Orders, orders).description
 
     assert description is not None
     assert "sales/orders" in description
@@ -177,7 +177,7 @@ def test_the_description_names_the_asset_the_rows_came_from():
 
 def test_the_columns_tab_states_no_constraint():
     """These rows broke the constraints, so a `not null` on a column full of nulls would be false about every row."""
-    table = build_quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+    table = quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
 
     assert isinstance(table, dg.TableSchema)
     assert table.constraints == dg.TableConstraints(other=[])
@@ -187,7 +187,7 @@ def test_the_columns_tab_states_no_constraint():
 
 
 def test_the_columns_tab_carries_a_column_for_every_rule():
-    table = build_quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+    table = quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
     names = [column.name for column in table.columns]
 
     assert names[: len(Orders.columns())] == list(Orders.columns())
@@ -204,15 +204,13 @@ def test_a_key_form_is_keyed_exactly_as_the_definition_form(
     form: dg.AssetKey | Sequence[str],
 ):
     """A generated or foreign asset has no definition to read, and the answer must be the same."""
-    assert build_quarantine_spec(Orders, form).key == dg.AssetKey(
+    assert quarantine_spec(Orders, form).key == dg.AssetKey(
         ["sales", "orders_quarantine"]
     )
 
 
 def test_a_bare_string_is_a_single_key_part():
-    assert build_quarantine_spec(Orders, "orders").key == dg.AssetKey(
-        ["orders_quarantine"]
-    )
+    assert quarantine_spec(Orders, "orders").key == dg.AssetKey(["orders_quarantine"])
 
 
 @pytest.mark.parametrize(
@@ -224,7 +222,7 @@ def test_a_key_form_is_unpartitioned_unless_told_otherwise(
     form: dg.AssetKey | Sequence[str],
 ):
     """A key carries no partitions, so nothing can be inferred and guessing would state something false."""
-    assert build_quarantine_spec(Orders, form).partitions_def is None
+    assert quarantine_spec(Orders, form).partitions_def is None
 
 
 @pytest.mark.parametrize(
@@ -235,15 +233,13 @@ def test_a_key_form_is_unpartitioned_unless_told_otherwise(
 def test_a_key_form_takes_the_partitions_it_is_given(
     form: dg.AssetKey | Sequence[str],
 ):
-    assert build_quarantine_spec(Orders, form, partitions_def=_DAYS).partitions_def == (
-        _DAYS
-    )
+    assert quarantine_spec(Orders, form, partitions_def=_DAYS).partitions_def == (_DAYS)
 
 
 def test_a_definition_and_a_partitions_def_together_raise():
     """Two sources of one fact, and nothing decides which wins. Raising at call time is the only answer that cannot drift."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-        build_quarantine_spec(Orders, orders, partitions_def=_DAYS)
+        quarantine_spec(Orders, orders, partitions_def=_DAYS)
 
     assert "partitions_def" in str(raised.value)
     assert "sales/orders" in str(raised.value)
@@ -276,7 +272,7 @@ def _loaded(
         loaded["rows"] = orders_quarantine
 
     result = dg.materialize(
-        [audit, build_quarantine_spec(Orders, "orders", partitions_def=partitions_def)],
+        [audit, quarantine_spec(Orders, "orders", partitions_def=partitions_def)],
         partition_key=partition_key,
         resources=storage(tmp_path),
     )
@@ -502,9 +498,9 @@ def test_the_managers_own_metadata_does_not_reach_the_materialization(tmp_path: 
 
 # --- the file writer ---
 def test_the_file_writer_writes_where_the_path_rule_says(tmp_path: Path):
-    """Asserted through `process` with no run: no context, no manager, no instance."""
+    """Asserted through `validation_results` with no run: no context, no manager, no instance."""
     events = list(
-        process(
+        validation_results(
             Orders,
             mixed_orders(),
             valid_key=_ORDERS,
@@ -620,9 +616,9 @@ def test_the_whole_code_location_is_read_when_the_run_has_one():
 
 
 def test_a_quarantine_spec_stands_for_the_quarantine_rather_than_competing():
-    """`build_quarantine_spec` is keyed exactly where the quarantine is written, which is the point of it. Dagster's own executable split is what tells the two apart, so the spec needs no marker of ours."""
+    """`quarantine_spec` is keyed exactly where the quarantine is written, which is the point of it. Dagster's own executable split is what tells the two apart, so the spec needs no marker of ours."""
     asset = _delegating(mixed_orders, partitioned=False)
-    defs = dg.Definitions(assets=[asset, build_quarantine_spec(Orders, asset)])
+    defs = dg.Definitions(assets=[asset, quarantine_spec(Orders, asset)])
     repository = defs.get_repository_def()
 
     validate_quarantine_key(

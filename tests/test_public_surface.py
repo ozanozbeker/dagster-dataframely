@@ -21,7 +21,7 @@ _ROOT = Path(__file__).parent.parent
 _PUBLIC = {
     # The decorator, and the spec that puts its quarantine in the graph.
     "dy_asset",
-    "build_quarantine_spec",
+    "quarantine_spec",
     # The two namespaces, rather than their twenty names.
     "errors",
     "wiring",
@@ -41,7 +41,7 @@ _WIRING = {
     "check_specs",
     "delegating_writer",
     "file_writer",
-    "process",
+    "validation_results",
     "quarantine_frame",
     "quarantine_path",
     "schema_metadata",

@@ -80,7 +80,7 @@ def _executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.AssetK
 
     `repository_def` carries the whole code location, and a run launched from one always has it. In process there is no code location behind the run, so the job is everything: `dg.materialize` holds what it was handed, less whatever a selection dropped. Direct invocation has neither, and reaches `file_writer`, whose path resolves no asset key at all.
 
-    Only executable keys count. An asset Dagster can materialize is the only thing that can write over a quarantine, and a spec from `build_quarantine_spec` is unexecutable, so upstream's own split exempts it with no marker of ours (ADR-0007).
+    Only executable keys count. An asset Dagster can materialize is the only thing that can write over a quarantine, and a spec from `quarantine_spec` is unexecutable, so upstream's own split exempts it with no marker of ours (ADR-0007).
     """
     try:
         return context.repository_def.asset_graph.executable_asset_keys
@@ -270,7 +270,7 @@ def file_writer(
     return write
 
 
-def build_quarantine_spec(
+def quarantine_spec(
     schema: type[dy.Schema],
     asset: dg.AssetsDefinition | dg.AssetKey | str | Sequence[str],
     *,
@@ -321,12 +321,12 @@ def build_quarantine_spec(
         return pl.DataFrame({"order_id": ["a"]})
 
 
-    defs = dg.Definitions(assets=[orders, dd.build_quarantine_spec(Orders, orders)])
+    defs = dg.Definitions(assets=[orders, dd.quarantine_spec(Orders, orders)])
     ```
     """
     if isinstance(asset, dg.AssetsDefinition):
         if partitions_def is not None:
-            both = f"`build_quarantine_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
+            both = f"`quarantine_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
             raise dg.DagsterInvariantViolationError(both)
         parent, partitions_def = asset.key, asset.partitions_def
     else:

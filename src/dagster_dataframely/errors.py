@@ -169,7 +169,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
     """
 
     def __init__(self, asset: str, field: str) -> None:
-        """Name the field, why the decorator owns it, and the four that fold in instead.
+        """Name the field, why the decorator owns it, and the four a result may set.
 
         Parameters
         ----------
@@ -179,7 +179,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
             The `dg.MaterializeResult` field that was set.
         """
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`. The decorator owns it: the asset keys come from the outs it declares, and the check results from the schema's rules. Drop it. `value`, `metadata`, `data_version` and `tags` are what this package folds into the materialization."
+            f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`. The decorator owns it: the asset keys come from the outs it declares, and the check results from the schema's rules. Drop it. `value` carries the frame this package validates. `metadata`, `data_version` and `tags` land on the materialization it yields."
         )
 
 
@@ -291,7 +291,7 @@ class QuarantineKeyCollisionError(DagsterDataframelyError):
             The quarantine's key, rendered, which is the other asset's key too.
         """
         super().__init__(
-            f"'{asset}' declares `quarantine=True`, so its invalid rows go to '{quarantine}', which another asset in this code location already materializes. Rename that asset, or drop `quarantine=True` from '{asset}'. If that asset is your own quarantine table, delete it and declare `build_quarantine_spec` instead, which stands for the quarantine rather than competing with it."
+            f"'{asset}' declares `quarantine=True`, so its invalid rows go to '{quarantine}', which another asset in this code location already materializes. Rename that asset, or drop `quarantine=True` from '{asset}'. If that asset is your own quarantine table, delete it and declare `quarantine_spec` instead, which stands for the quarantine rather than competing with it."
         )
 
 
