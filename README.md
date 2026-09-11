@@ -465,7 +465,7 @@ def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
 
 `value` is the frame to validate, and you have to set it.
 `metadata`, `data_version` and `tags` land on the table's materialization, which is the only one there is.
-`asset_key` and `check_results` are refused by name, because the decorator decides the key from what it was declared with and the check results from the schema's rules.
+The result's own `asset_key` and `check_results` fields are refused by name, because the decorator decides the key from what it was declared with and the check results from the schema's rules.
 
 **This package's own metadata keys win a collision.**
 A returned `dagster/row_count` loses to the count this package made, and so does anything under `dataframely/`.
@@ -920,7 +920,7 @@ The docstring isn't decoration: it becomes that check's description in the catal
 
 ## Hand-wiring (and how the package works under the hood)
 
-The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `process`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
+The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `check_results`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `process`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
 Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
 The asset is then yours to declare, out of the same parts.
 
@@ -988,34 +988,32 @@ def orders() -> pl.LazyFrame:
 
 @dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=KEY))
 def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
-    try:
-        for result in dd.wiring.process(
-            Orders, orders, valid_key=KEY, statistics=False, row_sample=0
-        ):
-            if isinstance(result, dg.AssetCheckResult):
-                yield result
-    except (dd.errors.ValidationAbortError, dd.errors.NothingSurvivedError):
-        pass
+    yield from dd.wiring.check_results(
+        Orders, orders, asset_key=KEY, severity=dg.AssetCheckSeverity.WARN
+    )
 ```
 
 This is the arrangement to reach for when the write must not depend on the verdict: the asset returns its frame, lazy or eager, the IO manager writes whatever it returned, and the checks run afterwards against what was written.
 What you give up is the guarantee the decorator exists for.
-The table is written before anything is validated, so a bad table reaches storage and the red check is what tells you.
-The decorator would have refused to write it at all.
+The table is written before anything is validated, so the invalid rows reach storage and a failing check is what tells you.
+The decorator would have refused to write them at all.
 
-Three details earn their place in that block:
+`check_results` is the evaluating counterpart to `check_specs`.
+One declares, the other answers, and neither knows anything about storage.
+It is `process` without the writing: no materialization, no quarantine, and neither of the two errors that carry the decorator's failure policy.
+A caller that writes nothing has no rows to route and no table to withhold, so it never raises `ValidationAbortError` or `NothingSurvivedError`.
 
-- **`statistics=False, row_sample=0`.**
-  Both settings only ever feed a materialization, and this step discards every one `process` yields, so leaving them on would pay for tables nobody sees.
-  `max_failure_samples` stays on: it feeds the checks, which is the whole output here.
-- **The `try`.** `process` carries the decorator's failure policy, so it raises once rows fail with nowhere to route them.
-  A checks-only step wants the report without the policy, and both errors are raised after their check results have already been yielded, so catching them keeps every check and drops the abort.
-  Failing rows then leave the run green with a red `ERROR` check, which is what an asset check is for.
-- **`ColumnSchemaError` is deliberately not caught.**
-  A dtype drift means `process` never got as far as the rules, so there is nothing to report for them: one check comes back red and the step fails, rather than six checks claiming a pass nobody evaluated.
+Two things it asks of you that `process` works out for itself:
 
-The `try` is a sharp edge, and it is the one place this package makes you write around it.
-`process` is the only public evaluator, which is [#80](https://github.com/ozanozbeker/dagster-dataframely/issues/80).
+- **`severity`.** `process` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
+  So you say which: `WARN` for a report beside a table that was written anyway, `ERROR` to bucket the failure with the ones that stop a run.
+  Every rule check in the step carries it.
+- **The same settings the specs were derived with.**
+  Pass `check_granularity` and `multi_column_rules` to both calls or to neither.
+  A result answers a spec by name, so two calls that group the rules differently leave the step with outputs nobody wrote.
+
+A column-schema mismatch still raises.
+`ColumnSchemaError` says the frame is not what the asset claimed, so the rules never ran and nothing reports for them: the column-schema check comes back failing, the step fails on the raise, and no rule check claims a verdict nobody computed.
 
 ### Without the package at all
 

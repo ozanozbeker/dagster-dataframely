@@ -508,6 +508,48 @@ Decided 2026-09-02.
 
 ---
 
+## 13. Addendum, after #80: skipping the valid half costs more than it saves
+
+Verified against the installed `dagster 1.13.20`, `dataframely 3.0.0`, `polars 1.44.1`, on 2026-09-11.
+Peak RSS is `ru_maxrss` read in a fresh child process per option, so the figures are whole-process high-water marks and not attributable to one allocation.
+One M-series laptop, two runs each.
+
+**The question.** [#80](https://github.com/ozanozbeker/dagster-dataframely/issues/80) adds `check_results`, which evaluates a schema's checks and writes nothing.
+It needs the `FailureInfo` and never touches the valid rows, so `collect_all` looked like it was paying for a half nobody reads.
+`LazyFilterResult.failure` is available without collecting anything, which made skipping it look free.
+
+**It is not free, and the obvious option is the worst of the three. [RAN]** 2M rows, 14 columns, 216 MB in memory, scanned from parquet, 10% failing `amount|min`, `String` primary key:
+
+| option | what it does | peak RSS |
+| --- | --- | --- |
+| `.collect_all(engine="streaming")`, valid rows discarded | both halves, named engine | 785 MB, 814 MB |
+| `.failure` alone, letting `FailureInfo` collect it | failure half, whatever engine it picks | 880 MB, 872 MB |
+| `pl.collect_all([failure._lf], engine="streaming")`, rebuilding the `FailureInfo` | failure half, named engine | 779 MB, 762 MB |
+
+**Why the middle row loses. [READ]** `FailureInfo._df` is the `cached_property` §3 named, and it calls `self._lf.collect()` with no arguments (`filter_result.py:109`).
+That runs on `auto`, and `_runtime.py` already predicted what `auto` costs: an `auto` that chose to collect keeps the plan's own peak.
+The engine matters more than which halves are collected.
+
+**Why the third row was not taken.**
+It wins by about 35 MB, and the run-to-run variance on `collect_all` alone is 29 MB, so the saving sits inside the noise.
+It costs two private dataframely attributes, `_lf` and `_rule_columns`.
+`check_results` therefore makes the same call `process` makes, and the two arrangements execute identically.
+
+**A narrower frame hides all of this. [RAN]** The first attempt used 2 columns and 2M rows.
+All three options landed within 20 MB of each other, because the valid half of a two-column frame is not worth measuring.
+The columns were widened until the halves cost something, which is the only reason the ordering above is visible.
+
+### 13.1 What this addendum changes in the sections above
+
+- §3: unchanged, and reinforced.
+  `FailureInfo` being eager is still the binding constraint, and this measures what its eagerness costs when nothing asks for the valid rows either.
+- §9 item 1, a lazy `FailureInfo.counts()`: still not wanted, now for a second reason.
+  A caller that only reports checks is exactly the case it was imagined for, and collecting the failure half through dataframely's own accessor is the slowest of the three options here.
+
+Decided 2026-09-11.
+
+---
+
 ## Uncertainty ledger
 
 Verified by running code or reading installed source:

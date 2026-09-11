@@ -37,6 +37,7 @@ _WIRING = {
     "AssetYield",
     "QuarantineWriter",
     "check_name",
+    "check_results",
     "check_specs",
     "delegating_writer",
     "file_writer",

@@ -5,6 +5,7 @@ Specs come off the schema, never off a run's `FailureInfo`. A rule nothing faile
 `check_granularity` decides how many specs there are. A 40-column schema contributes around 120 rules, and nobody reads a check list that long. Specs and results come from the same grouping call, so a check can never report for rules its spec did not claim.
 """
 
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 
 import dagster as dg
@@ -12,6 +13,7 @@ import dataframely as dy
 import polars as pl
 from dataframely._rule import Rule
 
+from dagster_dataframely._frames import column_schema_problems
 from dagster_dataframely._naming import (
     COLUMN_SCHEMA_CHECK,
     SCHEMA_RULES_CHECK,
@@ -30,6 +32,7 @@ from dagster_dataframely._settings import (
     Granularity,
     MultiColumnRules,
 )
+from dagster_dataframely.errors import ColumnSchemaError
 
 
 @dataclass(frozen=True)
@@ -190,6 +193,41 @@ def check_specs(
     ]
 
 
+def column_schema_result(
+    problems: Sequence[dict[str, str]] = (), *, asset_key: dg.AssetKey
+) -> dg.AssetCheckResult:
+    """Build the column-schema check's result, passing when there is nothing to report.
+
+    A failure is `ERROR` whatever the run's outcome, and whatever severity a caller asked for its rules. This is the one blocking check, and a frame whose columns do not match the schema is a pipeline defect rather than a data one: grading it any lower would leave a drifted table feeding downstream.
+
+    Parameters
+    ----------
+    problems
+        What `column_schema_problems` found, empty when the frame matched.
+    asset_key
+        The asset the result hangs off.
+
+    Returns
+    -------
+    The result, tabulating every offending column when there is one.
+    """
+    if not problems:
+        return dg.AssetCheckResult(
+            check_name=COLUMN_SCHEMA_CHECK, asset_key=asset_key, passed=True
+        )
+    return dg.AssetCheckResult(
+        check_name=COLUMN_SCHEMA_CHECK,
+        asset_key=asset_key,
+        passed=False,
+        severity=dg.AssetCheckSeverity.ERROR,
+        metadata={
+            "dy_schema__errors": dg.MetadataValue.table(
+                [dg.TableRecord(problem) for problem in problems]
+            )
+        },
+    )
+
+
 _INVALID = "invalid"
 """What `FailureInfo.details()` calls a row that failed a rule."""
 
@@ -344,3 +382,103 @@ def rule_results(  # noqa: PLR0913 - every setting the specs were derived with h
             )
         )
     return results
+
+
+def check_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
+    schema: type[dy.Schema],
+    frame: pl.DataFrame | pl.LazyFrame,
+    *,
+    asset_key: dg.AssetKey,
+    severity: dg.AssetCheckSeverity,
+    check_granularity: Granularity | None = None,
+    multi_column_rules: MultiColumnRules | None = None,
+    max_failure_samples: int | None = None,
+) -> Iterator[dg.AssetCheckResult]:
+    """Answer every check `check_specs` declared, for an asset that reports and writes nothing.
+
+    The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. Reach for it when the checks are all you want: an asset that manages its own storage, or a `@dg.multi_asset_check` reporting on a table that has already been written.
+
+    `process` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to rejected rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
+
+    **Severity is stated, not derived.** `process` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `process` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `process` calls `ERROR`. So the caller says which, and every rule check in the run carries it.
+
+    **A column-schema mismatch reports that check and raises, as `process` does.** The rules never ran, so nothing reports for them. The raise is what stops Dagster looking for the outputs they would have answered: a generator that raises never reaches its missing-output check, so the step fails with this error rather than an opaque one about an output nobody wrote.
+
+    The valid rows are collected with the invalid ones and discarded. It is the same `collect_all` call `process` makes, so the two arrangements execute alike, and taking only the failure half measured worse: `FailureInfo` collects on `auto`, which keeps the plan's own peak.
+
+    Parameters
+    ----------
+    schema
+        The schema the results report against.
+    frame
+        The frame to evaluate, eager or lazy. A `LazyFrame` executes here, once.
+    asset_key
+        The asset the results hang off. Stated because a standalone result has no materialization to infer it from.
+    severity
+        Severity for every failing rule check. The column-schema check keeps its own.
+    check_granularity
+        How far the rules collapse. Pass the value the check specs were derived with, or the results answer a check list the asset never declared. Unset resolves through the settings chain.
+    multi_column_rules
+        Where the rules no single column owns land at `column` granularity, on the same terms.
+    max_failure_samples
+        How many invalid rows each rule shows. Unset resolves through the settings chain.
+
+    Yields
+    ------
+    The column-schema check's result first, then one result per rule set, in the order and under the names `check_specs` claimed. A rule nothing failed still gets a result.
+
+    Raises
+    ------
+    InvalidSettingError
+        A setting resolved to a value outside its vocabulary.
+    ColumnSchemaError
+        The frame's columns or dtypes do not match the schema, reported through the column-schema check before this is raised.
+
+    Examples
+    --------
+    ```python
+    from collections.abc import Iterator
+
+    import dagster as dg
+    import dataframely as dy
+    import polars as pl
+
+    import dagster_dataframely as dd
+
+
+    class Orders(dy.Schema):
+        order_id = dy.String(primary_key=True)
+
+
+    KEY = dg.AssetKey(["orders"])
+
+
+    @dg.asset(name="orders", metadata=dd.wiring.schema_metadata(Orders))
+    def orders() -> pl.DataFrame:
+        return pl.DataFrame({"order_id": ["a"]})
+
+
+    @dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=KEY))
+    def orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
+        yield from dd.wiring.check_results(
+            Orders, orders, asset_key=KEY, severity=dg.AssetCheckSeverity.WARN
+        )
+    ```
+    """
+    problems: list[dict[str, str]] = column_schema_problems(schema, frame)
+    if problems:
+        yield column_schema_result(problems, asset_key=asset_key)
+        raise ColumnSchemaError(schema.__name__, problems)
+
+    # One `collect_all` on the streaming engine, the call `process` makes, for the reason it makes it.
+    _, failure = schema.filter(frame.lazy(), cast=False).collect_all(engine="streaming")
+    yield column_schema_result(asset_key=asset_key)
+    yield from rule_results(
+        schema,
+        failure,
+        asset_key=asset_key,
+        severity=severity,
+        check_granularity=check_granularity,
+        multi_column_rules=multi_column_rules,
+        max_failure_samples=max_failure_samples,
+    )

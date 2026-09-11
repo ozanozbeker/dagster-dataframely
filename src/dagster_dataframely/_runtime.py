@@ -15,13 +15,9 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._checks import rule_results
+from dagster_dataframely._checks import column_schema_result, rule_results
 from dagster_dataframely._frames import column_schema_problems
-from dagster_dataframely._naming import (
-    COLUMN_SCHEMA_CHECK,
-    check_name,
-    validation_rules,
-)
+from dagster_dataframely._naming import check_name, validation_rules
 from dagster_dataframely._quarantine import QuarantineWriter
 from dagster_dataframely._samples import VALID_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
@@ -74,56 +70,6 @@ def _require_frame(frame: object, asset: str) -> None:
         return
     wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. `dy_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
-
-
-def _column_schema_failure(
-    problems: list[dict[str, str]], *, asset_key: dg.AssetKey
-) -> dg.AssetCheckResult:
-    """Build the failing column-schema check, tabulating every offending column."""
-    return dg.AssetCheckResult(
-        check_name=COLUMN_SCHEMA_CHECK,
-        asset_key=asset_key,
-        passed=False,
-        severity=dg.AssetCheckSeverity.ERROR,
-        metadata={
-            "dy_schema__errors": dg.MetadataValue.table(
-                [dg.TableRecord(problem) for problem in problems]
-            )
-        },
-    )
-
-
-def _check_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
-    schema: type[dy.Schema],
-    failure: dy.FailureInfo,
-    *,
-    asset_key: dg.AssetKey,
-    aborting: bool,
-    check_granularity: Granularity | None,
-    multi_column_rules: MultiColumnRules | None,
-    max_failure_samples: int | None,
-) -> list[dg.AssetCheckResult]:
-    """Build every check result for a run that passed the column-schema check.
-
-    Severity derives here, once, from whether the valid table was written. It is a property of the run's outcome, not of any one rule, so no code path can hand two sibling checks different severities. An invalid row with a quarantine to go to is a warning. The same row with nowhere to go, or with nothing left beside it, is an error.
-
-    The column-schema check is not a rule. It reports on its own at every granularity and never joins a rule set.
-    """
-    severity = dg.AssetCheckSeverity.ERROR if aborting else dg.AssetCheckSeverity.WARN
-    return [
-        dg.AssetCheckResult(
-            check_name=COLUMN_SCHEMA_CHECK, asset_key=asset_key, passed=True
-        ),
-        *rule_results(
-            schema,
-            failure,
-            asset_key=asset_key,
-            severity=severity,
-            check_granularity=check_granularity,
-            multi_column_rules=multi_column_rules,
-            max_failure_samples=max_failure_samples,
-        ),
-    ]
 
 
 def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
@@ -272,27 +218,45 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
+    def checks_for(
+        failure: dy.FailureInfo, *, aborting: bool
+    ) -> list[dg.AssetCheckResult]:
+        """Build every check result for a frame that passed the column-schema check.
+
+        Severity derives here, once, from whether the valid table was written. It is a property of the run's outcome, not of any one rule, so no code path can hand two sibling checks different severities. An invalid row with a quarantine to go to is a warning. The same row with nowhere to go, or with nothing left beside it, is an error.
+
+        A closure rather than a function of its own. Everything but the failure is settled before any outcome can be reached, so a function would take five arguments that are identical at both call sites, which is what the lint suppression this replaced was there to excuse.
+
+        The column-schema check is not a rule. It reports on its own at every granularity and never joins a rule set.
+        """
+        return [
+            column_schema_result(asset_key=valid_key),
+            *rule_results(
+                schema,
+                failure,
+                asset_key=valid_key,
+                severity=dg.AssetCheckSeverity.ERROR
+                if aborting
+                else dg.AssetCheckSeverity.WARN,
+                check_granularity=check_granularity,
+                multi_column_rules=multi_column_rules,
+                max_failure_samples=failure_samples,
+            ),
+        ]
+
     if frame is None:
         # The decorated function returned `None`. Neither output is yielded, so the partition stays unmaterialized and the run succeeds.
         # The rules still report, over an empty frame, because a check spec is a non-optional op output.
         _, nothing = schema.filter(schema.create_empty(), cast=False)
-        yield from _check_results(
-            schema,
-            nothing,
-            asset_key=valid_key,
-            # Nothing failed and nothing was written, so there is no failure to grade.
-            aborting=False,
-            check_granularity=check_granularity,
-            multi_column_rules=multi_column_rules,
-            max_failure_samples=failure_samples,
-        )
+        # Nothing failed and nothing was written, so there is no failure to grade.
+        yield from checks_for(nothing, aborting=False)
         return
 
     # --- The column-schema check ---
     problems: list[dict[str, str]] = column_schema_problems(schema, frame)
     if problems:
         # The column schema does not match, which is a pipeline defect. Nothing is filtered and neither output is written, so a mismatched frame cannot corrupt either table.
-        yield _column_schema_failure(problems, asset_key=valid_key)
+        yield column_schema_result(problems, asset_key=valid_key)
         raise ColumnSchemaError(schema.__name__, problems)
 
     # --- `Schema.filter` ---
@@ -306,15 +270,7 @@ def process(  # noqa: PLR0913 - hand-wiring needs everything the decorator decid
     invalid_count: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
     aborting = bool(invalid_count) and (quarantine_writer is None or not len(valid))
-    checks = _check_results(
-        schema,
-        failure,
-        asset_key=valid_key,
-        aborting=aborting,
-        check_granularity=check_granularity,
-        multi_column_rules=multi_column_rules,
-        max_failure_samples=failure_samples,
-    )
+    checks = checks_for(failure, aborting=aborting)
 
     def valid_result(
         invalid_metadata: InvalidMetadata | None = None,
