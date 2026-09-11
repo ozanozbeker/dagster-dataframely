@@ -45,6 +45,7 @@ _WIRING = {
     "quarantine_path",
     "schema_metadata",
     "table_schema",
+    "validate_quarantine_key",
 }
 
 # What `dd.errors` imports to build its messages. Named so a third one is a decision made here, not a name that became reachable as `dd.errors.<it>`.
@@ -60,6 +61,7 @@ _ERRORS = {
     "MaterializeResultValueError",
     "NothingSurvivedError",
     "QuarantineDirError",
+    "QuarantineKeyCollisionError",
     "ReservedColumnError",
     "ColumnSchemaError",
     "ValidationAbortError",

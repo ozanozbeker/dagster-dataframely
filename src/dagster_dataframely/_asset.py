@@ -30,6 +30,7 @@ from dagster_dataframely._quarantine import (
     QuarantineWriter,
     delegating_writer,
     file_writer,
+    validate_quarantine_key,
 )
 from dagster_dataframely._returns import DecoratedReturn, fold, unwrap
 from dagster_dataframely._runtime import AssetYield, process
@@ -230,7 +231,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     schema
         The Dataframely schema the decorated function's output must satisfy. Positional-only, and the only such parameter: it is the reason this decorator exists, so it is required and never one keyword among thirty.
     quarantine
-        Whether invalid rows are kept. `True` is the consent to partial data, `False` the refusal. It needs no configuration: the rows go wherever this asset's manager puts things. **`True` adds a `context` parameter** to the asset whether or not the decorated function declared one, because the writer is built from the execution context. Calling a quarantined asset directly therefore takes a `dg.build_asset_context()` first. A direct call reaches no IO manager, so the rows go to a parquet file under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, read when there are rows to write and raising then if it is unset. A call that holds nothing back needs no directory.
+        Whether invalid rows are kept. `True` is the consent to partial data, `False` the refusal. It needs no configuration: the rows go wherever this asset's manager puts things. **`True` adds a `context` parameter** to the asset whether or not the decorated function declared one, because the writer is built from the execution context. Calling a quarantined asset directly therefore takes a `dg.build_asset_context()` first. A direct call reaches no IO manager, so the rows go to a parquet file under `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, read when there are rows to write and raising then if it is unset. A call that holds nothing back needs no directory. **`True` reserves the asset key `<name>_quarantine`**: a run fails before its body, with `QuarantineKeyCollisionError`, when another asset in the code location materializes that key.
     check_granularity
         How far the schema's rules collapse into checks. `rule` gives each rule its own check and its own history. `column` gives one check per rule-bearing column, `dy_col__<column>`, which keeps a wide schema's check list readable. `schema` gives a single `dy_schema__rules` for all of them. **Changing this on an existing asset orphans check history**: the old check names stop being reported and their histories end where the change landed, while the new ones start empty. Nothing migrates them, so choose it before the asset ships. Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then the package default `rule`.
     multi_column_rules
@@ -399,6 +400,8 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
+                # Ahead of the body, and ahead of the writer: a body whose invalid rows would land on another asset's key has nowhere to put them, so nothing is gained by running it first (ADR-0007).
+                validate_quarantine_key(context)
                 # Built before the body runs because the context is in hand here and nowhere else. It picks its route later, when there are rows to write, so a body that holds nothing back needs nowhere to put it.
                 writer = _quarantine_writer(context)
                 returned: DecoratedReturn = (

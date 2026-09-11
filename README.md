@@ -845,7 +845,8 @@ ops:
 
 ### The reserved namespaces
 
-There are two, because Dagster forces the split.
+There are three.
+The first two are prefixes Dagster forces apart.
 
 **`dy_`** covers every check name, every quarantine rule column and every key in check metadata: the column-schema check `dy_schema__columns`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
 A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, so a slash is not available there.
@@ -854,9 +855,26 @@ A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_
 It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
 
 A schema with a column of its own inside `dy_` raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
-Both prefixes are hardcoded rather than configurable: their whole value is being the same string in every project.
 
-## Two ways to get this wrong
+**`<name>_quarantine`** is the third, and it is unlike the other two.
+It is the asset key a quarantine is written under, and asset keys are yours as much as they are this package's, so it is the one reservation somebody else can take first.
+A run of a quarantined asset proves it is free before it runs the body, and fails with `QuarantineKeyCollisionError` if it is not.
+
+All three are hardcoded rather than configurable: their whole value is being the same string in every project.
+
+## Three ways to get this wrong
+
+**Don't declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.** `orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
+An asset of your own keyed `orders_quarantine` resolves to that same address, so the two writes land on one table or one file and whichever ran last wins.
+Every run of the quarantined asset checks first and fails before its body:
+
+```text
+QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows go to
+'orders_quarantine', which another asset in this code location already materializes.
+```
+
+Rename your asset, or drop `quarantine=True` from `orders`.
+If that asset *is* your quarantine table, `build_quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
 
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
 Under PEP 563 every annotation reaches Dagster as a string.
@@ -902,7 +920,7 @@ The docstring isn't decoration: it becomes that check's description in the catal
 
 ## Hand-wiring (and how the package works under the hood)
 
-The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `process`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
+The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `process`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
 Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
 The asset is then yours to declare, out of the same parts.
 
@@ -923,6 +941,7 @@ The schema's metadata and check specs go straight on the asset, and `process` do
     output_required=False,
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
+    dd.wiring.validate_quarantine_key(context)
     yield from dd.wiring.process(
         Orders,
         orders_frame(),
@@ -943,6 +962,10 @@ Pass nothing instead and invalid rows abort the run, exactly as they do when the
 
 `delegating_writer` needs a real step, so it raises under direct invocation.
 `file_writer(context.asset_key, quarantine_dir, partition_key)` is what the decorator reaches for there, and you can reach for it on the same terms.
+
+`validate_quarantine_key(context)` is the other half of declaring a quarantine, and the decorator calls it in the same place: before the body, on every run.
+It fails the run when another asset in the code location already materializes `<name>_quarantine`, rather than letting one write land on the other.
+A call passes straight through it, since there is no graph to check against.
 
 An asset that writes its own storage and never holds a frame can still take `schema_metadata` on its own, for the Columns tab alone.
 `process` is the part that needs a frame; the metadata isn't.

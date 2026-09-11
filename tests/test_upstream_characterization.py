@@ -14,6 +14,7 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 import pytest
+from dagster._check import CheckError
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 from dagster._core.errors import DagsterInvalidPropertyError
 from dagster._core.execution.plan.outputs import StepOutputHandle
@@ -634,3 +635,80 @@ def test_an_output_context_still_clones_and_re_points_by_attribute():
     assert repointed.definition_metadata == original.definition_metadata
     assert "path" in repointed.get_logged_metadata()
     assert original.get_logged_metadata() == {}
+
+
+# --- what the key guard reads (ADR-0007) ---
+def test_an_in_process_run_still_has_no_repository_definition():
+    """`repository_def` carries every key in a code location, and an in-process run has no code location behind it.
+
+    It raises rather than answering `None`, and the exception is `dagster_shared`'s `CheckError`, which `dagster._check` re-exports. The guard catches it to fall back to the job, so upstream turning this into a `None` would route every deployed run through the narrower graph without failing anything.
+    """
+
+    @dg.asset(name="orders")
+    def orders(context: dg.AssetExecutionContext) -> str:
+        with pytest.raises(CheckError):
+            _ = context.repository_def
+        return "ran"
+
+    assert dg.materialize([orders]).success
+
+
+def test_a_directly_invoked_asset_still_refuses_the_repository_too():
+    """A call has no run, so there is no graph to check a quarantine key against. The signal is the same `DagsterInvalidPropertyError` the step refuses with, which is what lets the guard pass a call straight through."""
+
+    @dg.asset(name="orders")
+    def orders(context: dg.AssetExecutionContext) -> str:
+        with pytest.raises(DagsterInvalidPropertyError):
+            _ = context.repository_def
+        return "called"
+
+    assert orders(dg.build_asset_context()) == "called"
+
+
+def test_the_job_graph_still_narrows_to_what_the_run_selected():
+    """The fallback the guard uses in process, and the reason it is a fallback rather than the source.
+
+    A job holds what it was handed, so an in-process run sees a sibling asset. Subset it and the sibling is gone, which is what materializing one asset from the UI does. Only `repository_def` answers the same either way.
+    """
+    seen: dict[str, set[str]] = {}
+
+    @dg.asset(name="orders")
+    def orders(context: dg.AssetExecutionContext) -> str:
+        graph = context.job_def.asset_layer.asset_graph
+        seen[context.run.run_id] = {
+            key.to_user_string() for key in graph.executable_asset_keys
+        }
+        return "ran"
+
+    @dg.asset(name="orders_quarantine")
+    def sibling() -> str:
+        return "ran"
+
+    whole = dg.materialize([orders, sibling])
+    subset = dg.materialize([orders, sibling], selection=[orders])
+
+    assert seen[whole.run_id] == {"orders", "orders_quarantine"}
+    assert seen[subset.run_id] == {"orders"}
+
+
+def test_a_bare_spec_is_still_unexecutable_beside_its_asset():
+    """What exempts a quarantine spec from the key guard with no marker of ours. A spec Dagster cannot materialize cannot write over a quarantine, and `build_quarantine_spec` returns exactly that."""
+    key = dg.AssetKey(["orders"])
+
+    @dg.asset(name="orders")
+    def orders() -> str:
+        return "ran"
+
+    graph = (
+        dg.Definitions(
+            assets=[
+                orders,
+                dg.AssetSpec(key=dg.AssetKey(["orders_quarantine"]), deps=[key]),
+            ]
+        )
+        .get_repository_def()
+        .asset_graph
+    )
+
+    assert graph.executable_asset_keys == {key}
+    assert graph.unexecutable_asset_keys == {dg.AssetKey(["orders_quarantine"])}

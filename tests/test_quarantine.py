@@ -9,7 +9,7 @@ The multi-partition spelling is asserted here against a literal and pinned again
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import dagster as dg
 import polars as pl
@@ -18,16 +18,18 @@ from polars.testing import assert_frame_equal
 from upath import UPath
 
 from dagster_dataframely import build_quarantine_spec, dy_asset
-from dagster_dataframely.errors import NothingSurvivedError
+from dagster_dataframely.errors import NothingSurvivedError, QuarantineKeyCollisionError
 from dagster_dataframely.wiring import (
     file_writer,
     process,
     quarantine_frame,
     quarantine_path,
+    validate_quarantine_key,
 )
 from tests.scenario import (
     WAREHOUSE_SCHEMA,
     Orders,
+    clean_orders,
     cooccurring_orders,
     hopeless_orders,
     mixed_orders,
@@ -538,3 +540,96 @@ def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(tmp_path: P
     file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
 
     assert list(tmp_path.iterdir()) == []
+
+
+# --- the key is reserved ---
+class _Location(NamedTuple):
+    """The two things `validate_quarantine_key` reads off a context, standing in for a run that has a code location behind it.
+
+    `repository_def` is set on a run launched from a code location and on no other, so no `dg.materialize` here reaches the branch that reads it (ADR-0007). The rule below the branch is one rule, so the two tests that need the whole code location assert it through this and the rest assert it through a run.
+
+    Attributes
+    ----------
+    asset_key
+        The quarantined asset's key, which is what the suffix is put on.
+    repository_def
+        The code location the keys are read from.
+    """
+
+    asset_key: dg.AssetKey
+    repository_def: dg.RepositoryDefinition
+
+
+def _collider() -> dg.AssetsDefinition:
+    """Declare the asset that takes the quarantine's key, as #114 reported it."""
+
+    @dg.asset(name="orders_quarantine", key_prefix=WAREHOUSE_SCHEMA)
+    def orders_quarantine() -> pl.DataFrame:
+        return pl.DataFrame({"sentinel": [1]})
+
+    return orders_quarantine
+
+
+def test_a_run_refuses_when_another_asset_owns_the_quarantines_key(tmp_path: Path):
+    """#114: the invalid rows were written first, the colliding asset wrote over them, and the run succeeded saying nothing."""
+    with pytest.raises(QuarantineKeyCollisionError) as raised:
+        dg.materialize(
+            [_delegating(mixed_orders, partitioned=False), _collider()],
+            resources=storage(tmp_path),
+        )
+    message = str(raised.value)
+
+    assert f"'{WAREHOUSE_SCHEMA}/orders'" in message
+    assert f"'{WAREHOUSE_SCHEMA}/orders_quarantine'" in message
+    assert "Rename that asset" in message
+
+
+def test_the_refusal_lands_before_the_body_runs(tmp_path: Path):
+    """A key is a property of the declaration, so the run fails on the name before it spends anything computing rows with nowhere to go."""
+    ran: list[int] = []
+
+    @dy_asset(Orders, name="orders", key_prefix=WAREHOUSE_SCHEMA, quarantine=True)
+    def orders() -> pl.DataFrame:
+        ran.append(1)
+        return mixed_orders()
+
+    with pytest.raises(QuarantineKeyCollisionError):
+        dg.materialize([orders, _collider()], resources=storage(tmp_path))
+
+    assert ran == []
+
+
+def test_a_clean_run_of_a_quarantined_asset_fails_on_the_key_too(tmp_path: Path):
+    """The rows never decide. A frame with nothing to hold back still fails, because the declaration was wrong before the run started."""
+    with pytest.raises(QuarantineKeyCollisionError):
+        dg.materialize(
+            [_delegating(clean_orders, partitioned=False), _collider()],
+            resources=storage(tmp_path),
+        )
+
+
+def test_the_whole_code_location_is_read_when_the_run_has_one():
+    """A deployed run sees every key in its code location, not only the ones its own job holds, so materializing one asset from the UI still catches the collision."""
+    asset = _delegating(mixed_orders, partitioned=False)
+    defs = dg.Definitions(assets=[asset, _collider()])
+
+    with pytest.raises(QuarantineKeyCollisionError):
+        validate_quarantine_key(
+            _Location(asset.key, defs.get_repository_def())  # pyrefly: ignore[bad-argument-type]
+        )
+
+
+def test_a_quarantine_spec_stands_for_the_quarantine_rather_than_competing():
+    """`build_quarantine_spec` is keyed exactly where the quarantine is written, which is the point of it. Dagster's own executable split is what tells the two apart, so the spec needs no marker of ours."""
+    asset = _delegating(mixed_orders, partitioned=False)
+    defs = dg.Definitions(assets=[asset, build_quarantine_spec(Orders, asset)])
+    repository = defs.get_repository_def()
+
+    validate_quarantine_key(
+        _Location(asset.key, repository)  # pyrefly: ignore[bad-argument-type]
+    )
+
+    assert (
+        dg.AssetKey([WAREHOUSE_SCHEMA, "orders_quarantine"])
+        not in repository.asset_graph.executable_asset_keys
+    )

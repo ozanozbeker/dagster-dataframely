@@ -1,6 +1,8 @@
 """What a quarantine is called, where it goes, and who puts it there.
 
-`_LEAF_SUFFIX` decides what a quarantine is called. Everything here uses that name: a writer addresses the rows by it, a path spells it, a spec is keyed by it. They sit together because a spec keyed differently from the quarantine it describes depends on nothing.
+`_LEAF_SUFFIX` decides what a quarantine is called. Everything here uses that name: a writer addresses the rows by it, a path spells it, a spec is keyed by it, and `validate_quarantine_key` proves no other asset already owns it. They sit together because a spec keyed differently from the quarantine it describes depends on nothing.
+
+That last one is here because the suffix reserves a name in a space the package does not own. Dagster's asset keys are the user's too, so the reservation is the one this package cannot enforce by generating the string itself, and a run proves it rather than a load (ADR-0007).
 
 The delegating writer is the usual route (ADR-0006). It shallow-copies the step's own `OutputContext`, re-points it at `<name>_quarantine`, and hands the frame to the manager the asset is already bound to. The rows land wherever that manager puts things: a parquet file beside the table under `UPathIOManager`, a second table beside it under `DbIOManager`. Nothing here knows which manager it is talking to.
 
@@ -13,11 +15,21 @@ Whatever upstream already spells, this module imports rather than restates. A se
 
 import copy
 from collections.abc import Callable, Sequence
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 import dagster as dg
 import dataframely as dy
 import polars as pl
+
+# What `repository_def` raises when the run has no code location behind it, which is
+# every in-process run. Dagster re-exports `dagster_shared`'s here, so the guard stays
+# inside a declared dependency. Characterization tests pin it with the rest (ADR-0007).
+from dagster._check import CheckError
+
+# What every context property only a real step can answer raises. Here it says the
+# quarantine key has no graph to be checked against, which is direct invocation.
+from dagster._core.errors import DagsterInvalidPropertyError
 
 # Where the delegating writer reads the step's output context and IO manager from.
 # `StepOutputHandle` names the step's own output, `get_output_context` returns the
@@ -36,6 +48,7 @@ from dagster._core.storage.upath_io_manager import (
 from upath import UPath
 
 from dagster_dataframely._metadata import quarantine_metadata
+from dagster_dataframely.errors import QuarantineKeyCollisionError
 
 type QuarantineWriter = Callable[[pl.DataFrame], str]
 """What a writer returns: where the invalid rows went, rendered for a reader. A string, not a path, because the answer can be a database table."""
@@ -60,6 +73,47 @@ def _quarantine_key(key: dg.AssetKey) -> dg.AssetKey:
     Every asset-key-addressed IO manager turns a key into its own address: `UPathIOManager` into a path, `DbIOManager` into `<schema>.<table>` off the last part. So suffixing the leaf is the whole placement rule, on every backend at once.
     """
     return dg.AssetKey(list(_suffixed(key.path)))
+
+
+def _executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.AssetKey]:
+    """Return every asset key the run could materialize, as widely as it can see them.
+
+    `repository_def` carries the whole code location, and a run launched from one always has it. In process there is no code location behind the run, so the job is everything: `dg.materialize` holds what it was handed, less whatever a selection dropped. Direct invocation has neither, and reaches `file_writer`, whose path resolves no asset key at all.
+
+    Only executable keys count. An asset Dagster can materialize is the only thing that can write over a quarantine, and a spec from `build_quarantine_spec` is unexecutable, so upstream's own split exempts it with no marker of ours (ADR-0007).
+    """
+    try:
+        return context.repository_def.asset_graph.executable_asset_keys
+    except CheckError:
+        return context.job_def.asset_layer.asset_graph.executable_asset_keys
+    except DagsterInvalidPropertyError:
+        return frozenset()
+
+
+def validate_quarantine_key(context: dg.AssetExecutionContext) -> None:
+    """Refuse a run whose quarantine key another asset already materializes.
+
+    The suffix reserves `<name>_quarantine` in Dagster's key space, which belongs to the user as much as to this package. An asset declared there and a quarantine written there resolve to one address through one IO manager, so one write lands on the other and the run reports nothing (#114).
+
+    Called before the decorated function, on every run of a quarantined asset. The key is a property of the declaration rather than of the rows, so it does not wait for them the way the writer's route does (#115), and a run holding nothing back still fails on a name that was always wrong.
+
+    A hand-wired asset calls this itself, next to where it builds its writer.
+
+    Parameters
+    ----------
+    context
+        The executing asset's context. Direct invocation passes through untouched: there is no graph to read and no asset key to contend for.
+
+    Raises
+    ------
+    QuarantineKeyCollisionError
+        An asset the run can materialize already owns `<name>_quarantine`.
+    """
+    key: dg.AssetKey = _quarantine_key(context.asset_key)
+    if key in _executable_keys(context):
+        raise QuarantineKeyCollisionError(
+            context.asset_key.to_user_string(), key.to_user_string()
+        )
 
 
 def _spelling(partition_key: str) -> str:

@@ -19,6 +19,7 @@ __all__ = [
     "MaterializeResultValueError",
     "NothingSurvivedError",
     "QuarantineDirError",
+    "QuarantineKeyCollisionError",
     "ReservedColumnError",
     "ValidationAbortError",
 ]
@@ -270,6 +271,27 @@ class NothingSurvivedError(DagsterDataframelyError):
         plural = "" if invalid_count == 1 else "s"
         super().__init__(
             f"All {invalid_count} row{plural} failed {schema_name} validation, {_culprits(counts)}. Every row is in {address} with its per-rule outcome, and the valid rows were skipped rather than written empty, so the last-known-good table survives."
+        )
+
+
+class QuarantineKeyCollisionError(DagsterDataframelyError):
+    """An asset the run can materialize already owns the quarantine's asset key.
+
+    Raised before the decorated function runs, on every run of a quarantined asset, because the key is a property of the declaration and not of the rows (ADR-0007). Left alone, the two writes resolve to one address and whichever ran last would win, which is how #114 lost the invalid rows in silence.
+    """
+
+    def __init__(self, asset: str, quarantine: str) -> None:
+        """Name both assets, the key they contend for, and every way out.
+
+        Parameters
+        ----------
+        asset
+            The quarantined asset's key, rendered.
+        quarantine
+            The quarantine's key, rendered, which is the other asset's key too.
+        """
+        super().__init__(
+            f"'{asset}' declares `quarantine=True`, so its invalid rows go to '{quarantine}', which another asset in this code location already materializes. Rename that asset, or drop `quarantine=True` from '{asset}'. If that asset is your own quarantine table, delete it and declare `build_quarantine_spec` instead, which stands for the quarantine rather than competing with it."
         )
 
 

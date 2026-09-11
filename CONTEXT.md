@@ -35,6 +35,7 @@ _Avoid_: rejection, violation
 **Quarantine**: Where invalid rows are written, addressed by the asset key `<name>_quarantine`.
 Not an asset: it is evidence of a run, and it holds no place in the graph unless `build_quarantine_spec` gives it one.
 Declaring one is the consent to partial data; leaving it undeclared is the refusal.
+Where an asset Dagster can materialize already owns that key, the run fails rather than one of the two overwriting the other (ADR-0007).
 _Avoid_: quarantine asset, dead-letter asset
 
 **`QuarantineWriter`**: What puts the invalid rows somewhere and hands back a quarantine address.
@@ -101,10 +102,13 @@ _Avoid_: knob, option
 
 ### Naming
 
-**Reserved namespace**: Two, because Dagster forces the split.
+**Reserved namespace**: Three, and the third is unlike the other two.
 `dy_` for every check name, rule column and check-result metadata key: a check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, and the metadata beside it follows the name.
 `dataframely/` for every materialization metadata key, which parallels `dagster/` and has no such limit.
-Both hardcoded, never configurable.
+Those two split because Dagster forces them apart, and both name what this package generates, so nothing else can claim them.
+`<name>_quarantine` is the third, the asset key a quarantine is addressed by.
+It sits in Dagster's own key space, which the user shares, so it is the one reservation somebody else can take first.
+All three hardcoded, never configurable.
 
 ## Coinages to avoid
 
