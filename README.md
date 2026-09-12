@@ -114,7 +114,7 @@ Nothing rewrites your signature, so what you decorate stays a function you can r
 **What you return decides what happens, not how you annotated it.**
 A `LazyFrame` is split by the same call as a `DataFrame` whichever way the signature spells it, and a `dg.MaterializeResult` is unwrapped the same way.
 `@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it.
-This decorator can't, because the split materializes both halves, so the asset always stores a `DataFrame` however the decorated function arrived at one.
+This decorator can't, because `Schema.filter` materializes the valid rows and the invalid rows, so the asset always stores a `DataFrame` however the decorated function arrived at one.
 Annotate it anyway and a type checker will hold you to it instead.
 Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker refuses.
 
@@ -125,7 +125,7 @@ Two things exist as soon as the module imports, before you run anything:
 
 - **The Columns tab**, built from the schema.
   Dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining constraint beside its column.
-- **A check spec per rule**, so the catalog lists the checks an asset will report and a red one has a name before it ever goes red.
+- **A check spec per rule**, so the catalog lists the checks an asset will report and a failing one has a name before it ever fails.
 
 The asset's description comes from the schema's docstring, which [Naming](#naming) covers.
 
@@ -142,11 +142,11 @@ Declaring a quarantine **is** your consent to partial data, so what an invalid r
 | what was returned | the table | the quarantine | checks | run |
 | --- | --- | --- | --- | --- |
 | columns or dtypes that are not the schema's | not written | not written | the column-schema check fails, blocking | fails, `ColumnSchemaError` |
-| every row valid | written | not written | all pass | green |
+| every row valid | written | not written | all pass | succeeds |
 | some rows failed, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
-| some rows failed, quarantine declared | the valid rows | the invalid rows | fail at `WARN` | green |
+| some rows failed, quarantine declared | the valid rows | the invalid rows | fail at `WARN` | succeeds |
 | every row failed, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
-| `None`, meaning no source data | skipped | not written | all pass | green |
+| `None`, meaning no source data | skipped | not written | all pass | succeeds |
 
 Six rows, and they are the six ways a run can end.
 Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
@@ -260,7 +260,7 @@ Some partitions have no source data, and never will.
 A monthly x distributor grid where one distributor left the marketplace two years ago is the shape: its historical partitions hold real data and must stay, its recent ones have no file.
 
 That's not a failure, and it isn't an empty table either.
-Return `None` and the asset skips: nothing is validated, nothing materializes, and the run stays green, so the partition stays unmaterialized instead of going green with zero rows or red with an error.
+Return `None` and the asset skips: nothing is validated, nothing materializes, and the run succeeds, so the partition stays unmaterialized instead of materializing zero rows or failing with an error.
 
 ```python
 @dd.dy_asset(SupplierReport, partitions_def=grid)
@@ -349,7 +349,7 @@ A single-rule check carries `dy_rule` and `dy_rule__expr`, plus `dy_failed_count
 A collapsed check carries `dy_rules`, a row per member rule, and one `dy_failed_sample` with `dy_rule` prepended so each row names the rule that put it there.
 Severity follows the run's outcome rather than the rule: a failing row with a quarantine to go to is a `WARN`, and the same row with nowhere to go is an `ERROR`.
 
-On the two exits that raise there is no materialization to carry the address, so `dataframely/quarantine_address` is copied onto every check result instead.
+On the outcomes that raise there is no materialization to carry the address, so `dataframely/quarantine_address` is copied onto every check result instead.
 A reader looking at a failed run finds it wherever they look.
 
 The Columns tab isn't a run surface.
@@ -654,7 +654,7 @@ The rows are written inside the asset's own step, with no schedule, sensor or co
 So `dg.AutomationCondition.eager()` on a downstream asset has nothing to react to, however you declare it.
 
 **Automate on the check instead.**
-A rule that failed is a red check with its own history, which is the surface Dagster gives you for exactly this:
+A rule that failed is a failing check with its own history, which is the place Dagster gives you for exactly this:
 
 ```python
 @dg.asset_check(asset=orders, name="triage_needed")
@@ -668,9 +668,9 @@ What you can't do is treat it as an event source, and that's a property of it be
 
 Two seams meet a `pl.LazyFrame`, and they read it differently on purpose.
 A read has no object yet, so the annotation is the only signal it has.
-Validation takes the plan and executes it, once, at the split.
+Validation takes the plan and executes it, once, in `Schema.filter`.
 
-A `dy_asset` hands your plan to `Schema.filter` and collects both halves in one pass on the streaming engine, because the rules can only be reported over rows in memory.
+A `dy_asset` hands your plan to `Schema.filter` and collects the valid rows and the invalid rows in one pass on the streaming engine, because the rules can only be reported over rows in memory.
 The engine still does the work; what this pays for is holding what the engine produced.
 
 ```mermaid
@@ -711,20 +711,20 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
 ```
 
-Your joins, filters and aggregations therefore run in the streaming engine, which the split names rather than leaves to `auto`.
+Your joins, filters and aggregations therefore run in the streaming engine, which the package's `collect_all` names rather than leaves to `auto`.
 Polars falls back to the in-memory engine for anything streaming can't run, so naming it never fails a plan.
 An `auto` that chose to collect would keep the plan's own peak.
 What comes into memory is what the plan produced, not the plan.
-Peak memory is that frame plus one boolean column per rule, held once while the two halves are cut from it, rather than the plan's own high-water mark.
+Peak memory is that frame plus one boolean column per rule, held once while the valid rows and the invalid rows are cut from it, rather than the plan's own high-water mark.
 That is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
-A `DataFrame` return takes the same call after a free `.lazy()`, so there is one path and nothing past the split can tell the two apart.
-The column-schema check runs before the split, off `collect_schema()`, so a frame whose columns disagree with the schema is refused before a single row is pulled through the plan.
+A `DataFrame` return takes the same call after a free `.lazy()`, so there is one path and nothing past `Schema.filter` can tell the two apart.
+The column-schema check runs before `Schema.filter`, off `collect_schema()`, so a frame whose columns disagree with the schema is refused before a single row is pulled through the plan.
 
 What stays eager is storage, not the computation.
 This package doesn't promise to write a table.
 It promises to write a table and report on it.
-Every exit past the split counts, samples, writes or profiles the two halves, and validation can't choose among its exits without counting both.
-So the exits whose whole purpose is that nothing gets written would have to execute the plan to learn that, and a sink straight to storage would have written before it knew.
+Every outcome past `Schema.filter` counts, samples, writes or profiles the valid rows and the invalid rows, and validation can't choose among its outcomes without counting both.
+So the outcomes whose whole purpose is that nothing gets written would have to execute the plan to learn that, and a sink straight to storage would have written before it knew.
 A plain `@dg.asset` streams end to end, sink to storage with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
@@ -775,12 +775,12 @@ The invalid rows get none, deliberately: what they look like in aggregate is a q
 | setting | what it writes | where |
 | --- | --- | --- |
 | `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dy_failed_sample` |
-| `row_sample` | up to this many rows of each half of the split | the materialization, under `dataframely/valid_sample` and `dataframely/invalid_sample` |
+| `row_sample` | up to this many valid rows and this many invalid rows | the materialization, under `dataframely/valid_sample` and `dataframely/invalid_sample` |
 
-One number governs both halves, so consenting to a sample is one decision rather than two.
+One number governs the valid rows and the invalid rows alike, so consenting to a sample is one decision rather than two.
 
 Dataframely's own comparable setting defaults to `0`, so this package is deliberately the more generous of the two.
-The reason is that a red check raises exactly one question the counts can't answer: not that 43 rows failed `amount|min`, but what three of those rows held.
+The reason is that a failing check raises exactly one question the counts can't answer: not that 43 rows failed `amount|min`, but what three of those rows held.
 Paying for that in the event log should be a decision, which is what this section is for.
 
 Set either to `0` and it's off entirely, with the metadata key absent rather than empty.
@@ -920,15 +920,71 @@ The docstring isn't decoration: it becomes that check's description in the catal
 
 ## Hand-wiring (and how the package works under the hood)
 
-The decorator is one arrangement of parts the package also exports under `dd.wiring`: `check_specs`, `check_results`, `schema_metadata`, `table_schema`, `quarantine_frame`, `quarantine_path`, `delegating_writer`, `file_writer`, `validate_quarantine_key`, `validation_results`, `check_name`, and the `QuarantineWriter` and `AssetYield` types they trade in.
-Reach for them when the decorator's shape isn't the shape you need: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
+The decorator is the happy path because it does the most work: one declaration fills the Columns tab, reports every rule as a check, filters the rows and routes the invalid ones.
+It is assembled from parts the package also exports under `dd.wiring`, and each helper plugs one feature of it into an asset the decorator doesn't fit: a schema attached to an asset you didn't declare, or a reporting arrangement the decorator doesn't offer.
 The asset is then yours to declare, out of the same parts.
 
-They sit in their own namespace rather than the root because the decorator is the happy path, and if you never hand-wire you shouldn't have to read past `quarantine_frame` to find it.
+The parts compose to less than the decorator does.
+Each part does one feature, and even `validation_results` stops short of the decorator: it takes the settings and the keys as arguments, and the decorator resolves them once, at definition time, so the specs and the results cannot disagree.
+Nothing will be added to `dd.wiring` to make reassembling the decorator easier.
+The source is short, and a reader who wants the assembly reads it.
 
-The three arrangements below descend.
-The first is close to what the decorator builds, each one after it gives up a piece, and the last is what you'd be writing if this package didn't exist.
-`orders_frame()` stands in for whatever produces your frame, since none of them care where it came from.
+They sit in their own namespace rather than the root because the decorator is the happy path, and if you never hand-wire you shouldn't have to read past `quarantine_spec` to find it.
+
+`orders_frame()` stands in for whatever produces your frame, since none of the parts care where it came from.
+
+### The parts
+
+Four features.
+Each leads with the part you reach for, then names the pieces that part calls and why they are exported at all.
+
+**The Columns tab.** `schema_metadata(schema)` is the definition metadata a schema-backed asset declares.
+Put it on any `@dg.asset` and the Columns tab fills from the schema: dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining constraint beside its column.
+It's a one-entry mapping so the decorator can merge it over your own `metadata`.
+`table_schema(schema)` is the bare `dg.TableSchema` inside it, for a metadata dict you build yourself, under `dagster/column_schema`.
+
+**The checks.** `check_specs(schema, asset=key)` declares every check the schema implies, the column-schema check included.
+`check_results(schema, frame, asset_key=key, severity=...)` answers them, for an asset that writes nothing.
+One declares, the other answers, and neither knows anything about storage.
+Pass the same `check_granularity` and `multi_column_rules` to both or to neither, because a result answers a spec by name.
+Both call `check_name(rule)` at `rule` granularity, the default: it rewrites a Dataframely rule name into the check's name, `amount|min` to `dy_rule__amount__min`, so a test can name a check without spelling the rewrite by hand.
+At `column` and `schema` granularity the checks carry other names; read them off what `check_specs` returns.
+
+**Validation and the write.** `validation_results(schema, frame, valid_key=key, quarantine_writer=...)` is the decorator's whole runtime: the column-schema check, `Schema.filter`, the quarantine write, then the materialization and every check result, yielded as an `AssetYield`.
+The quarantine is written, never yielded.
+Six outcomes, and you make one choice.
+`quarantine_writer` is the whole of the failure policy, and the data decides everything after it.
+
+```mermaid
+flowchart TD
+    F["frame handed to validation_results"] --> N{"None?"}
+    N -- yes --> SKIP["nothing written<br/>every check passes<br/>run succeeds"]
+    N -- no --> CS{"column schema matches?"}
+    CS -- no --> DRIFT["nothing written<br/>dy_schema__columns fails, ERROR<br/>rules never evaluated<br/>run fails, ColumnSchemaError"]
+    CS -- yes --> FILTER["Schema.filter"]
+    FILTER --> ANY{"any invalid rows?"}
+    ANY -- no --> CLEAN["valid table written<br/>every check passes<br/>run succeeds"]
+    ANY -- yes --> Q{"quarantine_writer passed?"}
+    Q -- no --> ABORT["nothing written<br/>failing checks ERROR<br/>run fails, ValidationAbortError"]
+    Q -- yes --> SURV{"any valid rows left?"}
+    SURV -- no --> NONE["quarantine written, table skipped<br/>failing checks ERROR<br/>run fails, NothingSurvivedError"]
+    SURV -- yes --> PARTIAL["valid table and quarantine written<br/>failing checks WARN<br/>run succeeds"]
+```
+
+The branch count makes the feature look bigger than it is.
+[The failure policy is the asset's declaration](#the-failure-policy-is-the-assets-declaration) has the same six as a table, with what each one writes.
+
+**The quarantine.** `validation_results` takes a `QuarantineWriter`: a callable handed the invalid rows that returns where it put them, as a string, because the answer can be a database table.
+The decorator builds `delegating_writer(context)` in a run.
+It hands the rows to the IO manager the asset is already bound to, under the key `<name>_quarantine`, so they land wherever that manager puts things.
+`file_writer(key, quarantine_dir, partition_key)` serves a direct invocation, where there is no step to delegate through.
+It writes parquet, and nothing else.
+`validate_quarantine_key(context)` is the other half of declaring a quarantine.
+Call it before the body, and it fails the run when another asset in the code location already materializes `<name>_quarantine`.
+Two pieces sit under these.
+`quarantine_frame(schema, failure)` is the frame every writer is handed: the invalid rows, then a `String` rule column per rule in the reserved namespace.
+It's exported for an asset that runs `Schema.filter` itself and wants the same frame the decorator would write.
+`quarantine_path(key, quarantine_dir, partition_key)` is where `file_writer` will put the file, exported so a test can ask without writing.
 
 ### The decorator is a `@dg.asset`, a writer and `validation_results`
 
@@ -953,22 +1009,16 @@ def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
 That is the Columns tab, one check per rule, the row filter, and the invalid rows written beside the table.
 `context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve.
 
-`output_required=False` is what lets the column-schema check, both abort paths and the skip end the step without yielding.
+`output_required=False` lets the column-schema check, both abort paths and the skip end the step without yielding.
 Leave it off and every path that doesn't raise has to yield the output.
 
-`quarantine_writer` is the whole of the failure policy.
-`delegating_writer(context)` takes the IO manager the asset is already bound to and hands it the invalid rows under the key `<name>_quarantine`, so they land wherever that manager puts things.
-Pass nothing instead and invalid rows abort the run, exactly as they do when the decorator is given `quarantine=False`.
+Pass no `quarantine_writer` and invalid rows abort the run, exactly as they do when the decorator is given `quarantine=False`.
 
 `delegating_writer` needs a real step, so it raises under direct invocation.
-`file_writer(context.asset_key, quarantine_dir, partition_key)` is what the decorator reaches for there, and you can reach for it on the same terms.
+`file_writer(context.asset_key, quarantine_dir, partition_key)` is the decorator's choice there, and you can reach for it on the same terms.
 
-`validate_quarantine_key(context)` is the other half of declaring a quarantine, and the decorator calls it in the same place: before the body, on every run.
-It fails the run when another asset in the code location already materializes `<name>_quarantine`, rather than letting one write land on the other.
+`validate_quarantine_key(context)` goes before the body, where the decorator calls it on every run.
 A call passes straight through it, since there is no graph to check against.
-
-An asset that writes its own storage and never holds a frame can still take `schema_metadata` on its own, for the Columns tab alone.
-`validation_results` is the part that needs a frame; the metadata isn't.
 
 ### Split the checks off entirely
 
@@ -1110,12 +1160,12 @@ It is worth reading for what it doesn't do:
   This package takes the same dependency and pins it with a characterization test, so an upstream change fails one named test instead of every asset you own.
 - The Columns tab carries dtypes, descriptions, nullability and uniqueness.
   The rest of what `Orders` says is missing: no `>= 0`, no regex, no length bound, no primary key stated at table level, no column tags.
-- The checks have no descriptions, so a red one names the rule and never what it meant.
-- No statistics, no row sample, no failure samples, no `invalid_by_rules` table: a red check says how many rows failed and nothing about what they held.
+- The checks have no descriptions, so a failing one names the rule and never what it meant.
+- No statistics, no row sample, no failure samples, no `invalid_by_rules` table: a failing check says how many rows failed and nothing about what they held.
 - No `check_granularity`, so a 40-column schema is 40-odd checks and stays that way.
 - A `LazyFrame` return is yours to execute and validate; nothing splits it for you.
-- Three exits rather than six.
-  A run where every row failed goes green here, with the valid out skipped and nobody told.
+- Three outcomes rather than six.
+  A run where every row failed succeeds here, with the valid out skipped and nobody told.
   The decorator fails it with `NothingSurvivedError`, because consenting to partial data was never consent to no data.
 - The quarantine is a second out, so it is skipped on an abort, which is the run you most want the rows from.
 - Nothing guards the names.
@@ -1174,7 +1224,7 @@ So are `check_granularity`, `multi_column_rules`, `statistics`, `max_failure_sam
 
 Two behaviours also moved:
 
-- **Invalid rows are written on every exit that has them, aborts included.**
+- **Invalid rows are written on every outcome that has them, aborts included.**
   As a second out they were skipped on an abort, because the out was never yielded.
 - **`quarantine=True` adds a `context` parameter** to the asset, so a call takes a `dg.build_asset_context()` first.
   An asset without a quarantine is unchanged.
