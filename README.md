@@ -46,6 +46,28 @@ That's the route this package prefers, and [Attaching your own metadata](#attach
 `@dg.asset` is the mechanism underneath, and the vocabulary.
 Anything `@dg.asset` lets you say about one asset, you can say here under the same name, and a test asserts that in both directions.
 
+## Package Philosophy
+
+**Schema on write.**
+Validation happens when a table is written, never when it's read.
+The checks run before the IO manager sees the frame, so the rows that fail never reach the table.
+
+That puts this package after ingestion, at bronze to silver to gold, where the data is already on your side and the question is whether it's fit to publish.
+Land raw records with [`dlt`](https://dlthub.com), which has good reasons to be permissive, and declare a schema at the first table someone else would query.
+Ingestion-scale and larger-than-memory work belongs elsewhere.
+
+**The schema is the table's shape, and closing the gap is the asset's job.**
+A dtype that disagrees aborts the run rather than being coerced, because coercing quietly is how a wrong number reaches a table nobody re-reads.
+There is no lenient mode to turn on.
+Narrowing is free, though: `Schema.filter` drops the columns the schema never declared and returns the rest in the schema's order, so dtypes are the only thing ever yours to fix ([The package never casts](#the-package-never-casts)).
+
+**Consent to partial data is a declaration, not a setting.** `quarantine=True` is the only dial, and no environment variable reaches it.
+Leave it off and one failing row stops the write, so your last-known-good table stays in place ([The failure policy is the asset's declaration](#the-failure-policy-is-the-assets-declaration)).
+
+**The strictness belongs to the decorator, not to the package.**
+Every part `dy_asset` is assembled from is exported, so you can take one feature into an asset shaped differently: the Columns tab onto an asset that writes its own storage, or the checks onto a table something else already wrote.
+Those parts carry less than the decorator does, and [Hand-wiring](#hand-wiring-and-how-the-package-works-under-the-hood) says what each one gives up.
+
 ## Quick start
 
 ```bash
@@ -728,8 +750,7 @@ So the outcomes whose whole purpose is that nothing gets written would have to e
 A plain `@dg.asset` streams end to end, sink to storage with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
 The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
 
-This package is built for post-ingest work: bronze to silver to gold, where the data is already on your side and the question is whether it's fit to publish.
-Ingestion-scale and larger-than-memory work belongs to other tools.
+This is the cost of [schema on write](#package-philosophy), and it is paid at silver and gold scale rather than at ingestion scale.
 
 ## Settings
 
