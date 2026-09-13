@@ -66,7 +66,12 @@ def test_a_public_function_refuses_a_reserved_column(
     with pytest.raises(ReservedColumnError) as raised:
         taker(Reserved)
 
-    assert "dy_rule" in str(raised.value)
+    message = str(raised.value)
+
+    assert "Column 'dy_rule' of Reserved uses" in message
+    assert "Rename it." in message
+    # The other column is fine, so the message never mentions it.
+    assert "amount" not in message
 
 
 @pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
@@ -76,4 +81,9 @@ def test_a_public_function_refuses_two_rules_that_rewrite_to_one_check_name(
     with pytest.raises(CheckNameCollisionError) as raised:
         taker(Colliding)
 
-    assert "dy_rule__order_id__nullability" in str(raised.value)
+    message = str(raised.value)
+
+    # Both rules by their Dataframely names, and the one check name they collide on.
+    assert "order_id__nullability" in message
+    assert "order_id|nullability" in message
+    assert "dy_rule__order_id__nullability" in message

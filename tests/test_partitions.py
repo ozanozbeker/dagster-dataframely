@@ -77,14 +77,10 @@ def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
     assert not (tmp_path / "orders_quarantine").exists()
 
 
-def test_row_count_is_the_partitions_valid_count(tmp_path: Path):
-    """The partition's own count, not the asset's, so `dg.build_metadata_bounds_checks` trends a partition against itself."""
-    materialize(tmp_path, _orders, partition_key="clean")
-    mixed = materializations(materialize(tmp_path, _orders, partition_key="mixed"))
-
-    assert {key: m.metadata["dagster/row_count"].value for key, m in mixed.items()} == {
-        _GOOD_KEY: 3
-    }
+# No row-count assertion through a run. `dagster-polars` writes its own `dagster/row_count`
+# over the step's, so such a test passes with the package's emission deleted
+# (`test_dagster_polars_writes_its_own_row_count_over_the_steps`). The count is asserted on
+# what the step yields, in `test_asset_runtime.py`.
 
 
 # --- a partition whose frame drifts ---

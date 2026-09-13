@@ -15,7 +15,6 @@ import dataframely as dy
 import polars as pl
 import pytest
 
-import dagster_dataframely
 from dagster_dataframely import dy_asset
 from tests.scenario import (
     Orders,
@@ -184,6 +183,7 @@ def test_the_families_are_emitted_as_tables_rather_than_markdown(tmp_path: Path)
 
 # --- the numeric family ---
 def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
+    """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough. Both rules are visible in the row below: `min` keeps all nine digits and `mean` keeps four."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _table(metadata, "numeric")["weight"] == {
@@ -196,14 +196,6 @@ def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
         "p50": 2.0,
         "max": 4.0,
     }
-
-
-def test_a_computed_cell_is_rounded_and_an_observed_one_is_exact(tmp_path: Path):
-    """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough."""
-    weight = _table(_metadata(tmp_path, _shipment, key="shipment"), "numeric")["weight"]
-
-    assert weight["min"] == 1.23456789
-    assert weight["mean"] == round(2.41152263, 4)
 
 
 def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
@@ -256,26 +248,9 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
     assert fulfilled_in["span"] == "7d 23h 58m 30s"
 
 
-def test_a_negative_duration_keeps_its_sign(tmp_path: Path):
-    """A duration is signed. Statistics that dropped the sign would read as their opposite."""
-
-    @dy_asset(Shipment, name="shipment")
-    def refunds() -> pl.DataFrame:
-        return shipment_frame(
-            [
-                dt.timedelta(seconds=-90),
-                dt.timedelta(seconds=-30),
-                dt.timedelta(0),
-                None,
-            ]
-        )
-
-    fulfilled_in = _table(_metadata(tmp_path, refunds, key="shipment"), "temporal")[
-        "fulfilled_in"
-    ]
-
-    assert fulfilled_in["min"] == "-1m -30s"
-    assert fulfilled_in["max"] == "0µs"
+# A signed duration keeps its sign because `to_string("polars")` renders it that way, which
+# `test_polars_renders_a_duration_in_its_own_friendly_style` pins against Polars itself,
+# `-1m -30s` and `0µs` included. Nothing here chooses the sign.
 
 
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
@@ -409,19 +384,7 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
     ]
 
 
-# --- how the numbers are computed ---
-def test_no_module_routes_through_describe():
-    """`describe()` stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, strings and dates in one column.
-
-    Asserted against the source, because the alternative is asserting every wrong rendering one at a time, forever.
-    """
-    sources = list(Path(next(iter(dagster_dataframely.__path__))).glob("*.py"))
-    calls = [
-        f"{source.name}:{number}"
-        for source in sources
-        for number, line in enumerate(source.read_text().splitlines(), start=1)
-        if ".describe(" in line
-    ]
-
-    assert sources
-    assert calls == []
+# Nothing routes through `describe()`: it stringifies with per-source-dtype formatting and
+# cannot be cast back, so a `Date` mean renders as a datetime and `min` mixes numbers,
+# strings and dates in one column. That is a grep over the source, not a test, so it is a
+# `no-describe` hook in `prek.toml`.

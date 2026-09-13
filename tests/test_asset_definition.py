@@ -15,7 +15,6 @@ from dagster._config.field_utils import Shape
 
 from dagster_dataframely import dy_asset
 from dagster_dataframely.errors import (
-    CheckNameCollisionError,
     CollectionNotSupportedError,
     DagsterDataframelyError,
     InvalidSettingError,
@@ -826,22 +825,9 @@ def test_a_quarantine_needs_no_resource_declared():
 
 
 # --- definition-time errors ---
-def test_a_user_column_in_the_reserved_namespace_raises():
-    class Reserved(dy.Schema):
-        dy_flag = dy.Bool()
-        order_id = dy.String()
-
-    with pytest.raises(ReservedColumnError) as raised:
-
-        @dy_asset(Reserved)
-        def reserved() -> pl.DataFrame:
-            return pl.DataFrame()
-
-    assert "Column 'dy_flag' of Reserved uses" in str(raised.value)
-    assert "Rename it." in str(raised.value)
-    assert "order_id" not in str(raised.value)
-
-
+# The singular message and the collision are asserted against every schema-taking
+# function, `dy_asset` included, in `test_reserved_namespace.py`. Only the plural form
+# is here, because nothing there declares a schema with two reserved columns.
 def test_the_reserved_column_error_reads_as_plural_for_several_columns():
     """The message is all a user sees of this error, so it agrees in number."""
 
@@ -859,27 +845,6 @@ def test_the_reserved_column_error_reads_as_plural_for_several_columns():
         raised.value
     )
     assert "Rename them." in str(raised.value)
-
-
-def test_two_rules_colliding_after_the_rewrite_raise_and_name_both():
-    class Colliding(dy.Schema):
-        order_id = dy.String(nullable=False)
-
-        @dy.rule()
-        def order_id__nullability(cls) -> pl.Expr:
-            return cls.order_id.col.is_not_null()
-
-    with pytest.raises(CheckNameCollisionError) as raised:
-
-        @dy_asset(Colliding)
-        def colliding() -> pl.DataFrame:
-            return pl.DataFrame()
-
-    message = str(raised.value)
-
-    assert "order_id__nullability" in message
-    assert "order_id|nullability" in message
-    assert "dy_rule__order_id__nullability" in message
 
 
 def test_a_collection_is_refused_at_the_boundary():

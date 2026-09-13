@@ -136,11 +136,10 @@ def test_a_partition_key_cannot_climb_out_of_the_root(
     assert path.resolve().is_relative_to(UPath(tmp_path).resolve())
 
 
-def test_a_partition_key_keeps_dots_that_are_not_a_segment(tmp_path: Path):
-    """Only a whole `..` segment climbs. Escaping `my..backup` would rename a partition somebody chose."""
-    path = quarantine_path(_ORDERS, tmp_path, "my..backup")
-
-    assert path == UPath(tmp_path) / "orders_quarantine" / "my..backup.parquet"
+# Only a whole `..` segment climbs, so `my..backup` keeps its dots. `quarantine_path` calls
+# `escape_dotdot_segments` rather than restating it, and
+# `test_the_three_path_escapes_dagster_applies_are_still_importable` pins that behaviour
+# against Dagster's own function.
 
 
 # --- the spec ---

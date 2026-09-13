@@ -116,3 +116,28 @@ entry = "uv run pyrefly check"
 language = "system"
 types = ["python"]
 pass_filenames = false
+
+# Two bans the package states in prose and has to keep in code. Both are a grep over the
+# source, so they are hooks rather than tests: a pytest run that reads the source back is a
+# grep with a fixture around it.
+
+# `describe()` stringifies with per-source-dtype formatting and cannot be cast back: a
+# `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes
+# numbers, bare strings and dates in one column. Everything in `_statistics.py` is computed
+# with typed Polars expressions and stringified once, at the display step.
+[[repos.hooks]]
+id = "no-describe"
+name = "no describe() in the package"
+entry = "\\.describe\\("
+language = "pygrep"
+files = '^src/dagster_dataframely/.*\.py$'
+
+# There is no fourth settings source. Dagster loads code locations lazily, so "has the
+# default been set yet" would depend on an import order the user does not control, and the
+# same asset would derive different checks depending on which module imported first.
+[[repos.hooks]]
+id = "no-default-setter"
+name = "no set_default_*() in the package"
+entry = "def set_default"
+language = "pygrep"
+files = '^src/dagster_dataframely/.*\.py$'

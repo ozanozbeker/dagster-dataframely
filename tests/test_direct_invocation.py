@@ -26,6 +26,7 @@ from tests.scenario import (
     events,
     materialize,
     mixed_orders,
+    results,
     wrong_dtype_orders,
 )
 
@@ -69,11 +70,7 @@ def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _tables(events: Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
     """The frame each output produced, keyed by asset."""
-    return {
-        event.asset_key: event.value
-        for event in events
-        if isinstance(event, dg.MaterializeResult) and event.asset_key is not None
-    }
+    return {key: result.value for key, result in results(events).items()}
 
 
 def _checks(events: Yielded) -> dict[dg.AssetCheckKey, bool]:

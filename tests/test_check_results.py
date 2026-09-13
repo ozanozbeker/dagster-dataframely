@@ -4,6 +4,8 @@ Most of these call the function, with no run, no IO manager and no `tmp_path`. T
 
 The load-bearing assertion is that the names it yields equal the names `check_specs` declares. A checks-only step answers its outputs by name, so the two agreeing is the whole feature, and the two disagreeing is the bug this was filed for.
 
+Only what this entry point decides. `check_results` and `validation_results` build their results from the same `column_schema_result` and `rule_results` pair, so the counts, the samples and the error table are asserted once, through a run, in `test_asset_runtime.py`. What is left here is what the two callers do differently: the names and their order, the stated severity, and the asset key a standalone result has to carry itself.
+
 One test runs. It builds the arrangement a user writes and asserts the step completes, because nothing short of a run proves the outputs were answered.
 """
 
@@ -105,12 +107,6 @@ def test_a_schema_with_no_rules_still_answers_the_column_schema_check():
 
 
 # --- what a clean frame reports ---
-def test_a_clean_frame_passes_every_check():
-    results = _results(clean_orders())
-
-    assert all(result.passed for result in results)
-
-
 def test_every_result_carries_the_asset_key():
     """A standalone result has no materialization to infer it from."""
     assert all(result.asset_key == KEY for result in _results(clean_orders()))
@@ -128,70 +124,13 @@ def test_the_rule_checks_carry_the_severity_the_caller_passed(
     )
 
 
-def test_the_rules_that_failed_are_the_rules_that_failed():
-    failed = {
-        result.check_name for result in _results(mixed_orders()) if not result.passed
-    }
-
-    assert failed == {
-        "dy_rule__amount__min",
-        "dy_rule__email__check__lowercase",
-        "dy_rule__paid_orders_have_amount",
-    }
-
-
-def test_a_failing_check_carries_its_count_and_a_sample():
-    metadata = dict(
-        next(
-            result
-            for result in _results(mixed_orders())
-            if result.check_name == "dy_rule__amount__min"
-        ).metadata
-        or {}
-    )
-
-    assert metadata["dy_failed_count"].value == 1
-    assert "dy_failed_sample" in metadata
-
-
-def test_max_failure_samples_reaches_the_results():
-    metadata = dict(
-        next(
-            result
-            for result in _results(mixed_orders(), max_failure_samples=0)
-            if result.check_name == "dy_rule__amount__min"
-        ).metadata
-        or {}
-    )
-
-    assert metadata["dy_failed_count"].value == 1
-    assert "dy_failed_sample" not in metadata
-
-
 # --- the column schema ---
-def test_a_column_schema_mismatch_reports_that_check_and_raises():
-    """Nothing evaluated the rules, so nothing reports for them. Dagster fails the step on the raise, before it looks for the outputs they would have answered."""
-    results = _before_the_raise(wrong_dtype_orders())
-
-    assert [result.check_name for result in results] == [COLUMN_SCHEMA]
-    assert not results[0].passed
-
-
 def test_the_column_schema_failure_is_an_error_whatever_the_caller_asked_for():
-    """A mismatch is a pipeline defect, not a data one, and its check is the blocking one. Grading it `WARN` because a caller asked for `WARN` would leave a drifted table feeding downstream."""
+    """A mismatch is a pipeline defect, not a data one, and its check is the blocking one. Grading it `WARN` because a caller asked for `WARN` would leave a drifted table feeding downstream.
+
+    What that failing result holds is `column_schema_result`'s, which a run pins in `test_asset_runtime.py`. Only the severity is this caller's.
+    """
     assert _before_the_raise(wrong_dtype_orders())[0].severity == ERROR
-
-
-def test_the_column_schema_failure_tabulates_every_offending_column():
-    """The metadata reaches Dagster despite the raise that follows it, which is the point of yielding before raising rather than after."""
-    errors = dict(_before_the_raise(wrong_dtype_orders())[0].metadata or {})[
-        "dy_schema__errors"
-    ]
-
-    assert isinstance(errors, dg.TableMetadataValue)
-    assert [dict(record.data) for record in errors.records] == [
-        {"column": "quantity", "expected": "Int32", "actual": "Int64"}
-    ]
 
 
 # --- the failure policy stays with the decorator ---

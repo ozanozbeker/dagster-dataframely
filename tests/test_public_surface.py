@@ -6,16 +6,8 @@ The surface is spelled out here, not derived from `__all__`. A test that reads i
 """
 
 import pkgutil
-import shutil
-import subprocess
-import zipfile
-from pathlib import Path
-
-import pytest
 
 import dagster_dataframely as dd
-
-_ROOT = Path(__file__).parent.parent
 
 # The root: the happy path, and one name for each namespace that is not it.
 _PUBLIC = {
@@ -129,21 +121,6 @@ def test_the_error_family_is_exported_whole():
     assert descendants(dd.errors.DagsterDataframelyError) <= _ERRORS
 
 
-def test_py_typed_ships_in_the_built_wheel(tmp_path: Path):
-    """The marker makes the annotations visible to a type checker downstream. It is a file, not code, so only a build proves it made the trip.
-
-    Built offline: uv resolves `uv_build` to its own bundled backend, so this needs no network and no warm cache.
-    """
-    uv = shutil.which("uv")
-    if uv is None:
-        pytest.skip("uv is what builds the wheel")
-
-    subprocess.run(  # noqa: S603 - every argument is this file's own literal
-        [uv, "build", "--wheel", "--offline", "--out-dir", str(tmp_path)],
-        cwd=_ROOT,
-        check=True,
-        capture_output=True,
-    )
-    (wheel,) = tmp_path.glob("*.whl")
-
-    assert "dagster_dataframely/py.typed" in zipfile.ZipFile(wheel).namelist()
+# `py.typed` shipping in the wheel is asserted where the wheel is built, in
+# `.github/workflows/release.yml`. Building one from a unit test costs a subprocess per run
+# to check a packaging fact that only the release artifact can settle.

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import dagster as dg
-import dataframely as dy
 import polars as pl
 import pytest
 
@@ -246,19 +245,10 @@ def test_the_failure_sample_is_bounded(tmp_path: Path):
     assert len(_records(metadata["dy_failed_sample"])) == _DEFAULT
 
 
-def test_the_bound_is_the_packages_own_and_not_dataframelys(tmp_path: Path):
-    """`dy.Config.set_max_failure_examples` governs the string `validate` builds for its error. It does not touch the `filter` path this package uses, so a project that tightened it still gets the sample it asked this package for."""
-
-    @dy_asset(Orders, name="orders", quarantine=True)
-    def many_rejects() -> pl.DataFrame:
-        return _invalid_orders(_DEFAULT * 2)
-
-    with dy.Config(max_failure_examples=1):
-        result = materialize(tmp_path, many_rejects)
-
-    metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
-
-    assert len(_records(metadata["dy_failed_sample"])) == _DEFAULT
+# The bound is this package's own: `dy.Config.set_max_failure_examples` governs only the
+# string `validate` builds for its error, which
+# `test_the_failure_example_limit_does_not_truncate_the_filter_path` pins against
+# Dataframely itself. Nothing on the `filter` path this package uses reads it.
 
 
 def test_a_failure_sample_of_zero_leaves_the_key_absent_rather_than_empty(
