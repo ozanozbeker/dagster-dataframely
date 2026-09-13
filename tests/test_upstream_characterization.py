@@ -1,12 +1,13 @@
 """Characterization tests for the upstream APIs this package takes a hard dependency on.
 
-These test upstream, not this package. Each covers an API that is private, unexported, or undocumented, and carries a comment naming the decision that took the dependency, so a failure reads as "upstream changed" rather than "something broke".
+These test upstream, not this package. Each covers either an API that is private, unexported, or undocumented, or a documented behaviour a decision in this package rests on, and carries a comment naming the decision that took the dependency, so a failure reads as "upstream changed" rather than "something broke".
 """
 
 import copy
 import datetime as dt
 import inspect
 import warnings
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, override
 
@@ -403,6 +404,43 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
         )
 
     assert "failed type check for Dagster type DataFrame" in str(raised.value)
+
+
+def test_a_check_input_is_still_type_checked_against_its_annotation():
+    """A `@dg.multi_asset_check` input is still checked against its parameter annotation, and the body still never runs when the loaded object disagrees."""
+
+    # #124 declines a `frame` type guard on `check_results` because Dagster catches a non-frame arriving from an IO manager load, which is the arrangement that function exists for. `docs/out-of-scope/wiring-argument-type-guards.md` has the decision.
+    # Documented rather than private, and pinned because the decision rests on it alone. Lose this and a wrong frame goes back to failing two frames inside the package, on `collect_schema`.
+    key = dg.AssetKey(["orders"])
+    ran = False
+
+    class Lying(dg.IOManager):
+        """Writes nothing and loads a dict, standing in for any manager whose load type drifts from the annotation."""
+
+        @override
+        def handle_output(self, context: dg.OutputContext, obj: object) -> None: ...
+
+        @override
+        def load_input(self, context: dg.InputContext) -> object:
+            return {"order_id": ["ORD-1"]}
+
+    @dg.asset(name="orders")
+    def orders() -> pl.DataFrame:
+        return pl.DataFrame({"order_id": ["ORD-1"]})
+
+    @dg.multi_asset_check(specs=[dg.AssetCheckSpec("dy_schema__columns", asset=key)])
+    def orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
+        nonlocal ran
+        ran = True
+        yield dg.AssetCheckResult(
+            check_name="dy_schema__columns", asset_key=key, passed=True
+        )
+
+    with pytest.raises(dg.DagsterTypeCheckDidNotPass) as raised:
+        dg.materialize([orders, orders_checks], resources={"io_manager": Lying()})
+
+    assert 'Type check failed for step input "orders"' in str(raised.value)
+    assert not ran
 
 
 def test_materialize_result_still_takes_exactly_the_six_fields_the_rebuild_names():

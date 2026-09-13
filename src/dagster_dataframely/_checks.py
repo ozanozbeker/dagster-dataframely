@@ -412,7 +412,7 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     schema
         The schema the results report against.
     frame
-        The frame to evaluate, eager or lazy. A `LazyFrame` executes here, once.
+        The frame to evaluate, eager or lazy. A `LazyFrame` executes here, once. Nothing refuses a wrong type here; `docs/out-of-scope/wiring-argument-type-guards.md` says why (#124).
     asset_key
         The asset the results hang off. Stated because a standalone result has no materialization to infer it from.
     severity

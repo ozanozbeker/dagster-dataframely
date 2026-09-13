@@ -58,6 +58,8 @@ def _require_frame(frame: object, asset: str) -> None:
 
     Dagster calls the decorated function dynamically, so it cannot enforce the return annotation. Before this guard, a forgotten return surfaced two frames down as `'NoneType' object has no attribute 'collect_schema'`.
 
+    `check_results` has no counterpart and is not missing one. Nothing dynamic reaches it, so the paragraph above does not carry. `docs/out-of-scope/wiring-argument-type-guards.md` has that decision (#124).
+
     `None` is now the skip, so a forgotten return and a deliberate skip are the same object and this guard cannot tell them apart. The trade is taken knowingly: the skip has to be a value for a decorated function to reach it, and `None` is the only value every early return already produces. A forgotten `return` now costs a run that materializes nothing, and the missing partition makes that visible.
 
     Dagster's own error, not the package's: this is a wiring mistake, not a data one.
