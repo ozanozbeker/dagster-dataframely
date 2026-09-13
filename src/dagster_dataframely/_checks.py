@@ -321,7 +321,7 @@ def _collapsed_metadata(
     return metadata | sample_metadata("dy_failed_sample", attributed)
 
 
-def rule_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
+def rule_results(  # noqa: PLR0913 - the specs' settings reach the results, pinned by test_the_results_answer_exactly_the_specs_at_every_granularity
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,
@@ -385,7 +385,7 @@ def rule_results(  # noqa: PLR0913 - every setting the specs were derived with h
     return results
 
 
-def check_results(  # noqa: PLR0913 - every setting the specs were derived with has to reach the results, or the two disagree
+def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pinned by test_the_results_answer_exactly_the_specs_at_every_granularity
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
