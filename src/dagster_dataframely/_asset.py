@@ -26,6 +26,7 @@ from dagster._core.errors import DagsterInvalidPropertyError
 
 from dagster_dataframely._checks import check_specs
 from dagster_dataframely._metadata import schema_metadata
+from dagster_dataframely._naming import validate_namespace
 from dagster_dataframely._quarantine import (
     QuarantineWriter,
     delegating_writer,
@@ -302,6 +303,10 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     ------
     CollectionNotSupportedError
         `schema` is a `dy.Collection`.
+    ReservedColumnError
+        A user column sits inside the reserved namespace.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
     InvalidSettingError
         A setting resolved to a value outside its vocabulary, from any source.
 
@@ -327,6 +332,9 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
     # Only a `Collection` is refused here. Anything else keeps failing however it already fails.
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
+
+    # Here rather than left to the `check_specs` below, so the factory refuses on the line that takes the schema and a `maker = dy_asset(Reserved)` cannot hand back a decorator that raises later (ADR-0008).
+    validate_namespace(schema)
 
     # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three affect nothing built at definition time, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run reaches it first.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)

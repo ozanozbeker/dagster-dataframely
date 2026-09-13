@@ -17,7 +17,7 @@ import polars as pl
 
 from dagster_dataframely._checks import column_schema_result, rule_results
 from dagster_dataframely._frames import column_schema_problems
-from dagster_dataframely._naming import check_name, validation_rules
+from dagster_dataframely._naming import check_name, validate_namespace, validation_rules
 from dagster_dataframely._quarantine import QuarantineWriter
 from dagster_dataframely._samples import VALID_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
@@ -89,7 +89,15 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
     Returns
     -------
     The invalid rows: the original columns in their own order, then a `String` rule column for every rule.
+
+    Raises
+    ------
+    ReservedColumnError
+        A user column sits inside the reserved namespace. Without the guard the rename collides with it, and Polars reports a duplicate column that names nothing about this package.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name, which the rename would also collapse.
     """
+    validate_namespace(schema)
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     renames: dict[str, str] = {
@@ -201,6 +209,10 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
 
     Raises
     ------
+    ReservedColumnError
+        A user column sits inside the reserved namespace.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
     InvalidSettingError
         A setting resolved to a value outside its vocabulary.
     DagsterInvariantViolationError
@@ -212,6 +224,8 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
     NothingSurvivedError
         Rows failed validation and none survived.
     """
+    # Before the settings and before the frame is looked at. A schema this package cannot name is broken whatever was returned (ADR-0008).
+    validate_namespace(schema)
     _require_frame(frame, valid_key.to_user_string())
     # Resolved before the column-schema check, so a mistyped environment variable fails the same way on every outcome and not only on the runs that reach the one reading it.
     emit_statistics: bool = STATISTICS.resolve(statistics)

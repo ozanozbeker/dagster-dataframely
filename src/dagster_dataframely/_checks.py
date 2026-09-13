@@ -297,7 +297,7 @@ def _collapsed_metadata(
 
     There is no total. Failure counts are per rule and one row can break several, so a sum would state a row count that is not one.
 
-    The sample carries `dy_rule` for the same reason: a rule set stands for several rules, so an invalid row has to name the one that put it there. Prepending the column is safe because a user column cannot sit inside the reserved namespace.
+    The sample carries `dy_rule` for the same reason: a rule set stands for several rules, so an invalid row has to name the one that put it there. Prepending the column is safe because a user column cannot sit inside the reserved namespace, which every public function taking a schema now enforces rather than assumes (ADR-0008).
     """
     metadata: dict[str, dg.TableMetadataValue] = {
         "dy_rules": dg.MetadataValue.table(
@@ -432,6 +432,10 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     ------
     InvalidSettingError
         A setting resolved to a value outside its vocabulary.
+    ReservedColumnError
+        A user column sits inside the reserved namespace.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema, reported through the column-schema check before this is raised.
 
@@ -466,6 +470,8 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
         )
     ```
     """
+    # Before the settings resolve and before the frame is read, as `check_specs` does it. A schema this package cannot name is broken whatever the frame holds (ADR-0008).
+    validate_namespace(schema)
     problems: list[dict[str, str]] = column_schema_problems(schema, frame)
     if problems:
         yield column_schema_result(problems, asset_key=asset_key)

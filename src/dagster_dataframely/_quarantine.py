@@ -48,6 +48,7 @@ from dagster._core.storage.upath_io_manager import (
 from upath import UPath
 
 from dagster_dataframely._metadata import quarantine_metadata
+from dagster_dataframely._naming import validate_namespace
 from dagster_dataframely.errors import QuarantineKeyCollisionError
 
 type QuarantineWriter = Callable[[pl.DataFrame], str]
@@ -299,6 +300,10 @@ def quarantine_spec(
 
     Raises
     ------
+    ReservedColumnError
+        A user column sits inside the reserved namespace. Without the guard the rule columns of this spec's Columns tab collide with it, silently, at definition time.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name, which this spec's Columns tab would also collapse.
     dg.DagsterInvariantViolationError
         A definition and a `partitions_def` were both given. Dagster's own error, not the package's, because two sources of one fact is a wiring mistake, not a data one.
 
@@ -324,6 +329,7 @@ def quarantine_spec(
     defs = dg.Definitions(assets=[orders, dd.quarantine_spec(Orders, orders)])
     ```
     """
+    validate_namespace(schema)
     if isinstance(asset, dg.AssetsDefinition):
         if partitions_def is not None:
             both = f"`quarantine_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."

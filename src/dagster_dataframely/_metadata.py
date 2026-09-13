@@ -6,7 +6,7 @@ The asset body owns what the data is. The IO manager owns where and how it was w
 import dagster as dg
 import dataframely as dy
 
-from dagster_dataframely._naming import check_name, validation_rules
+from dagster_dataframely._naming import check_name, validate_namespace, validation_rules
 from dagster_dataframely._rendering import column_constraints, table_constraints
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
@@ -39,7 +39,15 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     Returns
     -------
     A table schema whose columns are in the schema's own order.
+
+    Raises
+    ------
+    ReservedColumnError
+        A user column sits inside the reserved namespace.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
     """
+    validate_namespace(schema)
     constraints: dict[str, list[str]] = column_constraints(schema)
     return dg.TableSchema(
         columns=[
@@ -114,6 +122,13 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     Returns
     -------
     A mapping to hand to `dg.asset(metadata=...)`.
+
+    Raises
+    ------
+    ReservedColumnError
+        A user column sits inside the reserved namespace. Raised through `table_schema`, which is this function's whole body.
+    CheckNameCollisionError
+        Two rules rewrite to the same check name.
 
     Examples
     --------

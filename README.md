@@ -875,7 +875,8 @@ A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_
 **`dataframely/`** covers every key on a materialization, which has no such limit.
 It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
 
-A schema with a column of its own inside `dy_` raises `ReservedColumnError` at definition time, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
+A schema with a column of its own inside `dy_` raises `ReservedColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
+Every public function that takes a schema raises them, so the decorator refuses one where it is declared and a hand-wired asset refuses one wherever it first hands the schema over.
 
 **`<name>_quarantine`** is the third, and it is unlike the other two.
 It is the asset key a quarantine is written under, and asset keys are yours as much as they are this package's, so it is the one reservation somebody else can take first.
