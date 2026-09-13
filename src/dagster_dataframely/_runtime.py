@@ -16,8 +16,8 @@ import dataframely as dy
 import polars as pl
 
 from dagster_dataframely._checks import (
-    column_schema_problems,
     column_schema_result,
+    filtered,
     rule_columns,
     rule_results,
 )
@@ -33,11 +33,7 @@ from dagster_dataframely._settings import (
     MultiColumnRules,
 )
 from dagster_dataframely._statistics import statistics_metadata
-from dagster_dataframely.errors import (
-    ColumnSchemaError,
-    NothingSurvivedError,
-    ValidationAbortError,
-)
+from dagster_dataframely.errors import NothingSurvivedError, ValidationAbortError
 
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 """What a schema-backed asset yields: the valid table's materialization, then one standalone result per check. The annotation a hand-wired asset's compute function carries."""
@@ -269,21 +265,8 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
         yield from checks_for(nothing, aborting=False)
         return
 
-    # --- The column-schema check ---
-    problems: list[dict[str, str]] = column_schema_problems(schema, frame)
-    if problems:
-        # The column schema does not match, which is a pipeline defect. Nothing is filtered and neither output is written, so a mismatched frame cannot corrupt either table.
-        yield column_schema_result(problems, asset_key=valid_key)
-        raise ColumnSchemaError(schema.__name__, problems)
-
-    # --- `Schema.filter` ---
-    # The plan executes here, once: `collect_all` runs the valid rows and the invalid rows off one cached evaluation, so the source is not read twice.
-    # The engine is named rather than left to `auto`. Polars falls back to the in-memory engine for anything streaming cannot run, so naming it never fails a plan. An `auto` that chose to collect would keep the plan's own peak.
-    result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
-        engine="streaming"
-    )
-    # Annotated because `collect_all` returns Dataframely's phantom `dy.DataFrame[Schema]`, and the asset is declared as a plain Polars frame.
-    valid: pl.DataFrame = result
+    # The column-schema check, then `Schema.filter`. A mismatch reports through the check and raises out of here, so neither output is written and a mismatched frame cannot corrupt either table.
+    valid, failure = yield from filtered(schema, frame, asset_key=valid_key)
     invalid_count: int = len(failure)
     # A quarantine is consent to partial data, not to no data, so nothing surviving aborts even with one declared.
     aborting = bool(invalid_count) and (quarantine_writer is None or not len(valid))

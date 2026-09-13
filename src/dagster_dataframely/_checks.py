@@ -5,7 +5,7 @@ Specs come off the schema, never off a run's `FailureInfo`. A rule nothing faile
 `check_granularity` decides how many specs there are. A 40-column schema contributes around 120 rules, and nobody reads a check list that long. Specs and results come from the same grouping call, so a check can never report for rules its spec did not claim.
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Iterator, Sequence
 from dataclasses import dataclass, field
 
 import dagster as dg
@@ -253,6 +253,59 @@ def column_schema_result(
             )
         },
     )
+
+
+def filtered(
+    schema: type[dy.Schema],
+    frame: pl.DataFrame | pl.LazyFrame,
+    *,
+    asset_key: dg.AssetKey,
+) -> Generator[dg.AssetCheckResult, None, tuple[pl.DataFrame, dy.FailureInfo]]:
+    """Run the column-schema check, then separate the valid rows from the invalid rows.
+
+    The two steps every caller takes before its own policy begins, so `cast=False` and the engine are stated once rather than once per caller.
+
+    **It yields only when the column schema does not match**, and raises straight after. The result has to reach Dagster before the error does, or the failing check reports nothing; the raise is then what stops Dagster looking for the outputs the rules would have answered, so the step fails with this error rather than an opaque one about an output nobody wrote. A caller that swallowed the yield would lose the check and keep the raise.
+
+    So it is a generator with a return value: `valid, failure = yield from filtered(...)`. The third type parameter above is what comes back from the `yield from`.
+
+    `validate_namespace` is deliberately not here. ADR-0008 puts it ahead of everything, including the guard on the decorated function's return value, and `validation_results` skips this call entirely when that value is `None`.
+
+    Parameters
+    ----------
+    schema
+        The schema the frame must satisfy.
+    frame
+        The frame to check and filter, eager or lazy. A `LazyFrame` executes here, once.
+    asset_key
+        The asset the column-schema result hangs off.
+
+    Yields
+    ------
+    The column-schema check's failing result, and nothing at all when the frame matches. The passing result is the caller's to yield: `validation_results` answers it on the skip too, where this never runs.
+
+    Returns
+    -------
+    The valid rows and what `Schema.filter` held back.
+
+    Raises
+    ------
+    ColumnSchemaError
+        The frame's columns or dtypes do not match the schema, reported through the column-schema check before this is raised.
+    """
+    problems: list[dict[str, str]] = column_schema_problems(schema, frame)
+    if problems:
+        # The column schema does not match, which is a pipeline defect. Nothing is filtered and nothing is written, so a mismatched frame cannot corrupt a table.
+        yield column_schema_result(problems, asset_key=asset_key)
+        raise ColumnSchemaError(schema.__name__, problems)
+    # The plan executes here, once: `collect_all` runs the valid rows and the invalid rows off one cached evaluation, so the source is not read twice.
+    # The engine is named rather than left to `auto`. Polars falls back to the in-memory engine for anything streaming cannot run, so naming it never fails a plan. An `auto` that chose to collect would keep the plan's own peak.
+    result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
+        engine="streaming"
+    )
+    # Annotated because `collect_all` returns Dataframely's phantom `dy.DataFrame[Schema]`, and an asset is declared as a plain Polars frame.
+    valid: pl.DataFrame = result
+    return valid, failure
 
 
 _INVALID = "invalid"
@@ -513,13 +566,8 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     """
     # Before the settings resolve and before the frame is read, as `check_specs` does it. A schema this package cannot name is broken whatever the frame holds (ADR-0008).
     validate_namespace(schema)
-    problems: list[dict[str, str]] = column_schema_problems(schema, frame)
-    if problems:
-        yield column_schema_result(problems, asset_key=asset_key)
-        raise ColumnSchemaError(schema.__name__, problems)
-
-    # One `collect_all` on the streaming engine, the call `validation_results` makes, for the reason it makes it.
-    _, failure = schema.filter(frame.lazy(), cast=False).collect_all(engine="streaming")
+    # The valid rows are collected with the invalid ones and discarded: the same call `validation_results` makes, for the reason it makes it.
+    _, failure = yield from filtered(schema, frame, asset_key=asset_key)
     yield column_schema_result(asset_key=asset_key)
     yield from rule_results(
         schema,
