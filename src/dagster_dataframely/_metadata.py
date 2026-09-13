@@ -6,8 +6,8 @@ The asset body owns what the data is. The IO manager owns where and how it was w
 import dagster as dg
 import dataframely as dy
 
-from dagster_dataframely._naming import check_name, validate_namespace, validation_rules
 from dagster_dataframely._rendering import column_constraints, table_constraints
+from dagster_dataframely._rules import described_rules, validate_namespace
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
@@ -98,13 +98,13 @@ def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
         ]
         + [
             dg.TableColumn(
-                name=check_name(rule),
+                name=rule.check_name,
                 type="String",
                 description=(
-                    f"Outcome of rule '{rule}': 'valid' / 'invalid' / 'unknown'."
+                    f"Outcome of rule '{rule.name}': 'valid' / 'invalid' / 'unknown'."
                 ),
             )
-            for rule in validation_rules(schema)
+            for rule in described_rules(schema).values()
         ]
     )
 

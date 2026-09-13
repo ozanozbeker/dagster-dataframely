@@ -21,12 +21,7 @@ from typing import Any
 
 import dataframely as dy
 
-from dagster_dataframely._naming import (
-    OwnedRule,
-    owned_rule,
-    rule_description,
-    validation_rules,
-)
+from dagster_dataframely._rules import DescribedRule, described_rules
 
 _ANONYMOUS_CHECK = "custom check"
 """What an unnamed `check=` renders as. A lambda leaves nothing else to recover."""
@@ -143,7 +138,7 @@ def _column_constraint(column: dy.Column, kind: str) -> str | None:  # noqa: PLR
             return None
 
 
-def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
+def rule_text(schema: type[dy.Schema], rule: DescribedRule) -> str | None:
     """Render the constraint a rule states, or `None` when it states none.
 
     Every place reads a rule from here, so a bound cannot say one thing in the Columns tab and another in the check list.
@@ -151,9 +146,9 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
     Parameters
     ----------
     schema
-        The schema the rule belongs to.
-    rule_name
-        The rule name Dataframely reports, `|`-delimited for column rules.
+        The schema the rule belongs to. Passed alongside the record because a constraint is read off the column's own attributes, and the primary key off the schema's.
+    rule
+        The rule to render.
 
     Returns
     -------
@@ -165,6 +160,7 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
     import dataframely as dy
 
     from dagster_dataframely._rendering import rule_text
+    from dagster_dataframely._rules import described_rules
 
 
     class Orders(dy.Schema):
@@ -172,18 +168,19 @@ def rule_text(schema: type[dy.Schema], rule_name: str) -> str | None:
         amount = dy.Float64(nullable=False, min=0.0)
 
 
-    rule_text(Orders, "amount|min")  # '>= 0.0'
-    rule_text(Orders, "primary_key")  # 'PK: order_id'
+    rules = described_rules(Orders)
+    rule_text(Orders, rules["amount|min"])  # '>= 0.0'
+    rule_text(Orders, rules["primary_key"])  # 'PK: order_id'
     ```
     """
-    if rule_name == "primary_key":
+    if rule.name == "primary_key":
         # A schema with no key columns has no such rule, so the name belongs to a `@dy.rule()` and there is no key to state.
         keys: list[str] = schema.primary_key()
         return f"PK: {', '.join(keys)}" if keys else None
-    owned: OwnedRule | None = owned_rule(rule_name)
-    if owned is None:
+    # Both or neither: the delimiter that sets one sets the other.
+    if rule.column is None or rule.kind is None:
         return None
-    return _column_constraint(schema.columns()[owned.column], owned.kind)
+    return _column_constraint(schema.columns()[rule.column], rule.kind)
 
 
 def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
@@ -201,12 +198,13 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
     One list per column, keyed by column name, in the schema's own column order and each column's own rule order. A column with nothing to show carries an empty list.
     """
     constraints: dict[str, list[str]] = {name: [] for name in schema.columns()}
-    for rule_name in validation_rules(schema):
-        owned: OwnedRule | None = owned_rule(rule_name)
-        if owned is None or owned.kind in _NO_CONSTRAINT:
+    for rule in described_rules(schema).values():
+        if rule.column is None or rule.kind in _NO_CONSTRAINT:
             continue
-        # The fallback is the part of the rule name after `|`: the row already carries the column name, and this package shows Dataframely's `|` nowhere else.
-        constraints[owned.column].append(rule_text(schema, rule_name) or owned.kind)
+        # The fallback is the rule's kind: the row already carries the column name, and this package shows Dataframely's `|` nowhere else.
+        constraints[rule.column].append(
+            rule_text(schema, rule) or rule.kind or rule.name
+        )
     return constraints
 
 
@@ -225,13 +223,13 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
     One entry per schema-level rule, in the schema's own rule order.
     """
     return [
-        rule_text(schema, rule_name) or rule_name
-        for rule_name in validation_rules(schema)
-        if owned_rule(rule_name) is None
+        rule_text(schema, rule) or rule.name
+        for rule in described_rules(schema).values()
+        if rule.column is None
     ]
 
 
-def check_description(schema: type[dy.Schema], rule_name: str) -> str:
+def check_description(schema: type[dy.Schema], rule: DescribedRule) -> str:
     """Describe a rule's asset check, falling back until something holds.
 
     The docstring first, because an author who wrote one said something the schema cannot. Then the rendered constraint prefixed with the column, because a check list reads flat and a bare `>= 0` names nothing. Then the rule name, which always exists, so no check is described as nothing.
@@ -240,37 +238,35 @@ def check_description(schema: type[dy.Schema], rule_name: str) -> str:
     ----------
     schema
         The schema the rule belongs to.
-    rule_name
-        The rule name Dataframely reports.
+    rule
+        The rule to describe.
 
     Returns
     -------
     The check's description, never empty.
     """
-    docstring: str | None = rule_description(schema, rule_name)
-    if docstring:
-        return docstring
-    rendered: str | None = rule_text(schema, rule_name)
+    if rule.description:
+        return rule.description
+    rendered: str | None = rule_text(schema, rule)
     if rendered is None:
-        return rule_name
-    owned: OwnedRule | None = owned_rule(rule_name)
-    if owned is None:
+        return rule.name
+    if rule.column is None:
         return rendered
-    return f"{owned.column} {rendered}"
+    return f"{rule.column} {rendered}"
 
 
-def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> str:
+def column_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule]) -> str:
     """Render every constraint one column's rules state, for the check that reports them as one.
 
     A collapsed check's description is the only place its members are visible before a run, so it renders all of them, including the two a column constraint skips. `not null` has to be said here because no column row sits beside this check to say it.
 
-    The check names the column once, so no constraint repeats it. A rule with nothing structured to render falls back to the part of its name after `|`.
+    The check names the column once, so no constraint repeats it. A rule with nothing structured to render falls back to its kind.
 
     Parameters
     ----------
     schema
         The schema the rules belong to.
-    rule_names
+    rules
         One column's rules, in the schema's own order.
 
     Returns
@@ -283,20 +279,18 @@ def column_rule_summary(schema: type[dy.Schema], rule_names: Sequence[str]) -> s
     import dataframely as dy
 
     from dagster_dataframely._rendering import column_rule_summary
+    from dagster_dataframely._rules import described_rules
 
 
     class Orders(dy.Schema):
         amount = dy.Float64(nullable=False, min=0.0)
 
 
-    column_rule_summary(Orders, ["amount|nullability", "amount|min"])
+    rules = described_rules(Orders)
+    column_rule_summary(Orders, [rules["amount|nullability"], rules["amount|min"]])
     # 'not null, >= 0.0'
     ```
     """
-    rendered: list[str] = []
-    for rule_name in rule_names:
-        owned: OwnedRule | None = owned_rule(rule_name)
-        rendered.append(
-            rule_text(schema, rule_name) or (owned.kind if owned else rule_name)
-        )
-    return ", ".join(rendered)
+    return ", ".join(
+        rule_text(schema, rule) or rule.kind or rule.name for rule in rules
+    )

@@ -50,7 +50,7 @@ from dagster._core.storage.upath_io_manager import (
 from upath import UPath
 
 from dagster_dataframely._metadata import quarantine_metadata
-from dagster_dataframely._naming import validate_namespace
+from dagster_dataframely._rules import validate_namespace
 from dagster_dataframely._settings import QUARANTINE_DIR
 from dagster_dataframely.errors import QuarantineDirError, QuarantineKeyCollisionError
 

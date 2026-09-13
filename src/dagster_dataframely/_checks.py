@@ -11,19 +11,18 @@ from dataclasses import dataclass, field
 import dagster as dg
 import dataframely as dy
 import polars as pl
-from dataframely._rule import Rule
 
 from dagster_dataframely._naming import (
     COLUMN_SCHEMA_CHECK,
     SCHEMA_RULES_CHECK,
-    OwnedRule,
-    check_name,
     column_check_name,
-    owned_rule,
-    validate_namespace,
-    validation_rules,
 )
 from dagster_dataframely._rendering import check_description, column_rule_summary
+from dagster_dataframely._rules import (
+    DescribedRule,
+    described_rules,
+    validate_namespace,
+)
 from dagster_dataframely._samples import Row, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
@@ -53,15 +52,13 @@ class _RuleSet:
 
     name: str
     description: str
-    rules: list[str]
+    rules: list[DescribedRule]
     collapsed: bool = field(default=False, kw_only=True)
 
 
-def _single_rule_set(schema: type[dy.Schema], rule_name: str) -> _RuleSet:
+def _single_rule_set(schema: type[dy.Schema], rule: DescribedRule) -> _RuleSet:
     """Build the rule set for a check that is one rule's own, at any granularity."""
-    return _RuleSet(
-        check_name(rule_name), check_description(schema, rule_name), [rule_name]
-    )
+    return _RuleSet(rule.check_name, check_description(schema, rule), [rule])
 
 
 def _rule_sets(
@@ -90,30 +87,29 @@ def _rule_sets(
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
-    rules: dict[str, Rule] = validation_rules(schema)
+    rules: list[DescribedRule] = list(described_rules(schema).values())
     if not rules:
         return []
     if granularity == "rule":
-        return [_single_rule_set(schema, rule_name) for rule_name in rules]
+        return [_single_rule_set(schema, rule) for rule in rules]
     if granularity == "schema":
         return [
             _RuleSet(
                 SCHEMA_RULES_CHECK,
                 f"Every validation rule of {schema.__name__}.",
-                list(rules),
+                rules,
                 collapsed=True,
             )
         ]
 
-    columns: dict[str, list[str]] = {}
-    unowned: list[str] = []
-    alone: list[str] = []
-    for rule_name in rules:
-        owned: OwnedRule | None = owned_rule(rule_name)
-        if owned is None:
-            (alone if multi_column == "per_rule" else unowned).append(rule_name)
+    columns: dict[str, list[DescribedRule]] = {}
+    unowned: list[DescribedRule] = []
+    alone: list[DescribedRule] = []
+    for rule in rules:
+        if rule.column is None:
+            (alone if multi_column == "per_rule" else unowned).append(rule)
         else:
-            columns.setdefault(owned.column, []).append(rule_name)
+            columns.setdefault(rule.column, []).append(rule)
 
     rule_sets: list[_RuleSet] = [
         _RuleSet(
@@ -125,16 +121,17 @@ def _rule_sets(
         for column, members in columns.items()
     ]
     if unowned:
+        names: str = ", ".join(rule.name for rule in unowned)
         rule_sets.append(
             _RuleSet(
                 SCHEMA_RULES_CHECK,
                 # By name, not rendered: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` would put its own commas inside this comma-separated list.
-                f"Every rule of {schema.__name__} that no single column owns: {', '.join(unowned)}.",
+                f"Every rule of {schema.__name__} that no single column owns: {names}.",
                 unowned,
                 collapsed=True,
             )
         )
-    rule_sets.extend(_single_rule_set(schema, rule_name) for rule_name in alone)
+    rule_sets.extend(_single_rule_set(schema, rule) for rule in alone)
     return rule_sets
 
 
@@ -277,7 +274,7 @@ def rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
     The rule names present as columns, as Dataframely names them.
     """
     present: pl.Schema = details.collect_schema()
-    return [rule for rule in validation_rules(schema) if rule in present]
+    return [rule for rule in described_rules(schema) if rule in present]
 
 
 def _failed_rows(
@@ -318,11 +315,11 @@ def _failed_rows(
 
 
 def _rule_metadata(
-    rule_name: str, rule: Rule, failed: int, sampled: list[Row]
+    rule: DescribedRule, failed: int, sampled: list[Row]
 ) -> dict[str, str | int | dg.TableMetadataValue]:
     """Build the metadata of a check that reports for one rule."""
     metadata: dict[str, str | int | dg.TableMetadataValue] = {
-        "dy_rule": rule_name,
+        "dy_rule": rule.name,
         # The expression, not the bound: tightening `min` must not rename the check and orphan its history.
         "dy_rule__expr": str(rule.expr),
     }
@@ -332,7 +329,9 @@ def _rule_metadata(
 
 
 def _collapsed_metadata(
-    rules: dict[str, Rule], failed: dict[str, int], sampled: dict[str, list[Row]]
+    rules: Sequence[DescribedRule],
+    failed: dict[str, int],
+    sampled: dict[str, list[Row]],
 ) -> dict[str, dg.TableMetadataValue]:
     """Build the metadata of a check that reports for several rules.
 
@@ -347,19 +346,19 @@ def _collapsed_metadata(
             [
                 dg.TableRecord(
                     {
-                        "rule": rule_name,
-                        "failed": count,
-                        "expr": str(rules[rule_name].expr),
+                        "rule": rule.name,
+                        "failed": failed[rule.name],
+                        "expr": str(rule.expr),
                     }
                 )
-                for rule_name, count in failed.items()
+                for rule in rules
             ]
         )
     }
     attributed: list[Row] = [
-        {"dy_rule": rule_name, **row}
-        for rule_name in failed
-        for row in sampled.get(rule_name, [])
+        {"dy_rule": rule.name, **row}
+        for rule in rules
+        for row in sampled.get(rule.name, [])
     ]
     return metadata | sample_metadata("dy_failed_sample", attributed)
 
@@ -402,26 +401,25 @@ def rule_results(  # noqa: PLR0913 - the specs' settings reach the results, pinn
     One result per rule set, in the order and under the names `check_specs` claimed, because both read the rule sets from one call. A rule nothing failed still gets a result, so a clean run is a row in every rule's history, not a gap.
     """
     counts: dict[str, int] = failure.counts()
-    rules: dict[str, Rule] = validation_rules(schema)
     sampled: dict[str, list[Row]] = _failed_rows(
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     )
     results: list[dg.AssetCheckResult] = []
     for rule_set in _rule_sets(schema, check_granularity, multi_column_rules):
         failed: dict[str, int] = {
-            rule_name: counts.get(rule_name, 0) for rule_name in rule_set.rules
+            rule.name: counts.get(rule.name, 0) for rule in rule_set.rules
         }
-        first: str = rule_set.rules[0]
+        first: DescribedRule = rule_set.rules[0]
         results.append(
             dg.AssetCheckResult(
                 check_name=rule_set.name,
                 asset_key=asset_key,
                 passed=not any(failed.values()),
                 severity=severity,
-                metadata=_collapsed_metadata(rules, failed, sampled)
+                metadata=_collapsed_metadata(rule_set.rules, failed, sampled)
                 if rule_set.collapsed
                 else _rule_metadata(
-                    first, rules[first], failed[first], sampled.get(first, [])
+                    first, failed[first.name], sampled.get(first.name, [])
                 ),
             )
         )

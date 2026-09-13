@@ -25,7 +25,6 @@ from dagster._core.definitions.decorators.op_decorator import is_context_provide
 
 from dagster_dataframely._checks import check_specs
 from dagster_dataframely._metadata import schema_metadata
-from dagster_dataframely._naming import validate_namespace
 from dagster_dataframely._quarantine import (
     QuarantineWriter,
     quarantine_writer,
@@ -36,6 +35,7 @@ from dagster_dataframely._returns import (
     separated_return,
     with_returned_fields,
 )
+from dagster_dataframely._rules import validate_namespace
 from dagster_dataframely._runtime import AssetYield, validation_results
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,

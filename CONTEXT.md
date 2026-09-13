@@ -86,6 +86,11 @@ _Avoid_: shape (Polars' `.shape` is a row and column count), gate
 
 **Rule**: One Dataframely validation rule, under the name Dataframely gives it.
 
+**`DescribedRule`**: One rule with everything this package derives about it: its check name, the column and kind its name delimits, its docstring, and its expression.
+Built once per call by `described_rules`, because six places used to read Dataframely's `|` themselves and each carried its own branch for a rule no column owns.
+The expression stays lazy, since nothing at definition time reads one.
+_Avoid_: parsed rule, rule info, rule spec, enriched rule
+
 **Rule set**: The rules one asset check reports for.
 One rule at `rule` granularity, one column's rules at `column`, every rule at `schema`.
 _Avoid_: bucket
@@ -117,11 +122,11 @@ All three hardcoded, never configurable.
 
 **Named for its product**: A function that returns a value is named after the value, not after what it does.
 `check_specs` returns check specs, `quarantine_frame` returns the quarantine frame, `delegating_writer` returns a writer.
-Where the product has no name, name it rather than reaching for a verb: `owned_rule` returns an `OwnedRule`, so the function is its record's own name in snake case.
+Where the product has no name, name it rather than reaching for a verb: `described_rules` returns `DescribedRule`s, so the function is its record's own name in snake case.
 A verb name says the function returns nothing, so `validate_quarantine_key` either raises or passes.
 No prefix: the annotation carries the type, and the prefix is a word the reader skips.
 The identifier only.
-D401 keeps every summary imperative, so `owned_rule` still opens "Return the column a rule belongs to".
+D401 keeps every summary imperative, so `described_rules` still opens "Return the schema's validation rules".
 _Avoid_: get_*, build_*, make_*, compute_*
 
 **Participle for a transformer**: A function handed a thing that hands back the same thing changed is named by the participle of what changed.

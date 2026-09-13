@@ -21,8 +21,9 @@ from dagster_dataframely._checks import (
     rule_columns,
     rule_results,
 )
-from dagster_dataframely._naming import check_name, validate_namespace
+from dagster_dataframely._naming import check_name
 from dagster_dataframely._quarantine import QuarantineWriter
+from dagster_dataframely._rules import validate_namespace
 from dagster_dataframely._samples import VALID_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
