@@ -8,8 +8,6 @@ disable = [
   "MD082",  # No content before the next heading
 ]
 exclude = [
-  "CHANGELOG.md",
-  "LICENSE.md",
   # Vendored upstream skills; keep byte-identical to their source repos
   ".claude",
   "docs/agents/",

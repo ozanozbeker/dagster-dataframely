@@ -9,8 +9,6 @@ Two functions. `separated_return` runs between calling the decorated function an
 `separated_return` takes `value`. `with_returned_fields` takes `metadata`, `data_version` and `tags`. The other two fields are refused here: the decorator decides the asset key from its declaration and the check results from the schema's rules.
 """
 
-from typing import NamedTuple
-
 import dagster as dg
 import polars as pl
 
@@ -30,22 +28,9 @@ DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None
 """
 
 
-class SeparatedReturn(NamedTuple):
-    """What a decorated function returned, with the frame taken off the result.
-
-    Attributes
-    ----------
-    frame
-        The frame `validation_results` validates. `None` when the decorated function skipped.
-    result
-        The result whose fields land on the materialization. `None` when a bare frame was returned.
-    """
-
-    frame: pl.DataFrame | pl.LazyFrame | None
-    result: ReturnedResult | None
-
-
-def separated_return(returned: DecoratedReturn, *, asset: str) -> SeparatedReturn:
+def separated_return(
+    returned: DecoratedReturn, *, asset: str
+) -> tuple[pl.DataFrame | pl.LazyFrame | None, ReturnedResult | None]:
     """Separate the frame to validate from the fields to carry onto the materialization.
 
     A bare frame passes straight through with nothing to carry, so that path is unchanged: no metadata, tags or data version appear on it. `None` passes through the same way, and `validation_results` reads it as the skip.
@@ -61,7 +46,7 @@ def separated_return(returned: DecoratedReturn, *, asset: str) -> SeparatedRetur
 
     Returns
     -------
-    The frame `validation_results` validates, and the result whose fields land on the materialization.
+    The frame `validation_results` validates, `None` when the decorated function skipped, and the result whose fields land on the materialization, `None` when a bare frame was returned.
 
     Raises
     ------
@@ -71,7 +56,7 @@ def separated_return(returned: DecoratedReturn, *, asset: str) -> SeparatedRetur
         The result carries no frame on `value`. A result exists to carry metadata onto a materialization, and a skipped run has none, so `value=None` is refused rather than read as the skip.
     """
     if not isinstance(returned, dg.MaterializeResult):
-        return SeparatedReturn(returned, None)
+        return returned, None
     # Spelled out rather than looped, because the two fields default differently: `asset_key` to `None` and `check_results` to an empty sequence.
     if returned.asset_key is not None:
         raise MaterializeResultFieldError(asset, "asset_key")
@@ -80,7 +65,7 @@ def separated_return(returned: DecoratedReturn, *, asset: str) -> SeparatedRetur
     # `value` defaults to a sentinel, not `None`, so one check covers a result carrying nothing and one carrying something that is not a frame.
     if not isinstance(returned.value, (pl.DataFrame, pl.LazyFrame)):
         raise MaterializeResultValueError(asset)
-    return SeparatedReturn(returned.value, returned)
+    return returned.value, returned
 
 
 def with_returned_fields(
@@ -99,7 +84,7 @@ def with_returned_fields(
 
     The two metadata mappings combine with the package's own keys last, so a returned `dagster/row_count` loses to the one this package counted. The decorator uses the same precedence for definition metadata: those keys belong to this package, and a collision is a mistake.
 
-    The materialization is rebuilt, not mutated, because `dg.MaterializeResult` is immutable. Every field is named, so a seventh field added upstream would silently drop. `tests/test_upstream_characterization.py` pins the six and fails there instead.
+    `_replace`, because `dg.MaterializeResult` is immutable. Every field it is not handed comes along unchanged, so a field added upstream would too.
 
     Parameters
     ----------
@@ -124,11 +109,8 @@ def with_returned_fields(
         ):
             yield result
             continue
-        yield dg.MaterializeResult(
-            asset_key=result.asset_key,
+        yield result._replace(
             metadata={**(returned_result.metadata or {}), **(result.metadata or {})},
-            check_results=result.check_results,
             data_version=returned_result.data_version,
             tags=returned_result.tags,
-            value=result.value,
         )

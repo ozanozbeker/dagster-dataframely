@@ -74,7 +74,7 @@ class ReservedColumnError(DagsterDataframelyError):
     Raised at definition time. Left to runtime, the collision would appear as a check name that means two different things.
     """
 
-    def __init__(self, schema_name: str, columns: list[str], prefix: str) -> None:
+    def __init__(self, schema_name: str, columns: list[str]) -> None:
         """Name the offending columns only, never the whole schema.
 
         Parameters
@@ -83,15 +83,13 @@ class ReservedColumnError(DagsterDataframelyError):
             The schema the columns belong to.
         columns
             The column names inside the reserved namespace.
-        prefix
-            The reserved prefix itself.
         """
         culprits: str = ", ".join(f"'{column}'" for column in columns)
         plural, verb, pronoun = (
             ("", "uses", "it") if len(columns) == 1 else ("s", "use", "them")
         )
         super().__init__(
-            f"Column{plural} {culprits} of {schema_name} {verb} the reserved '{prefix}' prefix. Rename {pronoun}. This package generates every check name and quarantine column under that namespace."
+            f"Column{plural} {culprits} of {schema_name} {verb} the reserved 'dy_' prefix. Rename {pronoun}. This package generates every check name and quarantine column under that namespace."
         )
 
 

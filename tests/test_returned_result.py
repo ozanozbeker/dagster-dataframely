@@ -6,9 +6,8 @@ Every field is asserted twice where both routes can see it: once by calling, onc
 """
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import dagster as dg
 import polars as pl
@@ -26,51 +25,15 @@ from tests.scenario import (
     Orders,
     clean_orders,
     cooccurring_orders,
+    events,
     hopeless_orders,
+    materializations,
+    materialize,
     mixed_orders,
-    storage,
+    results,
 )
 
 _VALID = dg.AssetKey(["orders"])
-_Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-
-
-def _call(asset: dg.AssetsDefinition) -> _Yielded:
-    """Call the asset and drain what comes back."""
-    return list(asset())  # pyrefly: ignore[bad-argument-type]
-
-
-def _results(events: _Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """The materialization each output produced, keyed by asset."""
-    return {
-        event.asset_key: event
-        for event in events
-        if isinstance(event, dg.MaterializeResult) and event.asset_key is not None
-    }
-
-
-def _materialize(tmp_path: Path, asset: dg.AssetsDefinition):
-    return dg.materialize(
-        [asset],
-        resources=storage(tmp_path),
-    )
-
-
-def _materializations(
-    result: dg.ExecuteInProcessResult,
-) -> dict[dg.AssetKey, dg.AssetMaterialization]:
-    """Every materialization the run emitted, whole: this file asserts tags as well as metadata."""
-    return {
-        event.asset_key: event.step_materialization_data.materialization
-        for event in result.get_asset_materialization_events()
-        if event.asset_key is not None
-    }
-
-
-def _metadata(
-    result: dg.ExecuteInProcessResult, key: dg.AssetKey
-) -> Mapping[str, dg.MetadataValue[Any]]:
-    return _materializations(result)[key].metadata
 
 
 # --- what folds in ---
@@ -83,7 +46,7 @@ def test_a_returned_result_carries_its_metadata_onto_the_valid_out():
             value=clean_orders(), metadata={"source": "stripe", "batch": 7}
         )
 
-    metadata = _results(_call(orders))[_VALID].metadata or {}
+    metadata = results(events(orders))[_VALID].metadata or {}
 
     assert metadata["source"] == "stripe"
     assert metadata["batch"] == 7
@@ -96,7 +59,7 @@ def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: P
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=clean_orders(), metadata={"source": "stripe"})
 
-    metadata = _metadata(_materialize(tmp_path, orders), _VALID)
+    metadata = materializations(materialize(tmp_path, orders))[_VALID].metadata
 
     assert metadata["source"].value == "stripe"
     assert metadata["dagster/row_count"].value == 3
@@ -114,7 +77,7 @@ def test_the_packages_own_key_wins_a_collision():
             value=clean_orders(), metadata={"dagster/row_count": 999}
         )
 
-    called = _results(_call(orders))[_VALID].metadata or {}
+    called = results(events(orders))[_VALID].metadata or {}
 
     assert called["dagster/row_count"] == 3
 
@@ -130,7 +93,7 @@ def test_a_returned_data_version_and_tags_reach_the_valid_result():
             tags={"run/flavour": "backfill"},
         )
 
-    result = _results(_call(orders))[_VALID]
+    result = results(events(orders))[_VALID]
 
     assert result.data_version == dg.DataVersion("v1")
     assert result.tags == {"run/flavour": "backfill"}
@@ -147,7 +110,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
             tags={"run/flavour": "backfill"},
         )
 
-    tags = _materializations(_materialize(tmp_path, orders))[_VALID].tags or {}
+    tags = materializations(materialize(tmp_path, orders))[_VALID].tags or {}
 
     assert tags["dagster/data_version"] == "v1"
     assert tags["run/flavour"] == "backfill"
@@ -160,7 +123,7 @@ def test_a_lazy_return_folds_the_same_way():
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:
         return dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
 
-    result = _results(_call(orders))[_VALID]
+    result = results(events(orders))[_VALID]
 
     assert (result.metadata or {})["m"] == 1
     assert_frame_equal(result.value, clean_orders())
@@ -179,11 +142,11 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
             tags={"run/flavour": "backfill"},
         )
 
-    materializations = _materializations(_materialize(tmp_path, orders))
-    (event,) = materializations.values()
+    recorded = materializations(materialize(tmp_path, orders))
+    (event,) = recorded.values()
     tags = event.tags or {}
 
-    assert set(materializations) == {_VALID}
+    assert set(recorded) == {_VALID}
     assert event.metadata["source"] == dg.MetadataValue.text("stripe")
     assert event.metadata["dataframely/invalid_count"] == dg.MetadataValue.int(1)
     assert tags["dagster/data_version"] == "v1"
@@ -264,7 +227,7 @@ def test_a_refused_return_names_what_is_wrong(
     fn: Callable[[], object], error: type[Exception], says: str
 ):
     with pytest.raises(error, match=re.escape(says)):
-        _call(_refusing(fn))
+        events(_refusing(fn))
 
 
 @pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
@@ -275,7 +238,7 @@ def test_a_refused_return_fails_the_run_and_writes_nothing(
     says: str,
 ):
     with pytest.raises(error, match=re.escape(says)):
-        _materialize(tmp_path, _refusing(fn))
+        materialize(tmp_path, _refusing(fn))
 
     assert not list(tmp_path.rglob("*.parquet"))
 
@@ -291,7 +254,7 @@ def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
         )
 
     with pytest.raises(NothingSurvivedError):
-        _materialize(tmp_path, orders)
+        materialize(tmp_path, orders)
 
 
 def test_an_abort_with_no_quarantine_still_raises_its_own_error():
@@ -302,13 +265,13 @@ def test_an_abort_with_no_quarantine_still_raises_its_own_error():
         return dg.MaterializeResult(value=mixed_orders(), metadata={"source": "stripe"})
 
     with pytest.raises(ValidationAbortError):
-        _call(orders)
+        events(orders)
 
 
 def test_the_frame_guard_names_every_route_out():
     """Giving up the schema used to be the only advice, which was wrong for anyone who wanted metadata on a validated table. It is now the last of four routes, aimed at the one reader it fits: an asset that writes its own storage and never holds a frame."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-        _call(_refusing(lambda: "orders"))
+        events(_refusing(lambda: "orders"))
     message = str(raised.value)
 
     assert "Polars DataFrame or LazyFrame" in message
@@ -326,7 +289,7 @@ def test_a_bare_frame_carries_no_data_version_and_no_tags():
     def orders() -> pl.DataFrame:
         return clean_orders()
 
-    result = _results(_call(orders))[_VALID]
+    result = results(events(orders))[_VALID]
 
     assert result.data_version is None
     assert result.tags is None
@@ -343,10 +306,10 @@ def test_a_bare_frame_and_a_returned_result_agree_on_everything_else(tmp_path: P
     def returning_a_result() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=clean_orders())
 
-    from_bare = _metadata(_materialize(tmp_path / "bare", bare), _VALID)
-    from_result = _metadata(
-        _materialize(tmp_path / "result", returning_a_result), _VALID
-    )
+    from_bare = materializations(materialize(tmp_path / "bare", bare))[_VALID].metadata
+    from_result = materializations(
+        materialize(tmp_path / "result", returning_a_result)
+    )[_VALID].metadata
 
     assert set(from_bare) == set(from_result)
     assert_frame_equal(

@@ -34,9 +34,6 @@ dependencies = [
   "dagster>=1.13.20",
   "dataframely>=3.0.0",
   "polars>=1.44.1",
-  # Nothing imports this yet. It is declared ahead of the quarantine path (#104), which is
-  # a `UPath`, because the alternative is dropping it here and adding it back one commit
-  # later. It already arrives with `dagster`, on a requirement gated by Python version.
   "universal-pathlib>=0.2.0",
 ]
 
@@ -48,15 +45,9 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 
 [dependency-groups]
 dev = [
-  "dagster>=1.13.20",
-  # One manager from each base class Dagster ships: `dagster-polars` is a
-  # `UPathIOManager` and `dagster-duckdb-polars` is a `DbIOManager`. Between them the
-  # delegation tests cover nearly every first-party manager (ADR-0006). `duckdb` is
-  # transitive, and declared because the tests query the database directly.
+  # One manager from each base class Dagster ships: `dagster-polars` is a `UPathIOManager` and `dagster-duckdb-polars` is a `DbIOManager`. Between them the delegation tests cover nearly every first-party manager (ADR-0006). `duckdb` is transitive, and declared because the tests query the database directly.
   "dagster-duckdb-polars>=0.27.12",
-  "dagster-graphql>=1.13.20",
   "dagster-polars>=0.27.12",
-  "dagster-webserver>=1.13.20",
   "duckdb>=1.1",
   "prek>=0.5.1",
   "pyrefly>=1.2.0",
@@ -70,12 +61,7 @@ requires = ["uv_build>=0.12.00,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.pytest.ini_options]
-addopts = [
-  "-ra",
-  "--strict-config",
-  "--strict-markers",
-  "--import-mode=importlib"
-]
+addopts = ["-ra", "--strict-config", "--strict-markers", "--import-mode=importlib"]
 pythonpath = ["."]
 testpaths = ["tests"]
 

@@ -30,7 +30,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run --no-sync pytest
 
-  # The drift tripwire: `tests/test_upstream_pins.py` against unpinned releases.
+  # The drift tripwire: `tests/test_upstream_characterization.py` against unpinned releases.
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

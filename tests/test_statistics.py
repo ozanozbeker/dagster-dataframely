@@ -17,7 +17,13 @@ import pytest
 
 import dagster_dataframely
 from dagster_dataframely import dy_asset
-from tests.scenario import Orders, clean_orders, mixed_orders, storage
+from tests.scenario import (
+    Orders,
+    clean_orders,
+    materializations,
+    materialize,
+    mixed_orders,
+)
 
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
@@ -93,28 +99,11 @@ def _shipment() -> pl.DataFrame:
     return shipment_frame(_DURATIONS)
 
 
-def _materialized(
-    tmp_path: Path, asset: dg.AssetsDefinition
-) -> dict[str, Mapping[str, dg.MetadataValue[Any]]]:
-    """Materialize one asset and return every materialization it emitted, keyed by asset name."""
-    result = dg.materialize(
-        [asset],
-        resources=storage(tmp_path),
-    )
-    return {
-        event.asset_key.to_user_string(): (
-            event.step_materialization_data.materialization.metadata
-        )
-        for event in result.get_asset_materialization_events()
-        if event.asset_key is not None
-    }
-
-
 def _metadata(
     tmp_path: Path, asset: dg.AssetsDefinition, key: str = "orders"
 ) -> Mapping[str, dg.MetadataValue[Any]]:
-    """Read the metadata of one materialization."""
-    return _materialized(tmp_path, asset)[key]
+    """Materialize one asset and read the metadata of the materialization under `key`."""
+    return materializations(materialize(tmp_path, asset))[dg.AssetKey([key])].metadata
 
 
 def _table(
@@ -380,11 +369,12 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
-    materialized = _materialized(tmp_path, without_statistics)
+    materialized = materializations(materialize(tmp_path, without_statistics))
+    (orders,) = materialized.values()
 
-    assert set(materialized) == {"orders"}
-    assert not [family for m in materialized.values() for family in _families(m)]
-    assert materialized["orders"]["dagster/row_count"].value == 3
+    assert set(materialized) == {dg.AssetKey(["orders"])}
+    assert not _families(orders.metadata)
+    assert orders.metadata["dagster/row_count"].value == 3
 
 
 def test_the_setting_off_in_the_environment_suppresses_the_pass(

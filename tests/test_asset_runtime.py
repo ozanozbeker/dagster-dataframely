@@ -28,11 +28,15 @@ from dagster_dataframely.wiring import (
 )
 from tests.scenario import (
     Orders,
+    Yielded,
+    check_evaluations,
     clean_orders,
     cooccurring_orders,
     hopeless_orders,
+    materializations,
+    materialize,
     mixed_orders,
-    storage,
+    results,
     wrong_dtype_orders,
 )
 
@@ -47,50 +51,9 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-def _materialize(
-    tmp_path: Path, *assets: dg.AssetsDefinition, raise_on_error: bool = True
-) -> dg.ExecuteInProcessResult:
-    return dg.materialize(
-        list(assets),
-        resources=storage(tmp_path),
-        raise_on_error=raise_on_error,
-    )
-
-
-def _yielded(
-    events: AssetYield,
-) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """Collect the materialization each output produced, keyed by asset, as the step yielded it.
-
-    A run records this merged with whatever the IO manager adds, so a key both write reads as the manager's in the run.
-    """
-    return {
-        event.asset_key: event
-        for event in events
-        if isinstance(event, dg.MaterializeResult) and event.asset_key is not None
-    }
-
-
-def _evaluations(
-    result: dg.ExecuteInProcessResult,
-) -> dict[str, dg.AssetCheckEvaluation]:
-    return {e.check_name: e for e in result.get_asset_check_evaluations()}
-
-
-def _materialized(
-    result: dg.ExecuteInProcessResult,
-) -> dict[dg.AssetKey, Mapping[str, dg.MetadataValue[Any]]]:
-    """Collect every materialization the run emitted, keyed by asset, with its metadata."""
-    return {
-        event.asset_key: event.step_materialization_data.materialization.metadata
-        for event in result.get_asset_materialization_events()
-        if event.asset_key is not None
-    }
-
-
 # --- a clean frame ---
 def test_a_clean_frame_materializes_what_was_returned(tmp_path: Path):
-    result = _materialize(tmp_path, _raw_orders, orders)
+    result = materialize(tmp_path, _raw_orders, orders)
 
     assert result.success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
@@ -101,7 +64,7 @@ def test_a_clean_run_emits_row_count():
 
     Asserted on what the step yields, not on what the run recorded. `dagster-polars` counts the same rows itself, so a run's materialization cannot say which of the two put the key there.
     """
-    yielded = _yielded(orders(clean_orders()))  # pyrefly: ignore[bad-argument-type]
+    yielded = results(orders(clean_orders()))  # pyrefly: ignore[bad-argument-type]
     metadata = yielded[dg.AssetKey(["orders"])].metadata or {}
 
     assert metadata["dagster/row_count"] == 3
@@ -109,7 +72,7 @@ def test_a_clean_run_emits_row_count():
 
 def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
     """Specs derive from the schema, so absence never breaks a rule's history."""
-    evaluations = _evaluations(_materialize(tmp_path, _raw_orders, orders))
+    evaluations = check_evaluations(materialize(tmp_path, _raw_orders, orders))
     rules = {name: e for name, e in evaluations.items() if name.startswith("dy_rule__")}
 
     assert len(evaluations) == len(list(orders.check_specs))
@@ -120,7 +83,7 @@ def test_a_clean_run_reports_every_rule_as_passing_at_warn(tmp_path: Path):
 
 def test_a_check_carries_its_rule_and_the_live_expression(tmp_path: Path):
     """A tightened bound then shows in the check's own history instead of orphaning it."""
-    evaluation = _evaluations(_materialize(tmp_path, _raw_orders, orders))[
+    evaluation = check_evaluations(materialize(tmp_path, _raw_orders, orders))[
         "dy_rule__amount__min"
     ]
     metadata = dict(evaluation.metadata)
@@ -143,7 +106,7 @@ def test_a_decorated_function_that_returns_no_frame_says_so(tmp_path: Path):
     with pytest.raises(
         dg.DagsterInvariantViolationError, match="Polars DataFrame or LazyFrame"
     ) as raised:
-        _materialize(tmp_path, forgot_the_frame)
+        materialize(tmp_path, forgot_the_frame)
 
     assert "'orders' returned a str" in str(raised.value)
     assert not list(tmp_path.rglob("*.parquet"))
@@ -175,7 +138,7 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
     fn.__annotations__ = {"return": annotation}
     asset = dy_asset(Orders, name="orders")(fn)
 
-    assert _materialize(tmp_path, asset).success
+    assert materialize(tmp_path, asset).success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
 
@@ -185,17 +148,6 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
 # It is the supported way a partitioned asset reaches its own key, so a wrapper change that
 # shadowed the signature has to fail a test here.
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
-
-
-def _materialize_partition(
-    tmp_path: Path, asset: dg.AssetsDefinition
-) -> dg.ExecuteInProcessResult:
-    """Materialize one asset under a partition key, which `_materialize` takes no parameter for."""
-    return dg.materialize(
-        [asset],
-        partition_key="2026-01-02",
-        resources=storage(tmp_path),
-    )
 
 
 def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
@@ -208,7 +160,7 @@ def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
         seen["partition"] = context.partition_key
         return clean_orders()
 
-    result = _materialize_partition(tmp_path, orders)
+    result = materialize(tmp_path, orders, partition_key="2026-01-02")
 
     assert result.success
     assert seen == {"partition": "2026-01-02"}
@@ -222,7 +174,7 @@ def test_a_decorated_function_can_take_an_annotated_context(tmp_path: Path):
         seen["partition"] = context.partition_key
         return clean_orders()
 
-    result = _materialize_partition(tmp_path, orders)
+    result = materialize(tmp_path, orders, partition_key="2026-01-02")
 
     assert result.success
     assert seen == {"partition": "2026-01-02"}
@@ -242,7 +194,7 @@ def test_a_decorated_function_can_take_the_context_alongside_an_upstream_frame(
         seen["rows"] = len(raw_orders)
         return raw_orders
 
-    result = _materialize(tmp_path, _raw_orders, orders)
+    result = materialize(tmp_path, _raw_orders, orders)
 
     assert result.success
     assert seen == {"asset": "orders", "rows": 3}
@@ -259,7 +211,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
 
         return _shipments
 
-    result = _materialize(tmp_path, shipments("alpha"), shipments("beta"))
+    result = materialize(tmp_path, shipments("alpha"), shipments("beta"))
 
     assert result.success
     assert_frame_equal(
@@ -279,7 +231,7 @@ def _wrong_dtype() -> pl.DataFrame:
 def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
     """A pipeline defect, not a data defect: the message has to be readable without opening a traceback."""
     with pytest.raises(ColumnSchemaError) as raised:
-        _materialize(tmp_path, _wrong_dtype)
+        materialize(tmp_path, _wrong_dtype)
 
     message = str(raised.value)
 
@@ -294,7 +246,7 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
         return clean_orders().drop("quantity")
 
     with pytest.raises(ColumnSchemaError) as raised:
-        _materialize(tmp_path, missing_column)
+        materialize(tmp_path, missing_column)
 
     assert "'quantity' (expected Int32, got <missing>)" in str(raised.value)
 
@@ -309,7 +261,7 @@ def test_the_column_schema_error_reads_as_plural_for_several_columns(tmp_path: P
         )
 
     with pytest.raises(ColumnSchemaError) as raised:
-        _materialize(tmp_path, several)
+        materialize(tmp_path, several)
 
     assert "Columns 'email' (expected String, got <missing>), 'quantity' " in str(
         raised.value
@@ -318,15 +270,15 @@ def test_the_column_schema_error_reads_as_plural_for_several_columns(tmp_path: P
 
 
 def test_the_column_schema_check_writes_nothing(tmp_path: Path):
-    _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
+    materialize(tmp_path, _wrong_dtype, raise_on_error=False)
 
     assert not list(tmp_path.rglob("*.parquet"))
 
 
 def test_the_column_schema_check_runs_before_row_filtering(tmp_path: Path):
     """Only the column-schema check reports. No rule check evaluates, because no row was ever filtered."""
-    result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
-    evaluations = _evaluations(result)
+    result = materialize(tmp_path, _wrong_dtype, raise_on_error=False)
+    evaluations = check_evaluations(result)
     column_schema = evaluations["dy_schema__columns"]
 
     assert not result.success
@@ -336,8 +288,8 @@ def test_the_column_schema_check_runs_before_row_filtering(tmp_path: Path):
 
 
 def test_the_column_schema_check_tabulates_every_offending_column(tmp_path: Path):
-    result = _materialize(tmp_path, _wrong_dtype, raise_on_error=False)
-    metadata = dict(_evaluations(result)["dy_schema__columns"].metadata)
+    result = materialize(tmp_path, _wrong_dtype, raise_on_error=False)
+    metadata = dict(check_evaluations(result)["dy_schema__columns"].metadata)
     errors = metadata["dy_schema__errors"]
 
     assert isinstance(errors, dg.TableMetadataValue)
@@ -355,7 +307,7 @@ def _mixed() -> pl.DataFrame:
 def test_invalid_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
     """A partial table must never silently replace a complete one."""
     with pytest.raises(ValidationAbortError) as raised:
-        _materialize(tmp_path, _mixed)
+        materialize(tmp_path, _mixed)
 
     assert "3 rows failed Orders validation" in str(raised.value)
     assert "1 by 'amount|min'" in str(raised.value)
@@ -365,13 +317,13 @@ def test_invalid_rows_with_no_quarantine_fail_the_run(tmp_path: Path):
 def test_the_abort_names_the_quarantine_as_the_fix(tmp_path: Path):
     """This error is the one place a user who has not read the README learns the keyword exists, so it names it."""
     with pytest.raises(ValidationAbortError) as raised:
-        _materialize(tmp_path, _mixed)
+        materialize(tmp_path, _mixed)
 
     assert "quarantine=True" in str(raised.value)
 
 
 def test_the_abort_writes_nothing(tmp_path: Path):
-    result = _materialize(tmp_path, _mixed, raise_on_error=False)
+    result = materialize(tmp_path, _mixed, raise_on_error=False)
 
     assert not result.success
     assert not result.get_asset_materialization_events()
@@ -380,7 +332,7 @@ def test_the_abort_writes_nothing(tmp_path: Path):
 
 def test_the_abort_still_reports_every_rule(tmp_path: Path):
     """A failed run still says what failed and by how much."""
-    evaluations = _evaluations(_materialize(tmp_path, _mixed, raise_on_error=False))
+    evaluations = check_evaluations(materialize(tmp_path, _mixed, raise_on_error=False))
     failed = {name for name, e in evaluations.items() if not e.passed}
 
     assert evaluations["dy_schema__columns"].passed
@@ -402,7 +354,7 @@ def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
         return hopeless_orders()
 
     with pytest.raises(ValidationAbortError) as raised:
-        _materialize(tmp_path, hopeless)
+        materialize(tmp_path, hopeless)
 
     assert "2 rows failed Orders validation, 2 by 'amount|min'" in str(raised.value)
     assert not list(tmp_path.rglob("*.parquet"))
@@ -410,7 +362,7 @@ def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
 
 def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
     """Severity is the run's outcome, not the rule's: nothing was written, so nothing is a warning."""
-    evaluations = _evaluations(_materialize(tmp_path, _mixed, raise_on_error=False))
+    evaluations = check_evaluations(materialize(tmp_path, _mixed, raise_on_error=False))
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
     assert rules
@@ -431,17 +383,17 @@ def test_the_valid_rows_are_written_and_the_rest_are_quarantined(tmp_path: Path)
 
     One materialization, because the quarantine is evidence of a run, not a `dg.AssetOut` (ADR-0004). The file still lands beside the table, because the asset's own manager placed it (ADR-0006).
     """
-    result = _materialize(tmp_path, _quarantined)
+    result = materialize(tmp_path, _quarantined)
 
     assert result.success
-    assert set(_materialized(result)) == {_GOOD_KEY}
+    assert set(materializations(result)) == {_GOOD_KEY}
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
     assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 3
 
 
 def test_the_materialization_says_where_the_rest_went(tmp_path: Path):
     """The address is computed, not read back off the manager. The borrowed context is not a real output, so whatever `path` or `Query` the manager emitted went nowhere (ADR-0006)."""
-    metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
+    metadata = materializations(materialize(tmp_path, _quarantined))[_GOOD_KEY].metadata
 
     assert metadata["dataframely/quarantine_address"] == dg.MetadataValue.text(
         "orders_quarantine"
@@ -457,16 +409,16 @@ def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return mixed_orders()
 
-    result = _materialize(tmp_path, _raw_orders, downstream)
+    result = materialize(tmp_path, _raw_orders, downstream)
 
     assert result.success
-    assert set(_materialized(result)) == {dg.AssetKey(["raw_orders"]), _GOOD_KEY}
+    assert set(materializations(result)) == {dg.AssetKey(["raw_orders"]), _GOOD_KEY}
     assert len(result.get_step_success_events()) == 2
 
 
 def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
     """Declaring the quarantine consents to partial data, so an invalid row is a warning, not a failure."""
-    evaluations = _evaluations(_materialize(tmp_path, _quarantined))
+    evaluations = check_evaluations(materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
@@ -482,7 +434,7 @@ def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
     tmp_path: Path,
 ):
     """The two keys are unconditional. A check whose metadata appeared only on failed runs would have holes in its history."""
-    evaluations = _evaluations(_materialize(tmp_path, _quarantined))
+    evaluations = check_evaluations(materialize(tmp_path, _quarantined))
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
     assert any(e.passed for e in rules)
@@ -498,7 +450,7 @@ def test_downstream_proceeds_on_the_data_that_is_fine(tmp_path: Path):
     def reconciled(orders: pl.DataFrame) -> None:
         seen["rows"] = len(orders)
 
-    result = _materialize(tmp_path, _quarantined, reconciled)
+    result = materialize(tmp_path, _quarantined, reconciled)
 
     assert result.success
     assert seen == {"rows": 3}
@@ -508,7 +460,7 @@ def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
     tmp_path: Path,
 ):
     """`invalid()` was rejected as the content. Check-metadata samples are bounded, so without per-row attribution here the detail exists nowhere at volume."""
-    _materialize(tmp_path, _quarantined)
+    materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
     rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
     checks = {spec.name for spec in _quarantined.check_specs} - {"dy_schema__columns"}
@@ -522,7 +474,7 @@ def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
 
 def test_the_rule_columns_are_cast_from_enum_to_string(tmp_path: Path):
     """Mandatory, not defensive: a raw `Enum` panics the Delta writer with a Rust `unreachable!()`."""
-    _materialize(tmp_path, _quarantined)
+    materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
     rule_columns = [name for name in quarantine.columns if name.startswith("dy_rule__")]
 
@@ -530,7 +482,7 @@ def test_the_rule_columns_are_cast_from_enum_to_string(tmp_path: Path):
 
 
 def test_a_rule_column_says_which_rule_each_row_failed(tmp_path: Path):
-    _materialize(tmp_path, _quarantined)
+    materialize(tmp_path, _quarantined)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
         "order_id"
     )
@@ -546,7 +498,7 @@ def test_a_rule_column_says_which_rule_each_row_failed(tmp_path: Path):
 
 def test_the_invalid_count_rides_beside_the_row_count(tmp_path: Path):
     """Both numbers sit on the one materialization. `dagster/row_count` counts what was written and `dataframely/invalid_count` counts what was not, so neither can be mistaken for the other."""
-    metadata = _materialized(_materialize(tmp_path, _quarantined))[_GOOD_KEY]
+    metadata = materializations(materialize(tmp_path, _quarantined))[_GOOD_KEY].metadata
 
     assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
     assert metadata["dataframely/invalid_count"] == dg.MetadataValue.int(3)
@@ -559,8 +511,8 @@ def test_the_materialization_tabulates_the_rules_that_failed_together(tmp_path: 
     def cooccurring() -> pl.DataFrame:
         return cooccurring_orders()
 
-    metadata = _materialized(_materialize(tmp_path, cooccurring))
-    cooccurrence = metadata[_GOOD_KEY]["dataframely/invalid_by_rules"]
+    metadata = materializations(materialize(tmp_path, cooccurring))[_GOOD_KEY].metadata
+    cooccurrence = metadata["dataframely/invalid_by_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -594,8 +546,8 @@ def test_the_invalid_by_rules_table_leads_with_the_set_that_broke_the_most_rows(
     def repeated() -> pl.DataFrame:
         return pl.concat([mixed_orders(), duplicate_break])
 
-    metadata = _materialized(_materialize(tmp_path, repeated))
-    cooccurrence = metadata[_GOOD_KEY]["dataframely/invalid_by_rules"]
+    metadata = materializations(materialize(tmp_path, repeated))[_GOOD_KEY].metadata
+    cooccurrence = metadata["dataframely/invalid_by_rules"]
 
     assert isinstance(cooccurrence, dg.TableMetadataValue)
     assert [dict(record.data) for record in cooccurrence.records] == [
@@ -612,10 +564,10 @@ def test_a_clean_run_skips_the_quarantine_entirely(tmp_path: Path):
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
-    result = _materialize(tmp_path, spotless)
+    result = materialize(tmp_path, spotless)
 
     assert result.success
-    assert set(_materialized(result)) == {_GOOD_KEY}
+    assert set(materializations(result)) == {_GOOD_KEY}
     assert not (tmp_path / "orders_quarantine.parquet").exists()
 
 
@@ -632,10 +584,10 @@ def test_nothing_surviving_writes_the_quarantine_and_materializes_nothing(
 
     The rows still land. The run is over and nothing materializes, so the file is the only account of what happened.
     """
-    result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
+    result = materialize(tmp_path, _nothing_survived, raise_on_error=False)
 
     assert not result.success
-    assert _materialized(result) == {}
+    assert materializations(result) == {}
     assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 2
     assert not (tmp_path / "orders.parquet").exists()
 
@@ -647,15 +599,15 @@ def test_nothing_surviving_leaves_the_last_known_good_table_intact(tmp_path: Pat
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
-    _materialize(tmp_path, spotless)
-    _materialize(tmp_path, _nothing_survived, raise_on_error=False)
+    materialize(tmp_path, spotless)
+    materialize(tmp_path, _nothing_survived, raise_on_error=False)
 
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
 
 def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
     with pytest.raises(NothingSurvivedError) as raised:
-        _materialize(tmp_path, _nothing_survived)
+        materialize(tmp_path, _nothing_survived)
 
     assert "All 2 rows failed Orders validation" in str(raised.value)
     assert "2 by 'amount|min'" in str(raised.value)
@@ -664,8 +616,8 @@ def test_nothing_surviving_fails_the_run_and_names_the_damage(tmp_path: Path):
 
 def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
     """Same rule as the abort: nothing was written to the valid table, so nothing is a warning."""
-    result = _materialize(tmp_path, _nothing_survived, raise_on_error=False)
-    evaluations = _evaluations(result)
+    result = materialize(tmp_path, _nothing_survived, raise_on_error=False)
+    evaluations = check_evaluations(result)
     rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
     assert evaluations["dy_schema__columns"].passed
@@ -697,16 +649,16 @@ def test_a_skipped_run_stays_green_and_materializes_nothing(
     tmp_path: Path, asset: dg.AssetsDefinition
 ):
     """Failing the run would say the pipeline is broken, and writing zero rows would say an empty report arrived. Neither is true, so the partition stays unmaterialized and the step still succeeds."""
-    result = _materialize(tmp_path, asset)
+    result = materialize(tmp_path, asset)
 
     assert result.success
-    assert _materialized(result) == {}
+    assert materializations(result) == {}
     assert not list(tmp_path.rglob("*.parquet"))
 
 
 def test_a_skipped_run_reports_every_check_as_passing(tmp_path: Path):
     """A check spec is a non-optional op output, so a step that answers none of them fails outright. This proves the skip answers all of them, and that they read as a pass, not as a stale or invented result."""
-    evaluations = _evaluations(_materialize(tmp_path, _skipping))
+    evaluations = check_evaluations(materialize(tmp_path, _skipping))
 
     assert len(evaluations) == len(list(_skipping.check_specs))
     assert all(e.passed for e in evaluations.values())
@@ -714,7 +666,7 @@ def test_a_skipped_run_reports_every_check_as_passing(tmp_path: Path):
 
 def test_a_skipped_runs_checks_claim_no_materialization(tmp_path: Path):
     """The skip was designed against one worry: a passing check on a skipped partition claiming the last run that did have data. Dagster leaves the target empty because this run has no materialization to point at, so the check reports on nothing and says so."""
-    evaluations = _evaluations(_materialize(tmp_path, _skipping))
+    evaluations = check_evaluations(materialize(tmp_path, _skipping))
 
     assert all(e.target_materialization_data is None for e in evaluations.values())
 
@@ -729,7 +681,7 @@ def test_a_skip_answers_whatever_check_list_the_asset_declared(
     def skipping() -> pl.DataFrame | None:
         return None
 
-    evaluations = _evaluations(_materialize(tmp_path, skipping))
+    evaluations = check_evaluations(materialize(tmp_path, skipping))
 
     assert set(evaluations) == {spec.name for spec in skipping.check_specs}
     assert all(e.passed for e in evaluations.values())
@@ -749,11 +701,11 @@ def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
     def orders_by_hand(context: dg.AssetExecutionContext) -> AssetYield:
         yield from validation_results(Orders, None, valid_key=context.asset_key)
 
-    result = _materialize(tmp_path, orders_by_hand)
+    result = materialize(tmp_path, orders_by_hand)
 
     assert result.success
-    assert _materialized(result) == {}
-    assert len(_evaluations(result)) == len(list(orders_by_hand.check_specs))
+    assert materializations(result) == {}
+    assert len(check_evaluations(result)) == len(list(orders_by_hand.check_specs))
 
 
 # --- the lazy return ---
@@ -804,13 +756,15 @@ def _reported(result: dg.ExecuteInProcessResult) -> object:
     return (
         {
             key.to_user_string(): {
-                name: value for name, value in metadata.items() if _packaged(name)
+                name: value
+                for name, value in materialization.metadata.items()
+                if _packaged(name)
             }
-            for key, metadata in _materialized(result).items()
+            for key, materialization in materializations(result).items()
         },
         {
             name: (evaluation.passed, evaluation.severity, dict(evaluation.metadata))
-            for name, evaluation in _evaluations(result).items()
+            for name, evaluation in check_evaluations(result).items()
         },
     )
 
@@ -830,8 +784,8 @@ def test_a_lazy_return_reports_exactly_what_an_eager_one_does(
     """
     eager, lazy = _both_ways(frame, quarantine)
 
-    from_eager = _materialize(tmp_path / "eager", eager, raise_on_error=False)
-    from_lazy = _materialize(tmp_path / "lazy", lazy, raise_on_error=False)
+    from_eager = materialize(tmp_path / "eager", eager, raise_on_error=False)
+    from_lazy = materialize(tmp_path / "lazy", lazy, raise_on_error=False)
 
     assert from_lazy.success == from_eager.success
     assert _reported(from_lazy) == _reported(from_eager)
@@ -858,7 +812,7 @@ def test_the_filter_runs_on_the_streaming_engine(
     monkeypatch.setattr(pl, "collect_all", spy)
     eager, lazy = _both_ways(clean_orders, quarantine=False)
 
-    assert _materialize(tmp_path, lazy if lazily else eager).success
+    assert materialize(tmp_path, lazy if lazily else eager).success
     assert engines == ["streaming"]
 
 
@@ -887,7 +841,7 @@ def test_a_lazy_return_executes_its_plan_once(tmp_path: Path):
     def lazy() -> pl.LazyFrame:
         return plan
 
-    assert _materialize(tmp_path, lazy).success
+    assert materialize(tmp_path, lazy).success
     assert sum(seen) == clean_orders().height
 
 
@@ -900,7 +854,7 @@ def test_a_plan_that_fails_the_column_schema_check_never_executes(tmp_path: Path
         return plan
 
     with pytest.raises(ColumnSchemaError):
-        _materialize(tmp_path, lazy)
+        materialize(tmp_path, lazy)
     assert seen == []
 
 
@@ -924,7 +878,7 @@ def _members(evaluation: dg.AssetCheckEvaluation) -> dict[object, object]:
 
 def test_a_collapsed_check_fails_when_any_rule_it_reports_for_failed(tmp_path: Path):
     """Collapsing the rules into checks changes how many checks there are, not what a run found."""
-    evaluations = _evaluations(_materialize(tmp_path, _by_column))
+    evaluations = check_evaluations(materialize(tmp_path, _by_column))
     failed = {name for name, e in evaluations.items() if not e.passed}
 
     assert failed == {"dy_col__amount", "dy_col__email", "dy_schema__rules"}
@@ -939,7 +893,7 @@ def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
     tmp_path: Path,
 ):
     """Collapsing the rules would otherwise lose the per-rule count, so a rule set carries one per member, not a single total. A total would not add up by row, because one row can break several rules."""
-    evaluations = _evaluations(_materialize(tmp_path, _by_column))
+    evaluations = check_evaluations(materialize(tmp_path, _by_column))
 
     assert _members(evaluations["dy_col__email"]) == {
         "email|nullability": 0,
@@ -954,7 +908,7 @@ def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
 
 def test_a_collapsed_check_carries_the_live_expression_of_every_member(tmp_path: Path):
     """The same property a rule check has, kept per member: a tightened bound shows in the collapsed check's history instead of orphaning it."""
-    evaluation = _evaluations(_materialize(tmp_path, _by_column))["dy_col__amount"]
+    evaluation = check_evaluations(materialize(tmp_path, _by_column))["dy_col__amount"]
     table = dict(evaluation.metadata)["dy_rules"]
 
     assert isinstance(table, dg.TableMetadataValue)
@@ -963,7 +917,7 @@ def test_a_collapsed_check_carries_the_live_expression_of_every_member(tmp_path:
 
 
 def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path):
-    evaluations = _evaluations(_materialize(tmp_path, _by_schema))
+    evaluations = check_evaluations(materialize(tmp_path, _by_schema))
     members = _members(evaluations["dy_schema__rules"])
 
     assert set(evaluations) == {"dy_schema__columns", "dy_schema__rules"}
@@ -982,7 +936,7 @@ def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
-    evaluations = _evaluations(_materialize(tmp_path, spotless))
+    evaluations = check_evaluations(materialize(tmp_path, spotless))
 
     assert all(e.passed for e in evaluations.values())
     assert set(_members(evaluations["dy_col__email"]).values()) == {0}
@@ -990,7 +944,7 @@ def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
 
 def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
     """Per-row attribution stays per rule at every granularity: the check list is a display decision, and the quarantine is the data."""
-    _materialize(tmp_path, _by_column)
+    materialize(tmp_path, _by_column)
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
 
     assert "dy_rule__amount__min" in quarantine.columns
@@ -998,9 +952,6 @@ def test_collapsing_the_checks_does_not_collapse_the_quarantine(tmp_path: Path):
 
 
 # --- the six outcomes, reached by calling `validation_results` directly ---
-_Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-
-
 class TestOutcomeSelection:
     """Which of the six outcomes a frame reaches, asserted by calling `validation_results` directly.
 
@@ -1019,7 +970,7 @@ class TestOutcomeSelection:
     @classmethod
     def _drained(
         cls, frame: pl.DataFrame | None, *, quarantine: bool
-    ) -> tuple[_Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
+    ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
         """Run `validation_results` to exhaustion, keeping what it yielded, what it wrote, and whatever ended it.
 
         Three of the six outcomes raise after yielding, so draining with `list()` alone would discard the results that say what happened.
@@ -1030,7 +981,7 @@ class TestOutcomeSelection:
             written.append(invalid)
             return cls.ADDRESS
 
-        yielded: _Yielded = []
+        yielded: Yielded = []
         results = validation_results(
             Orders,
             frame,
@@ -1045,7 +996,7 @@ class TestOutcomeSelection:
         return yielded, written, None
 
     @staticmethod
-    def _tables(yielded: _Yielded) -> list[dg.AssetKey]:
+    def _tables(yielded: Yielded) -> list[dg.AssetKey]:
         """List the keys that got a materialization, in yield order.
 
         `MaterializeResult.asset_key` is optional upstream, but `validation_results` sets it on every result it builds. A `None` here would be a defect, and the list comparisons below would catch it.
@@ -1057,7 +1008,7 @@ class TestOutcomeSelection:
         ]
 
     @staticmethod
-    def _metadata(yielded: _Yielded) -> Mapping[str, Any]:
+    def _metadata(yielded: Yielded) -> Mapping[str, Any]:
         """Read the one materialization's metadata, or nothing when the outcome yielded none."""
         materializations = [r for r in yielded if isinstance(r, dg.MaterializeResult)]
         if not materializations:
@@ -1066,12 +1017,12 @@ class TestOutcomeSelection:
         return materialization.metadata or {}
 
     @staticmethod
-    def _checks(yielded: _Yielded) -> list[dg.AssetCheckResult]:
+    def _checks(yielded: Yielded) -> list[dg.AssetCheckResult]:
         """List every check result. All are standalone, at every outcome (ADR-0002)."""
         return [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
 
     @classmethod
-    def _rules(cls, yielded: _Yielded) -> list[dg.AssetCheckResult]:
+    def _rules(cls, yielded: Yielded) -> list[dg.AssetCheckResult]:
         """List the rule checks alone.
 
         The column-schema check is not a rule: it is built without a severity, so it keeps Dagster's default instead of the one the run's outcome derives.
@@ -1168,7 +1119,7 @@ class TestOutcomeSelection:
     def test_an_abort_puts_the_address_on_every_check_instead(self):
         """No materialization can carry it, and a failed run still has to say where its evidence went.
 
-        Compared as a `TextMetadataValue` because `dg.AssetCheckResult` normalises what it is handed and `dg.MaterializeResult` does not. `tests/test_upstream_characterization.py` pins that.
+        Compared as a `TextMetadataValue`, which is what `_addressed` puts there: `_replace` skips the normalization the constructor does, so the address is wrapped by hand.
         """
         yielded, _, _ = self._drained(hopeless_orders(), quarantine=True)
         checks = self._checks(yielded)

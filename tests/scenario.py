@@ -9,6 +9,8 @@ Nothing here is a fixture. A schema is a class and a frame is a value, so both r
 `storage` builds `dagster-polars`' parquet manager, the one ADR-0004 recommends, so a test that only needs somewhere to write exercises what a user runs.
 
 `warehouse` builds a database manager for the few tests that need one. Delegation places a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
+
+`materialize` and the indexers beside it are here because every runtime test module asks a run the same four questions.
 """
 
 import datetime as dt
@@ -16,6 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import NamedTuple
 
+import dagster as dg
 import dataframely as dy
 import duckdb
 import polars as pl
@@ -112,6 +115,65 @@ def tables(tmp_path: Path) -> dict[str, Table]:
             for name in columns
         }
         return {name: Table(names, heights[name]) for name, names in columns.items()}
+
+
+Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
+"""What draining a called asset hands back."""
+
+
+def events(asset: dg.AssetsDefinition, *args: object) -> Yielded:
+    """Call the asset and drain what comes back.
+
+    `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator. The ignore asserts that, and `tests/test_upstream_characterization.py` pins it.
+    """
+    return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
+
+
+def results(yielded: Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
+    """Index the materialization each output yielded by asset key.
+
+    A run records this merged with whatever the IO manager adds, so a key both write reads as the manager's in the run. What the step itself said is visible only here.
+    """
+    return {
+        event.asset_key: event
+        for event in yielded
+        if isinstance(event, dg.MaterializeResult) and event.asset_key is not None
+    }
+
+
+def materialize(
+    tmp_path: Path,
+    *assets: dg.AssetsDefinition,
+    partition_key: str | None = None,
+    instance: dg.DagsterInstance | None = None,
+    raise_on_error: bool = True,
+) -> dg.ExecuteInProcessResult:
+    """Run the assets against `storage`."""
+    return dg.materialize(
+        list(assets),
+        partition_key=partition_key,
+        instance=instance,
+        resources=storage(tmp_path),
+        raise_on_error=raise_on_error,
+    )
+
+
+def materializations(
+    result: dg.ExecuteInProcessResult,
+) -> dict[dg.AssetKey, dg.AssetMaterialization]:
+    """Index every materialization a run recorded by asset key."""
+    return {
+        event.asset_key: event.step_materialization_data.materialization
+        for event in result.get_asset_materialization_events()
+        if event.asset_key is not None
+    }
+
+
+def check_evaluations(
+    result: dg.ExecuteInProcessResult,
+) -> dict[str, dg.AssetCheckEvaluation]:
+    """Index every check evaluation a run recorded by check name."""
+    return {e.check_name: e for e in result.get_asset_check_evaluations()}
 
 
 class Orders(dy.Schema):

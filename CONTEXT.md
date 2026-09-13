@@ -112,7 +112,7 @@ All three hardcoded, never configurable.
 
 **Named for its product**: A function that returns a value is named after the value, not after what it does.
 `check_specs` returns check specs, `quarantine_frame` returns the quarantine frame, `delegating_writer` returns a writer.
-Where the product has no name, name it rather than reaching for a verb: `owned_rule` returns an `OwnedRule` and `separated_return` a `SeparatedReturn`, so the function is its record's own name in snake case.
+Where the product has no name, name it rather than reaching for a verb: `owned_rule` returns an `OwnedRule`, so the function is its record's own name in snake case.
 A verb name says the function returns nothing, so `validate_quarantine_key` either raises or passes.
 No prefix: the annotation carries the type, and the prefix is a word the reader skips.
 The identifier only.
@@ -143,7 +143,7 @@ The column-schema check runs, then `Schema.filter`.
 The Columns tab, the check name, the check description.
 "Public surface" for an export list is ordinary English and stays.
 
-**shape**: banned above for column schema, and equally for a `_Setting` subclass or a kind of rule or constraint.
+**shape**: banned above for column schema, and equally for a kind of setting, rule or constraint.
 
 **green**, **red**: say what happened.
 The run succeeds, the run fails, the check passes, the check fails.

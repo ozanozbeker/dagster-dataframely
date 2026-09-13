@@ -173,7 +173,7 @@ def validate_namespace(schema: type[dy.Schema]) -> None:
         column for column in schema.columns() if column.startswith(RESERVED_PREFIX)
     ]
     if reserved:
-        raise ReservedColumnError(schema.__name__, reserved, RESERVED_PREFIX)
+        raise ReservedColumnError(schema.__name__, reserved)
 
     seen: dict[str, str] = {}
     for rule in validation_rules(schema):

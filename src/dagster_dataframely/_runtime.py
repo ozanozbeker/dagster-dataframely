@@ -15,9 +15,13 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._checks import column_schema_result, rule_results
-from dagster_dataframely._frames import column_schema_problems
-from dagster_dataframely._naming import check_name, validate_namespace, validation_rules
+from dagster_dataframely._checks import (
+    column_schema_problems,
+    column_schema_result,
+    rule_columns,
+    rule_results,
+)
+from dagster_dataframely._naming import check_name, validate_namespace
 from dagster_dataframely._quarantine import QuarantineWriter
 from dagster_dataframely._samples import VALID_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
@@ -103,9 +107,7 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     renames: dict[str, str] = {
-        rule: check_name(rule)
-        for rule in validation_rules(schema)
-        if rule in details.collect_schema()
+        rule: check_name(rule) for rule in rule_columns(schema, details)
     }
     return details.rename(renames).with_columns(
         pl.col(name).cast(pl.String) for name in renames.values()
@@ -119,16 +121,14 @@ def _addressed(
 
     For the outcomes that raise. Those have no materialization to carry the address, and a reader of a failed run still needs to know where the evidence went. A run that materializes carries the address once, on the table.
 
-    Rebuilt rather than mutated, because `dg.AssetCheckResult` is a tuple. Every field is named, so a seventh added upstream would silently drop; `tests/test_upstream_characterization.py` pins the six and fails there instead.
+    `_replace`, because `dg.AssetCheckResult` is a `NamedTuple`. It skips the normalization the constructor applies to metadata, so the address is wrapped as the `TextMetadataValue` it would have become.
     """
     return [
-        dg.AssetCheckResult(
-            passed=check.passed,
-            asset_key=check.asset_key,
-            check_name=check.check_name,
-            metadata={**(check.metadata or {}), _ADDRESS_KEY: address},
-            severity=check.severity,
-            description=check.description,
+        check._replace(
+            metadata={
+                **(check.metadata or {}),
+                _ADDRESS_KEY: dg.MetadataValue.text(address),
+            }
         )
         for check in checks
     ]

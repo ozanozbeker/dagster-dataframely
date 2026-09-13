@@ -6,7 +6,7 @@ Bounded by construction. There is no unbounded setting and no unbounded read. No
 
 A sample is absent, never empty. Zero rows does not answer "what does a row look like", and an empty table in the UI would read as an answer. Dagster enforces the same from the other side: a table value with no records and no schema is an error, so an empty one would fail the run rather than show nothing.
 
-Its own module rather than `_metadata`'s or `_statistics`'. `_metadata` holds what an asset declares before it runs. This module holds what a run held. And unlike a statistic, a cell here is a value out of the data, which decides the rendering rule in `_cell`.
+Its own module rather than `_metadata`'s or `_statistics`'. `_metadata` holds what an asset declares before it runs. This module holds what a run held. And unlike a statistic, a cell here is a value out of the data, which decides the rendering rule in `cell`.
 """
 
 import dagster as dg
@@ -22,7 +22,7 @@ type Row = dict[str, Cell]
 """One row, rendered."""
 
 
-def _cell(value: object) -> Cell:
+def cell(value: object) -> Cell:
     """Render one value as something a table record accepts.
 
     Everything a record cannot hold becomes its string form, once, here. `Decimal`, `Datetime`, `Duration`, `Binary` and `List` all reach this from schemas the package tests.
@@ -51,7 +51,7 @@ def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
     One mapping per row, keyed by column in the frame's own order. Empty when the limit is zero or the frame has no rows.
     """
     return [
-        {name: _cell(value) for name, value in row.items()}
+        {name: cell(value) for name, value in row.items()}
         for row in frame.head(limit).iter_rows(named=True)
     ]
 

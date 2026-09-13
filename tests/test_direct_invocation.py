@@ -20,16 +20,17 @@ from dagster_dataframely import dy_asset
 from dagster_dataframely.errors import ColumnSchemaError, QuarantineDirError
 from tests.scenario import (
     Orders,
+    Yielded,
     clean_orders,
     cooccurring_orders,
+    events,
+    materialize,
     mixed_orders,
-    storage,
     wrong_dtype_orders,
 )
 
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
-_Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 
 
 def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefinition:
@@ -42,12 +43,12 @@ def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefi
     return orders
 
 
-def _called(asset: dg.AssetsDefinition, *, quarantine: bool) -> _Yielded:
+def _called(asset: dg.AssetsDefinition, *, quarantine: bool) -> Yielded:
     """Call the asset, supplying the context a quarantined one declares.
 
     `quarantine=True` adds a `context` parameter whether or not the decorated function asked for one. The writer is built from it and nothing else can reach it.
     """
-    return _events(asset, *((dg.build_asset_context(),) if quarantine else ()))
+    return events(asset, *((dg.build_asset_context(),) if quarantine else ()))
 
 
 # The two failure policies, each with the frame that materializes rows under it.
@@ -66,15 +67,7 @@ def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return directory
 
 
-def _events(asset: dg.AssetsDefinition, *args: object) -> _Yielded:
-    """Call the asset and drain what comes back.
-
-    `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator. The ignore asserts that, and `tests/test_upstream_characterization.py` pins it.
-    """
-    return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
-
-
-def _tables(events: _Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
+def _tables(events: Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
     """The frame each output produced, keyed by asset."""
     return {
         event.asset_key: event.value
@@ -83,7 +76,7 @@ def _tables(events: _Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
     }
 
 
-def _checks(events: _Yielded) -> dict[dg.AssetCheckKey, bool]:
+def _checks(events: Yielded) -> dict[dg.AssetCheckKey, bool]:
     """Every check outcome, keyed the way Dagster keys a check."""
     return {
         dg.AssetCheckKey(event.asset_key, event.check_name): event.passed
@@ -91,13 +84,6 @@ def _checks(events: _Yielded) -> dict[dg.AssetCheckKey, bool]:
         if isinstance(event, dg.AssetCheckResult)
         if event.asset_key is not None and event.check_name is not None
     }
-
-
-def _run(tmp_path: Path, asset: dg.AssetsDefinition) -> dg.ExecuteInProcessResult:
-    return dg.materialize(
-        [asset],
-        resources=storage(tmp_path),
-    )
 
 
 @pytest.mark.parametrize(("frame", "quarantine"), _SHAPES)
@@ -137,7 +123,7 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
     Compared by row count as well as by key, so the frames above hold uneven counts of valid and invalid rows: a call that reported the held-back rows as the written ones would still yield the right key.
     """
     asset = _orders(frame, quarantine=quarantine)
-    result = _run(tmp_path, asset)
+    result = materialize(tmp_path, asset)
 
     assert result.success
     assert {
@@ -160,7 +146,7 @@ def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
 ):
     """Same names, same outcomes, same asset. A check whose key differed between the two would report against a spec no run declared."""
     asset = _orders(frame, quarantine=quarantine)
-    result = _run(tmp_path, asset)
+    result = materialize(tmp_path, asset)
 
     assert _checks(_called(asset, quarantine=quarantine)) == {
         evaluation.asset_check_key: evaluation.passed
@@ -173,7 +159,7 @@ def test_a_column_schema_drift_raises_out_of_the_call():
     asset = _orders(wrong_dtype_orders)
 
     with pytest.raises(ColumnSchemaError) as raised:
-        _events(asset)
+        events(asset)
 
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
@@ -244,7 +230,7 @@ def test_a_called_partitioned_quarantine_lands_under_its_partition(
     def orders() -> pl.DataFrame:
         return mixed_orders()
 
-    _events(orders, dg.build_asset_context(partition_key="2026-01-02"))
+    events(orders, dg.build_asset_context(partition_key="2026-01-02"))
 
     assert (quarantine_dir / "orders_quarantine" / "2026-01-02.parquet").exists()
 
@@ -258,9 +244,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
         seen["partition"] = context.partition_key
         return clean_orders()
 
-    tables = _tables(
-        _events(orders, dg.build_asset_context(partition_key="2026-01-02"))
-    )
+    tables = _tables(events(orders, dg.build_asset_context(partition_key="2026-01-02")))
 
     assert seen == {"partition": "2026-01-02"}
     assert set(tables) == {dg.AssetKey(["orders"])}
@@ -276,6 +260,6 @@ def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too
         assert isinstance(context, dg.AssetExecutionContext)
         return raw_orders
 
-    tables = _tables(_events(orders, dg.build_asset_context(), clean_orders()))
+    tables = _tables(events(orders, dg.build_asset_context(), clean_orders()))
 
     assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())

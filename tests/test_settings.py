@@ -2,11 +2,12 @@
 
 The three sources meet in `resolve`, so precedence and validation are both testable without going near an asset. The shipped settings are exercised through it. A fake one covers the default source, because a shipped default is valid by construction.
 
-Each extra subclass covers a source the ones before it cannot reach. A flag has to parse the environment variable, not match it, because the environment arrives as a string whatever the setting holds. A count's vocabulary is a range, so it is the only subclass with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`. `_Directory` means something by that value; it is not the absence of one.
+A flag and a count parse the environment variable rather than match it, because the environment arrives as a string whatever the setting holds. A count's vocabulary is a range, so it is the one setting with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`, which means no directory rather than the absence of a setting.
 """
 
 import importlib
 import pkgutil
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,6 @@ from dagster_dataframely._settings import (
     QUARANTINE_DIR,
     ROW_SAMPLE,
     STATISTICS,
-    _Choice,
-    _Count,
-    _Directory,
-    _Flag,
 )
 from dagster_dataframely.errors import InvalidSettingError
 
@@ -35,27 +32,27 @@ _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. A user without a type checker gets the same.
 _WRONG: Any = "per_column"
 
-# The same, for `_Count`, whose vocabulary a type checker narrows to `int`.
+# The same, for a count, whose vocabulary a type checker narrows to `int`.
 _FRACTION: Any = 2.5
 _YES: Any = True
 
-# The same, for the two-valued subclass. It is the environment variable's own spelling, so it is the word somebody writes into the argument by mistake.
+# The same, for the two-valued setting. It is the environment variable's own spelling, so it is the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
 
-# The same, for the subclass that holds a path. A user reaches for a `Path`; `_Directory` holds the string spelling instead.
+# The same, for the setting that holds a path. A user reaches for a `Path`; the setting holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted.
-_BROKEN = _Choice[str](name="fake_setting", default="nonsense", allowed=("on", "off"))
+# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted. Each is a shipped setting with its default swapped for a wrong one.
+_BROKEN = replace(CHECK_GRANULARITY, name="fake_setting", default=_WRONG)
 
-# The same, one subclass along: a count whose default is a number it does not accept.
-_BROKEN_COUNT = _Count(name="fake_count", default=-1)
+# A count whose default is a number it does not accept.
+_BROKEN_COUNT = replace(MAX_FAILURE_SAMPLES, name="fake_count", default=-1)
 
-# And one along again: a flag whose default is the word for a value rather than the value.
-_BROKEN_FLAG = _Flag(name="fake_flag", default=_WORD)
+# A flag whose default is the word for a value rather than the value.
+_BROKEN_FLAG = replace(STATISTICS, name="fake_flag", default=_WORD)
 
-# And the last: a directory whose default is the empty path, the only wrong value `_Directory` has.
-_BROKEN_DIRECTORY = _Directory(name="fake_directory", default="")
+# A directory whose default is the empty path, the only wrong value it has.
+_BROKEN_DIRECTORY = replace(QUARANTINE_DIR, name="fake_directory", default="")
 
 
 def test_a_setting_nobody_touched_is_the_package_default():
@@ -129,7 +126,7 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
 
 
 def test_a_flag_rejects_a_word_from_the_argument():
-    """The one subclass where an unvalidated argument is silently the opposite of what was written.
+    """The one setting where an unvalidated argument is silently the opposite of what was written.
 
     `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment variable spells the same instruction that way, so the mistake is reachable.
     """
@@ -145,7 +142,7 @@ def test_a_flag_rejects_a_word_from_the_argument():
 def test_a_count_reads_the_environment_source_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The other subclass that parses rather than matches. A wrong reading here would be silent: `'0'` is a string every truthiness test calls true."""
+    """The other setting that parses rather than matches. A wrong reading here would be silent: `'0'` is a string every truthiness test calls true."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "3")
     assert ROW_SAMPLE.resolve(None) == 3
 
@@ -220,7 +217,7 @@ def test_a_count_rejects_a_bool():
 def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The subclass with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
+    """The setting with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
     monkeypatch.setenv(_QUARANTINE_DIR_ENV, "/scratch/quarantine")
 
     assert QUARANTINE_DIR.resolve(None) == "/scratch/quarantine"
@@ -278,7 +275,7 @@ def test_a_value_outside_the_vocabulary_raises_from_the_default_source():
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
 
-    assert "nonsense" in str(raised.value)
+    assert "per_column" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_COUNT.resolve(None)

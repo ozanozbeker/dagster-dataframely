@@ -51,18 +51,6 @@ classmethod-decorators = ["dataframely.rule"]
   "SLF001",  # flake8-self > private-member-access
 ]
 
-# Dagster related ignores
-# A definitions.py holds the code location entry point and nothing else, so both the module and its `defs()` would be documenting the same one fact.
-"**/definitions.py" = [
-  "D100",
-  "D103",
-]
-# Asset/op/sensor modules.
-"**/defs/**" = [
-  "PLR0913",  # Pylint Refactor > too-many-arguments
-  "INP001",  # flake8-no-pep420 > implicit-namespace-package
-]
-
 [lint.flake8-type-checking]
 runtime-evaluated-base-classes = [
   "dagster.Config",

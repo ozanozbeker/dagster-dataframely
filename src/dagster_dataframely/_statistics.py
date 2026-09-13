@@ -20,6 +20,8 @@ from typing import Any
 import dagster as dg
 import polars as pl
 
+from dagster_dataframely._samples import Cell, cell
+
 _DERIVED = frozenset({"mean", "std", "p50", "true_rate"})
 """The derived cells, which round. Every other cell is a value out of the data, shown as it is."""
 
@@ -32,23 +34,17 @@ _STRING_FAMILY = (pl.String, pl.Categorical, pl.Enum, pl.Binary)
 """The dtypes whose useful statistics are all lengths and counts. Sharing one set of statistics makes them one table rather than four."""
 
 
-def _cell(value: object) -> str | int | float | bool | None:
+def _cell(value: object) -> Cell:
     """Render one aggregate as a value a table record accepts.
 
-    `Decimal` forces this step. The numeric family picks up `Decimal` columns, `min` and `max` on one return a Python `Decimal`, and `TableRecord` rejects it, so a money column would take the whole materialization down. A high-precision decimal loses digits through `float()`. That is display only; the exact value is still in the table it came from.
+    `_samples.cell` with one step ahead of it. The numeric family picks up `Decimal` columns, `min` and `max` on one return a Python `Decimal`, and `TableRecord` rejects it, so a money column would take the whole materialization down. A high-precision decimal loses digits through `float()`. That is display only; the exact value is still in the table it came from. A sampled row keeps a `Decimal` as a string instead, because it is the value somebody stored.
 
-    Ints pass through as ints, because a count reads worse as `3.0`.
-
-    Everything left is a date, a datetime or a time. This is the one place any of them becomes a string.
+    Everything left is a date, a datetime or a time, and `cell` is where any of them becomes a string.
     """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Decimal):
-        return float(value)
-    return str(value)
+    return cell(float(value) if isinstance(value, Decimal) else value)
 
 
-def _rounded(value: object) -> str | int | float | bool | None:
+def _rounded(value: object) -> Cell:
     """Render a derived statistic, rounding what `_cell` returns."""
     cell = _cell(value)
     return round(cell, _PLACES) if isinstance(cell, float) else cell

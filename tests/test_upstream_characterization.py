@@ -30,6 +30,7 @@ from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
 from dagster_dataframely.wiring import quarantine_path
+from tests.scenario import events
 
 
 class Orders(dy.Schema):
@@ -341,14 +342,6 @@ def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run()
     assert evaluation.partition == "mon"
 
 
-def _invoked(asset: dg.AssetsDefinition) -> list[object]:
-    """Call an asset directly and drain what comes back.
-
-    `AssetsDefinition.__call__` is annotated `-> object`, because a direct call hands back whatever the body returns. Both assets below are generators; the ignore asserts that.
-    """
-    return list(asset())  # pyrefly: ignore[bad-argument-type]
-
-
 def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
     """Calling an asset directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
 
@@ -377,10 +370,10 @@ def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
         yield result(standalone_key)
 
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-        _invoked(bundled)
+        events(bundled)
 
     assert "did not return an output" in str(raised.value)
-    assert [type(event) for event in _invoked(standalone)] == [
+    assert [type(event) for event in events(standalone)] == [
         dg.MaterializeResult,
         dg.AssetCheckResult,
     ]
@@ -443,20 +436,9 @@ def test_a_check_input_is_still_type_checked_against_its_annotation():
     assert not ran
 
 
-def test_materialize_result_still_takes_exactly_the_six_fields_the_rebuild_names():
-    """`dg.MaterializeResult`'s constructor still takes exactly six fields, and `value` still defaults to a sentinel rather than to `None`."""
-    # #77 folds a returned result into the materialization `validation_results` built, rebuilding it because it is immutable and naming every field. A seventh field added upstream would drop silently, so the field set is pinned here.
-    # The sentinel lets one `isinstance` check cover a result carrying nothing and one carrying a non-frame, so it is asserted too. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
-    fields = set(inspect.signature(dg.MaterializeResult.__new__).parameters) - {"cls"}
-
-    assert fields == {
-        "asset_key",
-        "metadata",
-        "check_results",
-        "data_version",
-        "tags",
-        "value",
-    }
+def test_materialize_result_value_still_defaults_to_a_sentinel():
+    """`dg.MaterializeResult().value` is a sentinel rather than `None`."""
+    # The sentinel lets one `isinstance` check in `separated_return` cover a result carrying nothing and one carrying a non-frame. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
     assert dg.MaterializeResult().value is not None
 
 
@@ -626,31 +608,6 @@ def test_dagster_still_reads_the_context_parameter_off_the_first_name_alone():
     assert is_context_provided(list(inspect.signature(declared).parameters.values()))
     assert not is_context_provided(list(inspect.signature(bare).parameters.values()))
     assert not is_context_provided([])
-
-
-def test_a_check_result_still_takes_exactly_the_six_fields_the_address_names():
-    """A run that writes nothing rebuilds every check result to carry the quarantine's address, naming each field, so a seventh added upstream would silently drop.
-
-    It also normalises what it is handed, where `dg.MaterializeResult` does not, so the tests read the two classes differently.
-    """
-    result = dg.AssetCheckResult(
-        passed=True, check_name="probe", asset_key=dg.AssetKey(["orders"])
-    )
-
-    assert set(result._fields) == {
-        "passed",
-        "asset_key",
-        "check_name",
-        "metadata",
-        "severity",
-        "description",
-    }
-    assert dg.AssetCheckResult(
-        passed=True,
-        check_name="probe",
-        asset_key=dg.AssetKey(["a"]),
-        metadata={"k": "v"},
-    ).metadata == {"k": dg.MetadataValue.text("v")}
 
 
 def test_an_output_context_still_clones_and_re_points_by_attribute():

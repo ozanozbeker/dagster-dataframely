@@ -13,7 +13,6 @@ import dataframely as dy
 import polars as pl
 from dataframely._rule import Rule
 
-from dagster_dataframely._frames import column_schema_problems
 from dagster_dataframely._naming import (
     COLUMN_SCHEMA_CHECK,
     SCHEMA_RULES_CHECK,
@@ -142,7 +141,7 @@ def _rule_sets(
 def check_specs(
     schema: type[dy.Schema],
     *,
-    # Not `dg.CoercibleToAssetKey`: typing-only, so absent at runtime.
+    # Spelled out because `dagster` exports no name for the keys a check spec accepts.
     asset: str | dg.AssetKey,
     check_granularity: Granularity | None = None,
     multi_column_rules: MultiColumnRules | None = None,
@@ -194,6 +193,36 @@ def check_specs(
     ]
 
 
+def column_schema_problems(
+    schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
+) -> list[dict[str, str]]:
+    """Compare the frame's columns and dtypes against the schema, naming every mismatch.
+
+    An explicit pre-check, not a `try`/`except` around `filter`. `Schema.filter` takes a plan, so a mismatch would appear only at `collect_all`, after the plan had run, as whatever Polars raises for the first bad column. This runs first, executes nothing, and names every offending column at once. `collect_schema()` resolves a `LazyFrame`'s column schema without running it.
+
+    Parameters
+    ----------
+    schema
+        The schema the frame claims to match.
+    frame
+        The frame to compare, eager or lazy.
+
+    Returns
+    -------
+    One mapping of `column`, `expected` and `actual` per offending column, empty when the frame matches. The same list feeds the failing check's metadata and `ColumnSchemaError`, so the two cannot disagree.
+    """
+    actual: pl.Schema = frame.collect_schema()
+    return [
+        {
+            "column": name,
+            "expected": str(column.dtype),
+            "actual": str(actual[name]) if name in actual else "<missing>",
+        }
+        for name, column in schema.columns().items()
+        if name not in actual or not column.validate_dtype(actual[name])
+    ]
+
+
 def column_schema_result(
     problems: Sequence[dict[str, str]] = (), *, asset_key: dg.AssetKey
 ) -> dg.AssetCheckResult:
@@ -233,6 +262,24 @@ _INVALID = "invalid"
 """What `FailureInfo.details()` calls a row that failed a rule."""
 
 
+def rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
+    """List the rule columns `FailureInfo.details()` carries, in the schema's own rule order.
+
+    Parameters
+    ----------
+    schema
+        The schema the rules belong to.
+    details
+        What `FailureInfo.details()` returned, bound once by the caller because it rebuilds the frame on every call.
+
+    Returns
+    -------
+    The rule names present as columns, as Dataframely names them.
+    """
+    present: pl.Schema = details.collect_schema()
+    return [rule for rule in validation_rules(schema) if rule in present]
+
+
 def _failed_rows(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
@@ -263,13 +310,9 @@ def _failed_rows(
     # Bound once: `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     # The rule columns are the quarantine's own, and the check already says which rule this is.
-    rule_columns: list[str] = [
-        rule for rule in validation_rules(schema) if rule in details.collect_schema()
-    ]
+    columns: list[str] = rule_columns(schema, details)
     return {
-        rule: sample_rows(
-            details.filter(pl.col(rule) == _INVALID).drop(rule_columns), limit
-        )
+        rule: sample_rows(details.filter(pl.col(rule) == _INVALID).drop(columns), limit)
         for rule in counts
     }
 
