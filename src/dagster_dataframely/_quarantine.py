@@ -8,6 +8,8 @@ The delegating writer is the usual route (ADR-0006). It shallow-copies the step'
 
 The file writer is the fallback for direct invocation, where there is no step and so no manager to borrow. It writes parquet to `quarantine_path`, which mirrors `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` still lands each quarantine beside its table.
 
+`quarantine_writer` is the rule that picks between the two, and the decorator is its only caller. It waits for the rows rather than deciding when it is built, because the answers differ only where there is no step and a call holding nothing back needs no directory at all (#115).
+
 Whatever upstream already spells, this module imports rather than restates. A second implementation of one rule is a second answer waiting to differ. The multi-partition spelling is the one exception: it lives in a closure inside `_get_paths_for_partitions` and cannot be imported. `_spelling` restates it, and a characterization test pins it against upstream's own path.
 
 **A partition key is escaped as `FilesystemIOManager` escapes it, not as the `UPathIOManager` base class does.** The base escapes a leading `/` and leaves `..` alone; upstream documents that as the behaviour to override on a hierarchical filesystem. A key of `../../etc/x` would otherwise resolve out of the quarantine_dir and write wherever it landed, and a partition key can come from data where an asset key cannot. Safety beats parity here, because the package writes this path itself rather than handing it to a manager.
@@ -49,7 +51,8 @@ from upath import UPath
 
 from dagster_dataframely._metadata import quarantine_metadata
 from dagster_dataframely._naming import validate_namespace
-from dagster_dataframely.errors import QuarantineKeyCollisionError
+from dagster_dataframely._settings import QUARANTINE_DIR
+from dagster_dataframely.errors import QuarantineDirError, QuarantineKeyCollisionError
 
 type QuarantineWriter = Callable[[pl.DataFrame], str]
 """What a writer returns: where the invalid rows went, rendered for a reader. A string, not a path, because the answer can be a database table."""
@@ -267,6 +270,48 @@ def file_writer(
         with path.open("wb") as file:
             frame.write_parquet(file)
         return str(path)
+
+    return write
+
+
+def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
+    """Build the writer that picks its own route when the invalid rows arrive.
+
+    Delegation first. The asset's own IO manager puts the rows wherever it puts things, which needs no configuration and cannot disagree with where the valid table went (ADR-0006).
+
+    `file_writer` answers the one case with no step: direct invocation, where the asset is called rather than run, so Dagster builds no step for `delegating_writer` to borrow the output context and IO manager from. A test that wants the real placement runs the asset.
+
+    The step is asked for on its own, ahead of the writer. No predicate answers "is this a run", so the question has to be a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property raising the same error inside a real run would silently reroute the rows to a file.
+
+    **The route is chosen inside the returned writer, not here.** `delegating_writer` reads its step where it is built, so a caller holding no fallback fails before a write it cannot finish. This one holds the fallback, so it waits for the rows instead (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
+
+    Parameters
+    ----------
+    context
+        The executing asset's context.
+
+    Returns
+    -------
+    A writer taking the invalid rows and returning where they went, rendered: the quarantine's asset key under delegation, the file's path under the fallback. It raises `QuarantineDirError` when there is no manager to delegate to and no quarantine_dir to fall back on.
+    """
+
+    def write(frame: pl.DataFrame) -> str:
+        try:
+            context.get_step_execution_context()
+        except DagsterInvalidPropertyError:
+            # Not a run, so there is no step, no output context and no manager behind it.
+            pass
+        else:
+            return delegating_writer(context)(frame)
+        quarantine_dir: str | None = QUARANTINE_DIR.resolve(None)
+        if quarantine_dir is None:
+            raise QuarantineDirError(context.asset_key.to_user_string())
+        return file_writer(
+            context.asset_key,
+            quarantine_dir,
+            # Read behind the guard because `partition_key` raises on an unpartitioned asset rather than answering `None`.
+            context.partition_key if context.has_partition_key else None,
+        )(frame)
 
     return write
 

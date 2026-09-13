@@ -42,6 +42,11 @@ _Avoid_: quarantine asset, dead-letter asset
 `validation_results` takes one and learns nothing else about where the rows went.
 _Avoid_: sink, emitter, exporter
 
+**`quarantine_writer`**: The writer that picks its own route when the invalid rows arrive: `delegating_writer` where there is a step, `file_writer` where there is not.
+Private, and `dy_asset` is its only caller.
+The choice waits for the rows, because a call holding nothing back needs no `quarantine_dir` at all (#115).
+_Avoid_: router, dispatcher, resolver, fallback chain
+
 **`delegating_writer`**: The writer that hands the rows to the IO manager the asset is already bound to.
 Tried first and unconditionally, which is why a quarantine is written beside its table on any backend with no configuration (ADR-0006).
 _Avoid_: borrowing writer, manager writer, passthrough

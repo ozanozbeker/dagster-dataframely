@@ -15,25 +15,20 @@ from typing import Any
 
 import dagster as dg
 import dataframely as dy
-import polars as pl
 
 # The union `dg.asset` annotates `deps` with. Defined at runtime, not exported from `dagster`.
 from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAssetDep
 
 # Upstream's own rule for whether a decorated function asked for a context.
+# Characterization tests pin it.
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
-
-# Raised by every context property only a real step can answer. The wrapper uses it to
-# tell a run from a direct invocation. Characterization tests pin both imports.
-from dagster._core.errors import DagsterInvalidPropertyError
 
 from dagster_dataframely._checks import check_specs
 from dagster_dataframely._metadata import schema_metadata
 from dagster_dataframely._naming import validate_namespace
 from dagster_dataframely._quarantine import (
     QuarantineWriter,
-    delegating_writer,
-    file_writer,
+    quarantine_writer,
     validate_quarantine_key,
 )
 from dagster_dataframely._returns import (
@@ -52,10 +47,7 @@ from dagster_dataframely._settings import (
     Granularity,
     MultiColumnRules,
 )
-from dagster_dataframely.errors import (
-    CollectionNotSupportedError,
-    QuarantineDirError,
-)
+from dagster_dataframely.errors import CollectionNotSupportedError
 
 DecoratedFn = Callable[..., DecoratedReturn]
 """What `dy_asset` accepts. The return union makes a function returning anything else a static error, which `tests/test_asset_runtime.py` pins with a `pyrefly: ignore` on the call that breaks it."""
@@ -65,51 +57,6 @@ AutomationCondition = (
     | dg.AutomationCondition[dg.AssetKey | dg.AssetCheckKey]
 )
 """The union `@dg.asset` accepts, spelled out because `AutomationCondition` is generic and its two parameterizations are not interchangeable."""
-
-
-def _write_quarantine(context: dg.AssetExecutionContext, frame: pl.DataFrame) -> str:
-    """Write this asset's invalid rows through whichever writer the call can reach, and return where they went.
-
-    Delegation first. The asset's own IO manager puts the rows wherever it puts things, which needs no configuration and cannot disagree with where the valid table went (ADR-0006).
-
-    `file_writer` answers the one case with no step: direct invocation, where the asset is called rather than run, so Dagster builds no step for `delegating_writer` to borrow the output context and IO manager from. A test that wants the real placement runs the asset.
-
-    The step is asked for on its own, ahead of the writer. No predicate answers "is this a run", so the question has to be a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property raising the same error inside a real run would silently reroute the rows to a file.
-
-    The route is chosen when the rows arrive, not when the asset is declared, which is why this takes the frame rather than handing back a writer (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
-
-    Parameters
-    ----------
-    context
-        The executing asset's context.
-    frame
-        The invalid rows.
-
-    Returns
-    -------
-    Where the rows went, rendered: the quarantine's asset key under delegation, the file's path under the fallback.
-
-    Raises
-    ------
-    QuarantineDirError
-        There is no manager to delegate to and no quarantine_dir to fall back on.
-    """
-    try:
-        context.get_step_execution_context()
-    except DagsterInvalidPropertyError:
-        # Not a run, so there is no step, no output context and no manager behind it.
-        pass
-    else:
-        return delegating_writer(context)(frame)
-    quarantine_dir: str | None = QUARANTINE_DIR.resolve(None)
-    if quarantine_dir is None:
-        raise QuarantineDirError(context.asset_key.to_user_string())
-    return file_writer(
-        context.asset_key,
-        quarantine_dir,
-        # Read behind the guard because `partition_key` raises on an unpartitioned asset rather than answering `None`.
-        context.partition_key if context.has_partition_key else None,
-    )(frame)
 
 
 def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
@@ -386,7 +333,7 @@ def dy_asset(  # noqa: PLR0913 - forwarding the whole parameter list is the poin
                 # Ahead of the body, and ahead of the writer: a body whose invalid rows would land on another asset's key has nowhere to put them, so nothing is gained by running it first (ADR-0007).
                 validate_quarantine_key(context)
                 # Bound to the context here, where it is in hand and nowhere else. The route is picked when the rows arrive, so a body that holds nothing back needs nowhere to put them.
-                writer = functools.partial(_write_quarantine, context)
+                writer = quarantine_writer(context)
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
                     if declares_context

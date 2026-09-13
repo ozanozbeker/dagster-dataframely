@@ -14,12 +14,17 @@ from typing import Any, NamedTuple
 import dagster as dg
 import polars as pl
 import pytest
+
+# What every context property only a real step can answer raises. The narrowness test
+# below makes `delegating_writer` raise it from inside a run that has one.
+from dagster._core.errors import DagsterInvalidPropertyError
 from polars.testing import assert_frame_equal
 from upath import UPath
 
-from dagster_dataframely import dy_asset, quarantine_spec
+from dagster_dataframely import _quarantine, dy_asset, quarantine_spec
 from dagster_dataframely.errors import NothingSurvivedError, QuarantineKeyCollisionError
 from dagster_dataframely.wiring import (
+    QuarantineWriter,
     file_writer,
     quarantine_frame,
     quarantine_path,
@@ -438,6 +443,35 @@ def test_a_run_delegates_without_reading_the_quarantine_dir(
 
     assert not unread.exists()
     assert (tmp_path / WAREHOUSE_SCHEMA / "orders_quarantine.parquet").exists()
+
+
+def test_the_step_probe_does_not_widen_to_the_whole_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`quarantine_writer` asks for the step on its own, ahead of the writer it chooses.
+
+    Widened to wrap `delegating_writer`, any other property raising the same error inside a real run would reroute the rows to a file rather than failing, and the run would report success over a quarantine nobody was told about.
+
+    The quarantine_dir is set and the fallback works, so a widened guard would pass by writing there. Only the narrow one leaves the directory untouched and fails the run.
+    """
+    fallback = tmp_path / "fallback"
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(fallback))
+
+    def raises(_context: dg.AssetExecutionContext) -> QuarantineWriter:
+        # Any property but the step probe, raising the error only the step probe expects.
+        not_the_step = "asset_partitions_time_window"
+        raise DagsterInvalidPropertyError(not_the_step)
+
+    monkeypatch.setattr(_quarantine, "delegating_writer", raises)
+
+    result = dg.materialize(
+        [_delegating(mixed_orders, partitioned=False)],
+        resources=storage(tmp_path),
+        raise_on_error=False,
+    )
+
+    assert not result.success
+    assert not fallback.exists()
 
 
 def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):
