@@ -296,29 +296,23 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
 
 def clean_orders() -> pl.DataFrame:
     """Every row valid."""
-    return _frame(
-        [
-            _row("ORD-1", "a@example.com", "10.00", 1, "new"),
-            _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
-            _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
-        ]
-    )
+    return _frame([
+        _row("ORD-1", "a@example.com", "10.00", 1, "new"),
+        _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
+        _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
+    ])
 
 
 def mixed_orders() -> pl.DataFrame:
     """Three valid rows and three invalid, one per rule a row can fail alone."""
-    return _frame(
-        [
-            _row("ORD-1", "a@example.com", "10.00", 1, "new"),
-            _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
-            _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
-            _row("ORD-4", "d@example.com", "-4.00", 1, "new"),  # amount|min
-            _row("ORD-5", "E@example.com", "12.00", 1, "new"),  # email|check__lowercase
-            _row(
-                "ORD-6", "f@example.com", "0.00", 1, "paid"
-            ),  # paid_orders_have_amount
-        ]
-    )
+    return _frame([
+        _row("ORD-1", "a@example.com", "10.00", 1, "new"),
+        _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
+        _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
+        _row("ORD-4", "d@example.com", "-4.00", 1, "new"),  # amount|min
+        _row("ORD-5", "E@example.com", "12.00", 1, "new"),  # email|check__lowercase
+        _row("ORD-6", "f@example.com", "0.00", 1, "paid"),  # paid_orders_have_amount
+    ])
 
 
 def cooccurring_orders() -> pl.DataFrame:
@@ -326,25 +320,21 @@ def cooccurring_orders() -> pl.DataFrame:
 
     The fifth frame, added by #19. The other four fail at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look like a working one.
     """
-    return _frame(
-        [
-            _row("ORD-1", "a@example.com", "10.00", 1, "new"),
-            _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
-            _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
-            # amount|min, email|check__lowercase and paid_orders_have_amount together.
-            _row("ORD-4", "D@example.com", "-1.00", 1, "paid"),
-        ]
-    )
+    return _frame([
+        _row("ORD-1", "a@example.com", "10.00", 1, "new"),
+        _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
+        _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
+        # amount|min, email|check__lowercase and paid_orders_have_amount together.
+        _row("ORD-4", "D@example.com", "-1.00", 1, "paid"),
+    ])
 
 
 def no_valid_orders() -> pl.DataFrame:
     """Every row fails `amount|min`, so nothing survives the filter."""
-    return _frame(
-        [
-            _row("ORD-1", "a@example.com", "-1.00", 1, "new"),
-            _row("ORD-2", "b@example.com", "-2.00", 1, "new"),
-        ]
-    )
+    return _frame([
+        _row("ORD-1", "a@example.com", "-1.00", 1, "new"),
+        _row("ORD-2", "b@example.com", "-2.00", 1, "new"),
+    ])
 
 
 def wrong_dtype_orders() -> pl.DataFrame:

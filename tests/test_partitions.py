@@ -250,12 +250,10 @@ def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
 # The motivating case (#95): a monthly x distributor grid where one distributor left the
 # marketplace. Its historical cells hold real data and must stay. Its recent cells have no file
 # and never will, which is neither a failure nor an empty report.
-_GRID = dg.MultiPartitionsDefinition(
-    {
-        "month": dg.StaticPartitionsDefinition(["2026-01", "2026-02"]),
-        "distributor": dg.StaticPartitionsDefinition(["trading", "departed"]),
-    }
-)
+_GRID = dg.MultiPartitionsDefinition({
+    "month": dg.StaticPartitionsDefinition(["2026-01", "2026-02"]),
+    "distributor": dg.StaticPartitionsDefinition(["trading", "departed"]),
+})
 _DEPARTED = dg.MultiPartitionKey({"month": "2026-02", "distributor": "departed"})
 _REPORTS_KEY = dg.AssetKey(["reports"])
 

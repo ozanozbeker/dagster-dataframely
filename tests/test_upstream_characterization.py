@@ -49,15 +49,11 @@ class Orders(dy.Schema):
 
 
 # One clean row, then one row per rule: `amount|min`, `paid_orders_have_amount`, and a `primary_key` duplicate pair.
-_MIXED_ORDERS = pl.DataFrame(
-    {
-        "order_id": ["ORD-1", "ORD-2", "ORD-3", "ORD-3"],
-        "amount": [10.0, -1.0, 0.0, 5.0],
-        "status": pl.Series(
-            ["new", "new", "paid", "new"], dtype=pl.Enum(["new", "paid"])
-        ),
-    }
-)
+_MIXED_ORDERS = pl.DataFrame({
+    "order_id": ["ORD-1", "ORD-2", "ORD-3", "ORD-3"],
+    "amount": [10.0, -1.0, 0.0, 5.0],
+    "status": pl.Series(["new", "new", "paid", "new"], dtype=pl.Enum(["new", "paid"])),
+})
 
 
 def test_rules_are_keyed_by_pipe_delimited_rule_name():
@@ -146,13 +142,11 @@ def test_length_bounds_are_declared_on_exactly_string_and_list():
 def test_a_struct_emits_one_inner_rule_per_constrained_field():
     """A `dy.Struct` still generates its fields' rules as `inner_<field>_<rule>`, under the struct column's own name."""
     # #21 collapses a schema's checks by column, and a struct is where that matters most: every field's rules land on one column, so a ten-field struct is ten checks at `rule` granularity and one at `column`. The `<column>|inner_...` spelling puts them there; a flatter naming upstream would scatter them across columns that do not exist.
-    address = dy.Struct(
-        {
-            "city": dy.String(nullable=False),
-            "postcode": dy.String(nullable=True),
-            "number": dy.Int32(nullable=False, min=1),
-        }
-    )
+    address = dy.Struct({
+        "city": dy.String(nullable=False),
+        "postcode": dy.String(nullable=True),
+        "number": dy.Int32(nullable=False, min=1),
+    })
 
     assert set(address.validation_rules(pl.col("address"))) == {
         # The struct's own rule sits beside its fields', so one check per column can hold them all.
@@ -632,12 +626,10 @@ def test_upath_io_manager_still_formats_a_multi_partition_key_by_dimension_name(
         def load_from_path(self, context: dg.InputContext, path: UPath) -> str:
             return path.read_text()
 
-    grid = dg.MultiPartitionsDefinition(
-        {
-            "region": dg.StaticPartitionsDefinition(["eu", "us"]),
-            "day": dg.StaticPartitionsDefinition(["2026-01-02"]),
-        }
-    )
+    grid = dg.MultiPartitionsDefinition({
+        "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+        "day": dg.StaticPartitionsDefinition(["2026-01-02"]),
+    })
     key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
 
     @dg.asset(name="orders", partitions_def=grid)
@@ -821,7 +813,8 @@ def test_a_bare_spec_is_still_unexecutable_beside_its_asset():
         return "ran"
 
     graph = (
-        dg.Definitions(
+        dg
+        .Definitions(
             assets=[
                 orders,
                 dg.AssetSpec(key=dg.AssetKey(["orders_quarantine"]), deps=[key]),

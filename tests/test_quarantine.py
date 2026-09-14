@@ -48,9 +48,10 @@ from tests.scenario import (
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 _ORDERS = dg.AssetKey(["orders"])
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
-_GRID = dg.MultiPartitionsDefinition(
-    {"region": dg.StaticPartitionsDefinition(["eu", "us"]), "day": _DAYS}
-)
+_GRID = dg.MultiPartitionsDefinition({
+    "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+    "day": _DAYS,
+})
 
 
 def _invalid_rows() -> pl.DataFrame:
@@ -241,9 +242,10 @@ def test_a_key_form_is_keyed_exactly_as_the_definition_form(
     form: dg.AssetKey | Sequence[str],
 ):
     """A generated or foreign asset has no definition to read, and the answer must be the same."""
-    assert quarantine_spec(Orders, form).key == dg.AssetKey(
-        ["sales", "orders_quarantine"]
-    )
+    assert quarantine_spec(Orders, form).key == dg.AssetKey([
+        "sales",
+        "orders_quarantine",
+    ])
 
 
 def test_a_bare_string_is_a_single_key_part():

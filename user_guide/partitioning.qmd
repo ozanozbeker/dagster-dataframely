@@ -96,12 +96,10 @@ It forwards like any other, so a grid partitions the asset and the quarantine ce
 
 ```{python}
 #| label: partitioning-5
-grid = dg.MultiPartitionsDefinition(
-    {
-        "day": dg.DailyPartitionsDefinition(start_date="2026-01-01"),
-        "region": dg.StaticPartitionsDefinition(["eu", "us"]),
-    }
-)
+grid = dg.MultiPartitionsDefinition({
+    "day": dg.DailyPartitionsDefinition(start_date="2026-01-01"),
+    "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+})
 
 
 @dd.asset(Orders, partitions_def=grid)

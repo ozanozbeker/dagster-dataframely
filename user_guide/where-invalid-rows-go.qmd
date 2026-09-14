@@ -37,12 +37,10 @@ class SupplierReport(dy.Schema):
     reported_on = dy.Date(nullable=False)
 
 
-grid = dg.MultiPartitionsDefinition(
-    {
-        "month": dg.MonthlyPartitionsDefinition(start_date="2026-01-01"),
-        "distributor": dg.StaticPartitionsDefinition(["acme", "globex"]),
-    }
-)
+grid = dg.MultiPartitionsDefinition({
+    "month": dg.MonthlyPartitionsDefinition(start_date="2026-01-01"),
+    "distributor": dg.StaticPartitionsDefinition(["acme", "globex"]),
+})
 
 
 def source_path(key: dg.MultiPartitionKey) -> Path:

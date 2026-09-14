@@ -181,7 +181,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 
     Examples
     --------
-    ```{python}
+    ```python
     #| echo: false
     #| output: false
     import dataframely as dy
@@ -192,7 +192,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 
     One declaration is the schema, the checks, the filter and the quarantine:
 
-    ```{python}
+    ```python
     class Orders(dy.Schema):
         order_id = dy.String(primary_key=True)
         amount = dy.Float64(nullable=False, min=0.0)

@@ -433,7 +433,8 @@ if pk == "pkhash":
 # A 5x intermediate, then back to 1x: the case temp landing was built for.
 if upstream == "fanout":
     base = (
-        base.with_columns(pl.lit([0, 1, 2, 3, 4]).alias("k"))
+        base
+        .with_columns(pl.lit([0, 1, 2, 3, 4]).alias("k"))
         .explode("k")
         .with_columns((pl.col("id") * 5 + pl.col("k")).alias("wide"))
         .filter(pl.col("k") == 2)
@@ -465,31 +466,27 @@ elif strategy in ("collect_all_frames", "collect_all_streaming"):
     good.write_parquet("out.parquet")
 elif strategy == "collect_all_sinks":
     good_lf, fail = S.filter(src)
-    res = pl.collect_all(
-        [
-            good_lf.sink_parquet("out.parquet", lazy=True),
-            fail._lf.sink_parquet("invalid.parquet", lazy=True),
-            fail._lf.select((~pl.col(fail._rule_columns)).sum()),
-        ]
-    )
+    res = pl.collect_all([
+        good_lf.sink_parquet("out.parquet", lazy=True),
+        fail._lf.sink_parquet("invalid.parquet", lazy=True),
+        fail._lf.select((~pl.col(fail._rule_columns)).sum()),
+    ])
     counts = {k: v for k, v in res[2].row(0, named=True).items() if v > 0}
     ngood = pl.scan_parquet("out.parquet").select(pl.len()).collect().item()
 elapsed = time.perf_counter() - t0
 rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 rss_mb = rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024
 print(
-    json.dumps(
-        {
-            "strategy": strategy,
-            "pk": pk,
-            "upstream": upstream,
-            "n": n,
-            "s": round(elapsed, 2),
-            "peak_mb": round(rss_mb),
-            "good": ngood,
-            "counts": counts,
-        }
-    )
+    json.dumps({
+        "strategy": strategy,
+        "pk": pk,
+        "upstream": upstream,
+        "n": n,
+        "s": round(elapsed, 2),
+        "peak_mb": round(rss_mb),
+        "good": ngood,
+        "counts": counts,
+    })
 )
 ```
 

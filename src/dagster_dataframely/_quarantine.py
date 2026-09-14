@@ -319,7 +319,7 @@ def quarantine_spec(
 
     Examples
     --------
-    ```{python}
+    ```python
     #| echo: false
     #| output: false
     import dataframely as dy
@@ -328,7 +328,7 @@ def quarantine_spec(
     import dagster_dataframely as dd
     ```
 
-    ```{python}
+    ```python
     class Orders(dy.Schema):
         order_id = dy.String(primary_key=True)
         amount = dy.Float64(nullable=False, min=0.0)

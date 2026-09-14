@@ -15,14 +15,18 @@ Docstrings follow [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.ht
 [Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and asks for ` ```{python} ` executable cells, which it runs at build time and embeds the output of.
 Doctest is not its syntax.
 
-The fences say ` ```{python} `, and a docstring `Examples` block executes when the site builds.
-That was the trade: braces buy execution and give up ruff's `docstring-code-format`, which only reaches the plain spelling.
-So an `Examples` block is the one body of Python in this repo no formatter reads, and it is on you to keep it formatted.
-Write no `# 'value'` comment: Quarto prints the real return value, and the comment would say it twice.
-
-`README.md` is the exception and keeps plain ` ```python `, because GitHub and PyPI do not know the `{python}` info string and render it unhighlighted.
-A pre-render script braces the build directory's copy instead.
+Quarto executes a fence only when it says ` ```{python} `, and where that spelling costs something the build adds it instead of the author.
 ADR-0009.
+
+A `user_guide/` page carries the braces in source, because nothing is lost: GitHub does not render a `.qmd`, and `ruff.toml` maps the extension to markdown so the formatter reaches its chunks either way.
+
+`README.md` and a docstring stay plain, and a pre-render script braces the build directory's copies.
+The README renders on GitHub and on PyPI, and neither knows the `{python}` info string, so a braced fence there loses its highlighting.
+A docstring is read by ruff, whose `docstring-code-format` reaches the plain spelling only, so a braced fence there is formatted by nothing.
+
+Ruff formats a chunk; it does not lint one, so an unused import or an ambiguous name inside a chunk reaches nobody.
+
+Write no `# 'value'` comment on an example: Quarto prints the real return value, and the comment would then say it twice.
 
 Hovering a fence in Zed renders `&nbsp;` wherever the code is indented.
 That is a pyrefly bug, not something to write around.

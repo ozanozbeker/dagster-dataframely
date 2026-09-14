@@ -1,4 +1,4 @@
-# 9. The README stays plain markdown and the build braces it
+# 9. Every fence stays plain markdown and the build braces it
 
 Accepted, 2026-09-14. Scope is the documentation site (#120), not the package.
 
@@ -17,7 +17,7 @@ That is the whole trade: the three most-copied blocks in the repository are eith
 
 ## Decision
 
-**`README.md` keeps plain ` ```python ` fences, and a pre-render script braces them inside the build directory.**
+**Every fence in the repository stays plain ` ```python `, and a pre-render script braces the build directory's copies.**
 
 `great-docs.yml` takes a top-level `pre_render:` key, which Great Docs copies into the generated `_quarto.yml` as Quarto's native `project: pre-render:`.
 Great Docs generates `great-docs/index.qmd` from the README before Quarto renders, so the script finds the copy already there and rewrites it in place.
@@ -26,8 +26,11 @@ The file on disk is never touched.
 GitHub and PyPI keep highlighting.
 The site executes all three blocks, so a raising cell fails the build, which is the gate #83 asked for.
 
-This applies to `README.md` alone.
-The user guide's pages are `.qmd`, which GitHub does not render meaningfully anyway, so they carry braces in source.
+**A docstring is the second surface, for a different reason.**
+Great Docs renders docstrings as the reference pages, so an `Examples` block only executes if it is braced. But ruff's `docstring-code-format` reaches the plain spelling only, so bracing one in the source takes it out of the formatter's reach: measured by mangling code inside a braced fence and having `ruff format` report the file already formatted, under `preview` too.
+The script rewrites each reference page's `## Examples {.doc-examples}` section and nothing else, because Great Docs emits the function signature as its own ` ```python ` block and executing a signature would fail the build.
+
+The guide's pages are the exception that needs no script: a `.qmd` is not rendered by GitHub, and `ruff.toml` maps the extension to markdown so the formatter reaches its chunks in the source spelling.
 
 ## Consequences
 

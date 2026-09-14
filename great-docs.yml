@@ -14,9 +14,9 @@ authors:
     role: Maintainer
     email: github@ozanozbeker.com
 
-# Braces the landing page's fences in the build directory, so `README.md` can stay plain
-# markdown for GitHub and PyPI. ADR-0009.
-pre_render: scripts/brace-readme-fences.py
+# Braces the fences in the build directory, so `README.md` can stay plain markdown for
+# GitHub and PyPI and a docstring can stay plain for ruff's formatter. ADR-0009.
+pre_render: scripts/brace-example-fences.py
 
 # No `freeze:` key, deliberately. Quarto re-executes every page by default, which is what
 # the gate needs: the examples are checked against the package, not against themselves, so a

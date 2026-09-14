@@ -90,7 +90,9 @@ id = "ruff-format"
 name = "ruff format"
 entry = "uv run ruff format --force-exclude"
 language = "system"
-types_or = ["python", "pyi", "jupyter", "markdown"]
+# `files` for the same reason rumdl's hook below takes one: prek types a `.qmd` as neither
+# markdown nor python, so the guide's chunks would reach no formatter at all.
+files = '\.(py|pyi|ipynb|md|qmd)$'
 require_serial = true
 
 [[repos.hooks]]

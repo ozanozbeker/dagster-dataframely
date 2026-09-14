@@ -235,9 +235,9 @@ def column_schema_result(
         passed=False,
         severity=dg.AssetCheckSeverity.ERROR,
         metadata={
-            "dy_schema__errors": dg.MetadataValue.table(
-                [dg.TableRecord(problem) for problem in problems]
-            )
+            "dy_schema__errors": dg.MetadataValue.table([
+                dg.TableRecord(problem) for problem in problems
+            ])
         },
     )
 
@@ -372,18 +372,14 @@ def _collapsed_metadata(
     The sample carries `dy_rule` for the same reason: a rule set stands for several rules, so an invalid row has to name the one that put it there. Prepending the column is safe because a user column cannot sit inside the reserved namespace, which every public function taking a schema now enforces rather than assumes (ADR-0008).
     """
     metadata: dict[str, dg.TableMetadataValue] = {
-        "dy_rules": dg.MetadataValue.table(
-            [
-                dg.TableRecord(
-                    {
-                        "rule": rule.name,
-                        "failed": failed[rule.name],
-                        "expr": str(rule.expr),
-                    }
-                )
-                for rule in rules
-            ]
-        )
+        "dy_rules": dg.MetadataValue.table([
+            dg.TableRecord({
+                "rule": rule.name,
+                "failed": failed[rule.name],
+                "expr": str(rule.expr),
+            })
+            for rule in rules
+        ])
     }
     attributed: list[Row] = [
         {"dy_rule": rule.name, **row}

@@ -143,9 +143,9 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
         (-n, ", ".join(sorted(check_name(rule) for rule in rules)))
         for rules, n in counts.items()
     )
-    return dg.MetadataValue.table(
-        [dg.TableRecord({"rules": rules, "count": -n}) for n, rules in ordered]
-    )
+    return dg.MetadataValue.table([
+        dg.TableRecord({"rules": rules, "count": -n}) for n, rules in ordered
+    ])
 
 
 def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the decorator decides to be passable by hand
