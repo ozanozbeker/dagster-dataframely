@@ -1,7 +1,7 @@
 # 4. The quarantine is a file, not an asset
 
 Accepted, 2026-09-02. Supersedes [ADR-0003](0003-the-quarantines-only-parent-is-the-valid-asset.md).
-Amended by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md): the asset's own IO manager places the quarantine, so the root stops being the mechanism and survives only as the fallback for direct invocation. What the declaration is, and when an unset directory raises, go with it, and both are marked below. The rest stands: the quarantine is not an asset, graph presence is the user's declaration, the rows are written on every outcome that has them, and this package ships no IO manager.
+Amended by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md): the asset's own IO manager places the quarantine, so the root stops being the mechanism and survives only as the fallback for direct invocation. What the declaration is, and when an unset directory raises, go with it, and both are marked below. The rest stands: the quarantine is not an asset, graph presence is the user's declaration, the rows are written on every outcome that has them, and this package ships no IO manager. The function is `quarantine_spec` since 0.8.
 
 ## Context
 

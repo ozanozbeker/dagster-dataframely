@@ -1,6 +1,6 @@
 # 8. Every public function that takes a schema validates it
 
-Accepted, 2026-09-13. Extends [ADR-0007](0007-the-quarantines-key-is-checked-at-run-time-not-at-load.md), which named the three reserved namespaces and enforced the third.
+Accepted, 2026-09-13. Extends [ADR-0007](0007-the-quarantines-key-is-checked-at-run-time-not-at-load.md), which named the three reserved namespaces and enforced the third. The decorator is `dd.asset` since 0.8.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 5. The decorator wraps `dg.asset` rather than stacking on it
 
-Accepted, 2026-09-02.
+Accepted, 2026-09-02. The decorator is `dd.asset` since 0.8.
 
 ## Context
 
@@ -8,7 +8,7 @@ With the quarantine gone from the graph (ADR-0004), the decorator has three jobs
 
 ## Decision
 
-`@dy_asset(Schema, quarantine=False, **dg.asset kwargs)` calls `dg.asset(check_specs=..., metadata=..., ...)` on the wrapped body. Every `dg.asset` argument is forwarded. There is no stacked form.
+`@dy_asset(Schema, quarantine=False, **dg.asset kwargs)` calls `dg.asset(check_specs=..., metadata=..., ...)` on the wrapped body. Every `dg.asset` argument it does not own or rule out is forwarded; `USER_GUIDE.md` tables the six it withholds and why. There is no stacked form.
 
 ## Why not stacked
 

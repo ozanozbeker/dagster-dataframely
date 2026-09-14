@@ -159,6 +159,7 @@ _Avoid_: preview, example, head
 **Reserved namespace**: Three, and the third is unlike the other two.
 `dy_` for every check name, rule column and check-result metadata key, and for nothing else.
 It names what this package generates into Dagster, never anything a user types, which is why the decorator is `dd.asset` and not `dy_asset`.
+The quarantine address is the exception: the outcomes that raise have no materialization to carry it, so `dataframely/quarantine_address` rides the check results instead, under the one spelling it has anywhere (ADR-0004).
 `dataframely/` for every materialization metadata key this package names itself, which parallels `dagster/`.
 The valid row count is the exception, because Dagster already has a key for it: it goes under `dagster/row_count`.
 `<name>_quarantine` is the third, the asset key a quarantine is addressed by.

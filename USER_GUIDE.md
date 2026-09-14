@@ -50,6 +50,8 @@ The asset's description comes from the schema's docstring, which [Naming](#namin
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.
 Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar the six parameters below, and a test asserts that in both directions.
+`config_schema` is narrowed rather than absent: it takes a mapping, not Dagster's six-member union, so a type checker refuses the five legacy forms.
+Nothing refuses them at run time.
 
 | `@dg.asset` parameter | why it is not here | what to write instead |
 | --- | --- | --- |
@@ -939,13 +941,14 @@ ops:
 There are three.
 The first two are namespaces Dagster forces apart.
 
-**`dy_`** covers every check name, every quarantine rule column and every key in check metadata: the column-schema check `dy_schema__columns`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
+**`dy_`** covers every check name, every quarantine rule column and every key in check metadata bar one: the column-schema check `dy_schema__columns`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
 A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, so a slash is not available there.
 
 A rule name reaches a check name by rewriting `|` to `__`, so `amount|min` becomes `dy_rule__amount__min`.
 `check_name(rule)` is exported, so a test can name a check without doing that rewrite by hand.
 
 **`dataframely/`** covers every key on a materialization, which has no such limit.
+It is also the one namespace that reaches a check result: the outcomes that raise have no materialization to carry the quarantine address, so `dataframely/quarantine_address` rides the checks under the same spelling.
 It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
 
 A schema with a column of its own inside `dy_` raises `ReservedColumnError`, a column spelled in anything but `A-Za-z0-9_` raises `UnnameableColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.

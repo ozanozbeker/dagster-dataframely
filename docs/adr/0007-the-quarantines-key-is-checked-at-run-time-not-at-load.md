@@ -1,6 +1,6 @@
 # 7. The quarantine's key is checked at run time, not at load
 
-Accepted, 2026-09-10. Follows [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md), which made the asset key the quarantine's whole address.
+Accepted, 2026-09-10. Follows [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md), which made the asset key the quarantine's whole address. `build_quarantine_spec` is `quarantine_spec` and `_chosen_writer` is `quarantine_writer` since 0.8.
 
 ## Context
 
