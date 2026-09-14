@@ -7,7 +7,7 @@ import copy
 import datetime as dt
 import inspect
 import warnings
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, override
 
@@ -16,6 +16,7 @@ import dataframely as dy
 import polars as pl
 import pytest
 from dagster._check import CheckError
+from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAssetDep
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 from dagster._core.errors import DagsterInvalidPropertyError
 from dagster._core.execution.plan.outputs import StepOutputHandle
@@ -29,6 +30,7 @@ from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
+from dagster_dataframely._rules import DAGSTER_NAME
 from dagster_dataframely.wiring import quarantine_path
 from tests.scenario import events
 
@@ -161,6 +163,29 @@ def test_a_struct_emits_one_inner_rule_per_constrained_field():
     }
 
 
+def test_a_list_and_an_array_still_reach_their_element_column_through_inner():
+    """`dy.List` and `dy.Array` still carry the element column on `inner`, and still name its rules `inner_<rule>` under the outer column's own name."""
+    # #20 renders a nested constraint by recursing on `inner` with the prefix stripped, which is how a bounded `List` reads "elements >= 1" rather than "inner_min". Rename either and every nested constraint degrades to its raw rule name, silently, because the renderer falls back to the name for any rule it does not recognise.
+    # `Struct` is the type above, and the reason that branch names these two rather than every nested column: a struct's rules read `inner_<field>_<rule>`, where a field named `a_min` cannot be told from field `a` bounded by `min`.
+    tags = dy.List(dy.Int32(nullable=False, min=1), min_length=1)
+    point = dy.Array(dy.Int32(nullable=False, min=1), shape=3)
+
+    assert isinstance(tags.inner, dy.Int32)
+    assert isinstance(point.inner, dy.Int32)
+    assert set(tags.validation_rules(pl.col("tags"))) == {
+        # The outer column's own rules sit beside its element's, exactly as a struct's do.
+        "nullability",
+        "min_length",
+        "inner_nullability",
+        "inner_min",
+    }
+    assert set(point.validation_rules(pl.col("point"))) == {
+        "nullability",
+        "inner_nullability",
+        "inner_min",
+    }
+
+
 def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_allowed():
     """`allow_inf` and `allow_nan` still default to `False`, and still generate their rules only at that default."""
     # #20 draws the line for defaulted constraints here: an `inf` constraint on every float column would state something no author asked for, and could never state anything else, because allowing the value removes the rule instead of inverting it.
@@ -170,6 +195,23 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
     assert not {"inf", "nan"} & set(
         dy.Float64(allow_inf=True, allow_nan=True).validation_rules(pl.col("a"))
     )
+
+
+def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit():
+    """`dy.Column.validate_dtype` still answers by comparing dtypes, and still refuses a `Datetime` whose time unit or time zone differs from the column's."""
+    # #17 makes the column-schema check the one blocking check, and this is its sole arbiter: `column_schema_problems` asks it once per column, and one `False` stops the run before anything is filtered or written.
+    # Absent from `dy.__all__` and from Dataframely's API reference. The time unit is the part worth pinning: loosened upstream, a `ns` column reaches a table declared `us`; tightened, every `Datetime` asset becomes a `ColumnSchemaError`.
+    assert dy.Int64().validate_dtype(pl.Int64)
+    assert not dy.Int64().validate_dtype(pl.Int32)
+
+    assert dy.Datetime().dtype == pl.Datetime("us")
+    assert dy.Datetime().validate_dtype(pl.Datetime("us"))
+    assert not dy.Datetime().validate_dtype(pl.Datetime("ns"))
+    assert not dy.Datetime().validate_dtype(pl.Datetime("us", "UTC"))
+
+    # The one column that answers `True` whatever it is handed, so a schema declaring one never reaches the check's failing branch.
+    assert dy.Any().validate_dtype(pl.Int64)
+    assert dy.Any().validate_dtype(pl.String)
 
 
 def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
@@ -186,6 +228,26 @@ def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
 
     lazy_valid, _ = Orders.filter(superset.lazy(), cast=False)
     assert lazy_valid.collect_schema().names() == expected
+
+
+def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine():
+    """`Schema.filter` on a `LazyFrame` still hands back a result carrying `collect_all`, which still forwards `engine=` to Polars and still answers the valid frame and a `FailureInfo`."""
+    # #118 runs the whole split through this one call. It is where a `LazyFrame` executes, and where the engine is named rather than left to `auto`. The test above unpacks the eager form as a plain tuple and never reaches it, because `filter` on a `DataFrame` hands back a result that has no `collect_all` at all.
+    # Dataframely documents the forward as "keyword arguments passed directly to `polars.collect_all`", which is the whole of what the engine choice rests on. Lose it and the only test in this suite to fail is `test_the_filter_runs_on_the_streaming_engine`, which monkeypatches `pl.collect_all`, so the failure would read as this package's bug.
+    lazy_result = Orders.filter(_MIXED_ORDERS.lazy(), cast=False)
+
+    assert not hasattr(Orders.filter(_MIXED_ORDERS, cast=False), "collect_all")
+
+    valid, failure = lazy_result.collect_all(engine="streaming")
+
+    assert isinstance(valid, pl.DataFrame)
+    assert isinstance(failure, dy.FailureInfo)
+    assert valid.height == 1
+    assert len(failure) == 3
+
+    # Polars raises this, not Dataframely, so the refusal is the forward itself asserted.
+    with pytest.raises(ValueError, match="Invalid engine argument"):
+        lazy_result.collect_all(engine="nonsense")
 
 
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
@@ -342,6 +404,35 @@ def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run()
     assert evaluation.partition == "mon"
 
 
+def test_dagster_still_refuses_a_check_name_outside_the_regex_this_package_restates():
+    """Dagster still validates a name against `^[A-Za-z0-9_]+$`, and still quotes the regex in the refusal."""
+    # `_rules.DAGSTER_NAME` restates it, because upstream spells it inline in the message it raises and exports no name for it. `validate_namespace` refuses an unnameable column against that copy, so `UnnameableColumnError` names the column and the `alias=` behind it (ADR-0008).
+    # Asserted against a real refusal rather than against a literal, so the copy cannot drift unseen. A wider set upstream would leave the guard refusing a column Dagster would have taken, and a narrower one would leave Dagster refusing a column the guard passed.
+    key = dg.AssetKey(["orders"])
+
+    with pytest.raises(dg.DagsterInvalidDefinitionError) as raised:
+
+        @dg.asset(
+            name="orders", check_specs=[dg.AssetCheckSpec("unit-price", asset=key)]
+        )
+        def orders():
+            yield dg.MaterializeResult(asset_key=key)
+
+    assert f"regex ^{DAGSTER_NAME.pattern}$" in str(raised.value)
+    # The op output is `<asset>_<check>`, so the string Dagster quotes is neither name the author wrote, which is why the package refuses first.
+    assert '"orders_unit-price"' in str(raised.value)
+
+
+def test_the_deps_union_is_still_the_one_the_asset_decorator_annotates():
+    """`CoercibleToAssetDep` still lives in `dagster._core.definitions.assets.definition.asset_dep`, and is still exactly the union `dg.asset` annotates `deps` with."""
+    # The decorator forwards `deps` to `dg.asset` under this annotation. `_asset.py` carries no `from __future__ import annotations`, so the import runs at import time and a module move breaks `import dagster_dataframely` outright rather than at the first decorated asset. `dagster` exports no name for the union.
+    # Loud rather than silent, so the import alone is most of the cover. The equality is the half that could go quiet: `dg.asset` could take its `deps` annotation elsewhere, and this package would go on advertising a union Dagster no longer honours.
+    assert (
+        inspect.signature(dg.asset).parameters["deps"].annotation
+        == Iterable[CoercibleToAssetDep] | None
+    )
+
+
 def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
     """Calling an asset directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
 
@@ -440,6 +531,41 @@ def test_materialize_result_value_still_defaults_to_a_sentinel():
     """`dg.MaterializeResult().value` is a sentinel rather than `None`."""
     # The sentinel lets one `isinstance` check in `frame_and_result` cover a result carrying nothing and one carrying a non-frame. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
     assert dg.MaterializeResult().value is not None
+
+
+def test_replace_still_skips_the_constructors_normalization_and_keeps_every_other_field():
+    """`dg.AssetCheckResult` and `dg.MaterializeResult` are still tuples with a working `_replace`, which still bypasses the constructor and still leaves every field it was not handed alone."""
+    # `_addressed` writes the quarantine's address onto every check result, and `with_returned_fields` writes three of a returned result's fields onto the materialization. Both rebuild through `_replace`, and both rest on the untouched fields surviving, including a field upstream adds later.
+    # The bypass is why `_addressed` wraps its own value: the check result's constructor normalizes metadata into `MetadataValue`s and `_replace` does not, so an unwrapped string would reach Dagster raw.
+    # The two reach `_replace` by different routes, and neither route is public. The check result is a real `NamedTuple`; the materialization is a `@record` that borrows the method from `dagster_shared`'s `LegacyNamedTupleMixin`.
+    check = dg.AssetCheckResult(
+        check_name="dy_schema__columns",
+        asset_key=dg.AssetKey(["orders"]),
+        passed=False,
+        severity=dg.AssetCheckSeverity.ERROR,
+        metadata={"rows": 3},
+    )
+    result = dg.MaterializeResult(
+        asset_key=dg.AssetKey(["orders"]), metadata={"rows": 3}, tags={"team": "sales"}
+    )
+
+    assert isinstance(check, tuple)
+    assert isinstance(result, tuple)
+    assert check.metadata == {"rows": dg.MetadataValue.int(3)}
+
+    # The raw string is the assertion: `_replace` takes what the constructor would have wrapped. `_addressed` wraps its own value for exactly this reason, so the annotation being wrong here is the behaviour under test.
+    readdressed = check._replace(
+        metadata={"dataframely/quarantine_address": "here"}  # pyrefly: ignore[bad-assignment]
+    )
+    rebuilt = result._replace(metadata={"dagster/row_count": 1})
+
+    assert readdressed.metadata == {"dataframely/quarantine_address": "here"}
+    assert readdressed.severity == dg.AssetCheckSeverity.ERROR
+    assert not readdressed.passed
+    assert readdressed.check_name == "dy_schema__columns"
+    assert rebuilt.tags == {"team": "sales"}
+    assert rebuilt.asset_key == result.asset_key
+    assert rebuilt.value is result.value
 
 
 def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):

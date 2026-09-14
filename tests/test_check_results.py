@@ -17,8 +17,9 @@ import dataframely as dy
 import polars as pl
 import pytest
 
+from dagster_dataframely._rules import described_rules
 from dagster_dataframely._settings import Granularity
-from dagster_dataframely.errors import ColumnSchemaError
+from dagster_dataframely.errors import ColumnSchemaError, InvalidSettingError
 from dagster_dataframely.wiring import check_results, check_specs, schema_metadata
 from tests.scenario import (
     Orders,
@@ -35,6 +36,27 @@ ERROR = dg.AssetCheckSeverity.ERROR
 
 COLUMN_SCHEMA = "dy_schema__columns"
 """Spelled out rather than imported, so a rename has to be made here deliberately."""
+
+_FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
+
+_RULE_ORDER = list(described_rules(Orders).values())
+"""`Orders`'s rules in the schema's own order, which is the order every granularity's checks are measured against.
+
+Read through `described_rules`, so the expectation below shares nothing with the `_rule_sets` call that builds both the specs and the results. `test_rules.py` pins `described_rules` against Dataframely's own dict.
+"""
+
+_RULE_BEARING_COLUMNS = list(
+    dict.fromkeys(rule.column for rule in _RULE_ORDER if rule.column is not None)
+)
+"""Every column that owns a rule, in the order its first rule appears."""
+
+_CHECKS: dict[Granularity, list[str]] = {
+    "rule": [rule.check_name for rule in _RULE_ORDER],
+    "column": [f"dy_col__{column}" for column in _RULE_BEARING_COLUMNS]
+    + ["dy_schema__rules"],
+    "schema": ["dy_schema__rules"],
+}
+"""The rule checks each granularity declares, in order, after the column-schema check."""
 
 
 def _results(
@@ -75,12 +97,16 @@ def test_the_results_answer_exactly_the_specs_at_every_granularity(
 ):
     """The issue's own subject, as an assertion.
 
-    Order too, not just membership: a reader comparing a check list against a run should find them in one order.
+    Order too, not just membership: a reader comparing a check list against a run should find them in one order, and that order is the schema's own.
+
+    Both sides are held against `_CHECKS` rather than against each other. The specs and the results read one `_rule_sets` call, so comparing the two agrees on whatever order that call produced, including one no schema wrote.
     """
     specs = check_specs(Orders, asset=KEY, check_granularity=granularity)
     results = _results(mixed_orders(), check_granularity=granularity)
+    expected = [COLUMN_SCHEMA, *_CHECKS[granularity]]
 
-    assert [result.check_name for result in results] == [spec.name for spec in specs]
+    assert [spec.name for spec in specs] == expected
+    assert [result.check_name for result in results] == expected
 
 
 def test_schema_rules_reach_the_results_too():
@@ -90,6 +116,23 @@ def test_schema_rules_reach_the_results_too():
     results = _results(mixed_orders(), **settings)
 
     assert [result.check_name for result in results] == [spec.name for spec in specs]
+
+
+def test_a_malformed_house_setting_refuses_a_hand_wired_call(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The `Raises` block promises `InvalidSettingError`, and only the decorator's definition-time refusal was ever driven.
+
+    A hand-wirer has no definition time to fail at, so the typo has to reach them where they drain the generator instead.
+    """
+    monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "five")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        _results(mixed_orders())
+
+    assert f"got 'five' from the environment variable {_FAILURE_SAMPLES_ENV}" in str(
+        raised.value
+    )
 
 
 def test_a_schema_with_no_rules_still_answers_the_column_schema_check():

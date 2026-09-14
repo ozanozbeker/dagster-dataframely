@@ -330,12 +330,14 @@ def test_there_is_one_check_per_rule_plus_the_gate():
     """Specs come off the schema, so a clean run still reports on every rule.
 
     This also covers "no rule value appears in any check name": a check name is the rule name rewritten and nothing else, so tightening `min` leaves the check in place rather than orphaning its history.
-    """
-    expected = {"dy_schema__columns"} | {
-        f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES
-    }
 
-    assert set(_specs_by_name(orders)) == expected
+    Ordered, because the check list is what a reader scans: the gate first, then the rules in the schema's own order, which is what `check_specs` and `rule_results` both claim to return.
+    """
+    expected = ["dy_schema__columns"] + [
+        f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES
+    ]
+
+    assert list(_specs_by_name(orders)) == expected
 
 
 def test_only_the_column_schema_check_is_blocking():
@@ -666,6 +668,8 @@ class Measurements(dy.Schema):
     depth = dy.Int32(min=0, max=100)
     ratio = dy.Float64(min_exclusive=0.0, max_exclusive=1.0)
     corners = dy.Array(dy.Int32(min=0), 2)
+    # The one nested column the renderer refuses to recurse into, so it reaches the fallback.
+    box = dy.Struct({"width": dy.Int64(min=1)})
     label = dy.String(
         min_length=2,
         # Two lambdas, so Dataframely disambiguates them with a counter rather than a name.
@@ -726,6 +730,17 @@ def test_a_nested_columns_rules_render_as_constraints_on_its_elements():
     ]
 
 
+def test_a_struct_fields_rules_fall_back_to_their_own_names():
+    """A `Struct` is the one nested column the renderer does not recurse into: its rules read `inner_<field>_<kind>`, and a field named `a_min` is indistinguishable from field `a` bounded by `min`.
+
+    So a `Struct` is the kind of rule this package has not met, and this pins what that fallback prints. Today it is every `Struct` column in every schema, which is why the fallback is a documented contract rather than dead code.
+    """
+    assert _measured()["box"].constraints.other == [
+        "inner_width_nullability",
+        "inner_width_min",
+    ]
+
+
 def test_a_constraint_dagster_models_first_class_is_not_repeated():
     """`nullable` and `unique` have their own fields on `TableColumnConstraints`, so a constraint saying the same thing would double every column's constraint list."""
     assert _columns()["quantity"].constraints.other == [">= 1"]
@@ -737,6 +752,24 @@ def test_a_constraint_left_at_its_dataframely_default_renders_nothing():
     assert _measured()["ratio"].constraints.other == ["> 0.0", "< 1.0"]
     assert {"dy_rule__ratio__inf", "dy_rule__ratio__nan"} <= set(
         _specs_by_name(measurements)
+    )
+
+
+def test_the_three_rules_no_column_row_states_are_stated_by_a_collapsed_check():
+    """`unique`, `inf` and `nan` are the three the Columns tab skips, so a collapsed check's description is the only place they are visible before a run. No column row sits beside that check to say them.
+
+    Asserted as whole descriptions. These phrases surface nowhere else, so anything short of the literal leaves them free to say whatever.
+    """
+
+    @dd.asset(Measurements, name="measured_by_column", check_granularity="column")
+    def collapsed() -> pl.DataFrame:
+        return pl.DataFrame()
+
+    assert _specs_by_name(collapsed)["dy_col__ratio"].description == (
+        "Every rule on ratio: not null, > 0.0, < 1.0, not infinite, not NaN."
+    )
+    assert _specs_by_name(by_column)["dy_col__tracking_id"].description == (
+        "Every rule on tracking_id: unique."
     )
 
 
@@ -878,7 +911,10 @@ def test_a_collection_is_refused_at_the_boundary():
 
 
 def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
-    """The Collection guard exists because `dy.Collection` is the plausible wrong reach. Generalising it into a type check on `schema=` was rejected."""
+    """The Collection guard exists because `dy.Collection` is the plausible wrong reach. Generalising it into a type check on `schema=` was rejected.
+
+    Today an `AttributeError` arrives, from the `schema.columns()` inside `validate_namespace`. The catch stays broad because the type is the claim this test refuses to make: whichever of the guard's calls reaches a non-schema first decides it, and moving one line inside `validate_namespace` would change it without changing anything a user sees. The assertion is the negative one: whatever arrives is not this package's.
+    """
     with pytest.raises(Exception) as raised:  # noqa: PT011 - breadth is the point
 
         @dd.asset(42)  # pyrefly: ignore[bad-argument-type]

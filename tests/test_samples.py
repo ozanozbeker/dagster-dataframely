@@ -85,6 +85,22 @@ def test_the_row_sample_is_bounded(tmp_path: Path):
     assert len(_records(metadata["dataframely/valid_sample"])) == _DEFAULT
 
 
+def test_the_row_sample_is_the_head_rather_than_any_other_draw(tmp_path: Path):
+    """A sample somebody reports a bug against has to be the same sample when they reopen the run, and the head is the only draw a re-read reproduces.
+
+    Counting the rows cannot tell one draw from another, and every other frame here is short enough that the head and the tail are the same rows.
+    """
+
+    @dd.asset(Orders, name="orders")
+    def wide() -> pl.DataFrame:
+        return _many_orders(_DEFAULT * 2)
+
+    metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
+    sampled = _records(metadata["dataframely/valid_sample"])
+
+    assert [row["line_no"] for row in sampled] == list(range(1, _DEFAULT + 1))
+
+
 def test_the_row_sample_shows_every_column_the_row_holds(tmp_path: Path):
     metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
 

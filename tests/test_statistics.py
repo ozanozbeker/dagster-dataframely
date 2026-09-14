@@ -183,6 +183,23 @@ def test_the_groups_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
     )
 
 
+def test_a_group_table_runs_one_row_per_column_in_the_frames_own_order(tmp_path: Path):
+    """A reader scans a statistics table against the Columns tab beside it, so the two have to run in one order.
+
+    Every other assertion here indexes a row by its column name, which reads the same whatever order the rows came in.
+    """
+    string = _table(_metadata(tmp_path, _orders), "string")
+
+    assert list(string) == [
+        "order_id",
+        "email",
+        "tracking_id",
+        "status",
+        "payload",
+        "note",
+    ]
+
+
 # --- the numeric group ---
 def test_the_numeric_group_reports_seven_statistics_per_column(tmp_path: Path):
     """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough. Both rules are visible in the row below: `min` keeps all nine digits and `mean` keeps four."""
@@ -381,8 +398,10 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
 
     assert _groups(metadata)
     assert "dataframely/invalid_count" in metadata
+    # The rule columns are the quarantine's own and they are strings, so a pass over the
+    # held-back rows instead of the written ones would land them in the string group.
     assert not [
-        name for name in metadata if name.startswith("dataframely/valid_statistics/dy_")
+        column for column in _stat_columns(metadata) if column.startswith("dy_")
     ]
 
 

@@ -3,6 +3,8 @@
 The three sources meet in `resolve`, so precedence and validation are both testable without going near an asset. The shipped settings are exercised through it. A fake one covers the default source, because a shipped default is valid by construction.
 
 A flag and a count parse the environment variable rather than match it, because the environment arrives as a string whatever the setting holds. A count accepts a range, so it is the one setting with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`, which means no directory rather than the absence of a setting.
+
+`schema_rules` is the exception at the end. Every other setting's environment variable is driven through the code that reads it somewhere in this suite, and that one's was driven only as far as `resolve`, so the two tests that take it the rest of the way live here beside the source they exercise.
 """
 
 from dataclasses import replace
@@ -20,8 +22,11 @@ from dagster_dataframely._settings import (
     STATISTICS,
 )
 from dagster_dataframely.errors import InvalidSettingError
+from dagster_dataframely.wiring import check_specs
+from tests.scenario import Orders
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
+_SCHEMA_RULES_ENV = "DAGSTER_DATAFRAMELY_SCHEMA_RULES"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
@@ -80,7 +85,7 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 def test_every_setting_names_its_environment_variable_after_itself():
     """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously meant for a machine to read. It is derived, not transcribed, so the name and the setting cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
-    assert SCHEMA_RULES.env_var == "DAGSTER_DATAFRAMELY_SCHEMA_RULES"
+    assert SCHEMA_RULES.env_var == _SCHEMA_RULES_ENV
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
@@ -129,11 +134,10 @@ def test_a_flag_rejects_a_word_from_the_argument():
     """
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
-    message = str(raised.value)
 
-    assert "statistics" in message
-    assert "'false'" in message
-    assert "argument" in message
+    assert "Setting `statistics` got 'false' from the `statistics=` argument" in str(
+        raised.value
+    )
 
 
 def test_a_count_reads_the_environment_source_as_a_number(
@@ -161,12 +165,11 @@ def test_a_count_rejects_a_negative_from_the_argument():
         MAX_FAILURE_SAMPLES.resolve(-1)
     message = str(raised.value)
 
-    assert "max_failure_samples" in message
-    assert "'-1'" in message
+    assert (
+        "Setting `max_failure_samples` got '-1' from the `max_failure_samples=` argument"
+        in message
+    )
     assert "non-negative integers" in message
-    assert "package default" in message
-    assert "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES" in message
-    assert "argument" in message
 
 
 def test_a_count_rejects_a_negative_from_the_environment(
@@ -177,7 +180,9 @@ def test_a_count_rejects_a_negative_from_the_environment(
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(None)
 
-    assert _ROW_SAMPLE_ENV in str(raised.value)
+    assert f"got '-1' from the environment variable {_ROW_SAMPLE_ENV}" in str(
+        raised.value
+    )
 
 
 def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
@@ -234,18 +239,19 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
         QUARANTINE_DIR.resolve(None)
     message = str(raised.value)
 
-    assert "quarantine_dir" in message
+    assert f"got '   ' from the environment variable {_QUARANTINE_DIR_ENV}" in message
     assert "filesystem paths" in message
-    assert _QUARANTINE_DIR_ENV in message
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every source for this setting spells a path as a string, because the environment variable can spell it no other way."""
+    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every source for this setting spells a path as a string, because the environment variable can spell it no other way.
+
+    The source goes unasserted. `dd.asset` declares no `quarantine_dir=` parameter, so only a hand-wired call reaches this branch. The source phrase it produces then names an argument nobody can pass.
+    """
     with pytest.raises(InvalidSettingError) as raised:
         QUARANTINE_DIR.resolve(_PATH_OBJECT)
 
-    assert "/scratch" in str(raised.value)
-    assert "argument" in str(raised.value)
+    assert "Setting `quarantine_dir` got '/scratch'" in str(raised.value)
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_environment(
@@ -257,7 +263,9 @@ def test_a_value_outside_the_allowed_values_raises_from_the_environment(
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(None)
 
-    assert _GRANULARITY_ENV in str(raised.value)
+    assert f"got 'per_column' from the environment variable {_GRANULARITY_ENV}" in str(
+        raised.value
+    )
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
@@ -265,36 +273,44 @@ def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
 
-    assert "per_column" in str(raised.value)
+    assert "got 'per_column' from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_COUNT.resolve(None)
 
-    assert "'-1'" in str(raised.value)
+    assert "got '-1' from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_FLAG.resolve(None)
 
-    assert "package default" in str(raised.value)
+    assert "got 'false' from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_DIRECTORY.resolve(None)
 
-    assert "filesystem paths" in str(raised.value)
+    assert "got '' from the package default" in str(raised.value)
 
 
 def test_the_error_names_the_setting_the_value_and_the_source_order():
-    """Everything needed to find the typo without opening the package source: which setting, what it got, and every place it could have come from."""
+    """Everything needed to find the typo without opening the package source: which setting, what it got, and every place it could have come from.
+
+    The chain names all three sources whatever raised, so it is asserted apart from the attribution rather than through it.
+    """
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
     message = str(raised.value)
 
-    assert "check_granularity" in message
-    assert "per_column" in message
+    assert (
+        "Setting `check_granularity` got 'per_column' from the `check_granularity=` argument"
+        in message
+    )
     assert "'rule', 'column', 'schema'" in message
-    assert "package default" in message
-    assert _GRANULARITY_ENV in message
-    assert "argument" in message
+    assert (
+        "It resolves in three, each overriding the one before: the package default,"
+        in message
+    )
+    assert f"then the environment variable {_GRANULARITY_ENV}," in message
+    assert "then the `check_granularity=` argument." in message
 
 
 def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
@@ -316,6 +332,41 @@ def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     )
     assert f"then the environment variable {_QUARANTINE_DIR_ENV}." in message
     assert "There is no `quarantine_dir=` argument." in message
+
+
+def test_the_house_schema_rules_setting_reaches_the_checks_it_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A platform engineer setting this house-wide has nothing else proving it lands: every other test of it passes the argument instead.
+
+    `column` granularity, because it is the one granularity with a second place to put a rule no column owns.
+    """
+    monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_rule")
+
+    names = [
+        spec.name
+        for spec in check_specs(Orders, asset="orders", check_granularity="column")
+    ]
+
+    assert "dy_rule__primary_key" in names
+    assert "dy_schema__rules" not in names
+
+
+def test_a_schema_rules_value_outside_the_allowed_values_raises(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The refusal the other choice setting gets, for the setting nothing had ever driven a wrong value through."""
+    monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_column")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        check_specs(Orders, asset="orders", check_granularity="column")
+    message = str(raised.value)
+
+    assert (
+        f"Setting `schema_rules` got 'per_column' from the environment variable {_SCHEMA_RULES_ENV}"
+        in message
+    )
+    assert "'collapsed', 'per_rule'" in message
 
 
 # There is no fourth source and no `set_default_*()`. Dagster loads code locations lazily,

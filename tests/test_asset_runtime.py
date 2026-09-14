@@ -171,6 +171,26 @@ def test_a_decorated_function_can_take_the_context_alongside_an_upstream_frame(
     assert seen == {"asset": "orders", "rows": 3}
 
 
+def test_a_quarantined_function_keeps_the_context_it_declared(tmp_path: Path):
+    """A quarantine prepends the context only to a function that declared none, so the one that did has to receive the step's own context rather than a second one.
+
+    Partitioned, because reading its own partition key is why a quarantined asset declares the parameter at all, and a body handed the wrong context would read the wrong key.
+    """
+    seen: dict[str, str] = {}
+
+    @dd.asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
+    def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+        seen["partition"] = context.partition_key
+        return mixed_orders()
+
+    result = materialize(tmp_path, orders, partition_key="2026-01-02")
+    quarantine = pl.read_parquet(tmp_path / "orders_quarantine" / "2026-01-02.parquet")
+
+    assert result.success
+    assert seen == {"partition": "2026-01-02"}
+    assert len(quarantine) == 3
+
+
 # --- two assets sharing a name ---
 def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path: Path):
     """The op name is the step key, so the two steps must differ for the run to execute at all (#70). Both tables land under the prefixes their keys spell."""
@@ -912,10 +932,19 @@ class TestOutcomeSelection:
         assert written == []
 
     def test_a_clean_frame_says_nothing_about_invalid_rows(self):
-        """The four keys are absent, not zero. A run that held nothing back has nothing to report, and `dataframely/invalid_count: 0` would read as a claim about a quarantine that does not exist."""
-        yielded, _, _ = self._drained(clean_orders(), quarantine=True)
+        """The four keys are absent, not zero. A run that held nothing back has nothing to report, and `dataframely/invalid_count: 0` would read as a claim about a quarantine that does not exist.
 
-        assert not [key for key in self._metadata(yielded) if key.startswith("dy_")]
+        Read as the difference between the two runs rather than as a prefix. The valid rows' own sample is under `dataframely/` too, so a prefix would catch a key a clean run is meant to carry.
+        """
+        clean, _, _ = self._drained(clean_orders(), quarantine=True)
+        partial, _, _ = self._drained(mixed_orders(), quarantine=True)
+
+        assert set(self._metadata(partial)) - set(self._metadata(clean)) == {
+            "dataframely/quarantine_address",
+            "dataframely/invalid_count",
+            "dataframely/invalid_by_rules",
+            "dataframely/invalid_sample",
+        }
 
     def test_a_wrong_column_schema_reports_the_check_and_writes_nothing(self):
         yielded, written, error = self._drained(wrong_dtype_orders(), quarantine=True)

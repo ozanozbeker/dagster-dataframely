@@ -26,6 +26,7 @@ from dagster_dataframely import _quarantine, quarantine_spec
 from dagster_dataframely.errors import NothingSurvivedError, QuarantineKeyCollisionError
 from dagster_dataframely.wiring import (
     QuarantineWriter,
+    check_specs,
     file_writer,
     quarantine_frame,
     quarantine_path,
@@ -81,6 +82,13 @@ def test_a_key_prefix_becomes_directories_and_only_the_name_is_suffixed(tmp_path
     path = quarantine_path(dg.AssetKey(["sales", "orders"]), tmp_path)
 
     assert path == UPath(tmp_path) / "sales" / "orders_quarantine.parquet"
+
+
+def test_an_asset_name_carrying_a_dot_keeps_it(tmp_path: Path):
+    """`with_suffix` replaces a name's last suffix rather than appending one, so `orders.v2` would resolve to `orders.parquet`: the table another asset writes. The extension is appended, as `UPathIOManager._with_extension` appends it."""
+    path = quarantine_path(dg.AssetKey(["orders.v2"]), tmp_path)
+
+    assert path == UPath(tmp_path) / "orders.v2_quarantine.parquet"
 
 
 def test_a_partition_becomes_a_file_under_the_leaf(tmp_path: Path):
@@ -159,7 +167,9 @@ def test_the_spec_is_keyed_as_the_file_is_named():
     spec = quarantine_spec(Orders, orders)
 
     assert spec.key == dg.AssetKey(["sales", "orders_quarantine"])
-    assert spec.key.path[-1] == quarantine_path(orders.key, "/warehouse").stem
+    # Against the literal on both sides, not against each other: `_suffixed` names the key
+    # and the file, so comparing the two would hold whatever `_LEAF_SUFFIX` was changed to.
+    assert quarantine_path(orders.key, "/warehouse").stem == "orders_quarantine"
 
 
 def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from():
@@ -198,6 +208,28 @@ def test_the_columns_tab_carries_a_column_for_every_rule():
     assert names[: len(Orders.columns())] == list(Orders.columns())
     assert "dy_rule__amount__min" in names
     assert "dy_rule__paid_orders_have_amount" in names
+
+
+def test_the_rule_columns_are_written_in_the_order_the_columns_tab_declares():
+    """Three artifacts describe the same file, and a reader lining the written columns up against the declared ones reads the wrong column if any two disagree.
+
+    Not one of the three imposes the order on the others. The written order is Dataframely's `details()`: `rule_columns` only names the columns to rename, and `DataFrame.rename` leaves each one where it is. The Columns tab and the check list walk Dataframely's rule dict themselves. So the agreement holds only while all three read the same dict, which is what this asserts.
+    """
+    written = [name for name in _invalid_rows().columns if name.startswith("dy_rule__")]
+    table = quarantine_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+    assert isinstance(table, dg.TableSchema)
+
+    declared = [
+        column.name for column in table.columns if column.name.startswith("dy_rule__")
+    ]
+    checks = [
+        spec.name
+        for spec in check_specs(Orders, asset=_ORDERS)
+        if spec.name.startswith("dy_rule__")
+    ]
+
+    assert written == declared
+    assert written == checks
 
 
 @pytest.mark.parametrize(

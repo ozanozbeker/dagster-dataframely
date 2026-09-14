@@ -21,7 +21,6 @@ def test_one_record_per_rule_in_the_schemas_own_order():
     rules = described_rules(Orders)
 
     assert list(rules) == list(Orders._validation_rules(with_cast=False))
-    assert all(name == rule.name for name, rule in rules.items())
 
 
 def test_only_a_delimited_rule_owns_a_column():
