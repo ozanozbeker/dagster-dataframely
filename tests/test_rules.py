@@ -1,6 +1,6 @@
 """What a `DescribedRule` promises, which no single surface shows whole.
 
-Four places read these records and each reads different fields, so a wrong one can hide. A `kind` this package has not met renders as the rule's name on every surface, which is also what a correct `kind` with no renderer does, so nothing downstream would report the difference.
+Four places read these records and each reads different fields, so a wrong one can hide. A rule name this package has not met renders as the rule's name on every surface, which is also what a correct `kind` with no renderer does, so nothing downstream would report the difference.
 
 `Orders` carries a rule of every awkward kind on purpose, which is why the assertions below name it rather than declaring schemas of their own. `tests/scenario.py` says which rule covers what.
 """
@@ -28,10 +28,15 @@ def test_only_a_delimited_rule_owns_a_column():
     """The `|` decides, and it sets both fields or neither. Every renderer leans on that pairing."""
     rules = described_rules(Orders)
 
-    assert (rules["amount|min"].column, rules["amount|min"].kind) == ("amount", "min")
+    assert (rules["amount|min"].column, rules["amount|min"].rule_name) == (
+        "amount",
+        "min",
+    )
     assert rules["primary_key"].column is None
-    assert rules["primary_key"].kind is None
-    assert all((rule.column is None) == (rule.kind is None) for rule in rules.values())
+    assert rules["primary_key"].rule_name is None
+    assert all(
+        (rule.column is None) == (rule.rule_name is None) for rule in rules.values()
+    )
     assert {rule.column for rule in rules.values() if rule.column} <= set(
         Orders.columns()
     )

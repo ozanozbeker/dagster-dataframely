@@ -1,4 +1,4 @@
-"""Definition-time behaviour of `@dy_asset`, asserted without running anything.
+"""Definition-time behaviour of `@dd.asset`, asserted without running anything.
 
 Every test reads the `AssetsDefinition` the decorator returns. It carries everything a user sees before the first run: the keys, the check specs, and the definition metadata that fills the Columns tab.
 """
@@ -13,7 +13,7 @@ import polars as pl
 import pytest
 from dagster._config.field_utils import Shape
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from dagster_dataframely.errors import (
     CollectionNotSupportedError,
     DagsterDataframelyError,
@@ -49,7 +49,7 @@ _RULES = [
 ]
 
 
-@dy_asset(Orders, group_name="sales")
+@dd.asset(Orders, group_name="sales")
 def orders() -> pl.DataFrame:
     """The decorated function's own docstring, which `Orders`'s outranks."""
     return pl.DataFrame()
@@ -73,7 +73,7 @@ def test_the_output_is_not_required():
 def test_a_key_prefix_carries_the_checks_with_it():
     """The key is built once and handed to both the asset and its check specs, so the checks cannot lag it."""
 
-    @dy_asset(Orders, key_prefix="sales")
+    @dd.asset(Orders, key_prefix="sales")
     def prefixed() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -84,7 +84,7 @@ def test_a_key_prefix_carries_the_checks_with_it():
 
 
 def test_a_sequence_key_prefix_nests():
-    @dy_asset(Orders, key_prefix=["warehouse", "sales"])
+    @dd.asset(Orders, key_prefix=["warehouse", "sales"])
     def nested() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -94,7 +94,7 @@ def test_a_sequence_key_prefix_nests():
 def test_name_overrides_the_function_name():
     """A private-looking function can back a public asset key."""
 
-    @dy_asset(Orders, name="orders", key_prefix="sales")
+    @dd.asset(Orders, name="orders", key_prefix="sales")
     def _orders_impl() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -104,7 +104,7 @@ def test_name_overrides_the_function_name():
 def test_upstream_dependencies_bind_as_ordinary_parameters():
     """`functools.wraps` carries the signature through the wrapper."""
 
-    @dy_asset(Orders)
+    @dd.asset(Orders)
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return raw_orders
 
@@ -126,7 +126,7 @@ def test_every_forwarded_dg_asset_parameter_reaches_the_definition():
     retry = dg.RetryPolicy(max_retries=2)
     backfill = dg.BackfillPolicy.single_run()
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         ins={"raw": dg.AssetIn(key=dg.AssetKey(["upstream_frame"]))},
         deps=["upstream"],
@@ -169,7 +169,7 @@ def test_every_forwarded_dg_asset_parameter_reaches_the_definition():
 def test_pool_reaches_the_underlying_op():
     """Separate because a pool and a `backfill_policy` cannot both sit on one op."""
 
-    @dy_asset(Orders, pool="limited")
+    @dd.asset(Orders, pool="limited")
     def pooled() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -181,7 +181,7 @@ def test_the_asset_shaping_parameters_reach_the_definition():
     condition = dg.AutomationCondition.eager()
     freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         io_manager_key="warehouse",
         group_name="sales",
@@ -211,7 +211,7 @@ def test_the_asset_shaping_parameters_reach_the_definition():
 def test_user_metadata_cannot_displace_the_packages_own():
     """The decorator exists to fill the Columns tab, so a colliding user key loses."""
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         metadata={_COLUMN_SCHEMA_KEY: "mine", "own": "kept"},
     )
@@ -242,7 +242,7 @@ class _Blank(dy.Schema):
 
 
 def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
-    @dy_asset(_Documented)
+    @dd.asset(_Documented)
     def postal_codes() -> pl.DataFrame:
         """The decorated function's own docstring, which the schema outranks."""
         return pl.DataFrame()
@@ -252,7 +252,7 @@ def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given():
 
 
 def test_an_explicit_description_outranks_the_schema_docstring():
-    @dy_asset(_Documented, description="Said at the call site.")
+    @dd.asset(_Documented, description="Said at the call site.")
     def explicit() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -264,7 +264,7 @@ def test_an_explicit_description_outranks_the_schema_docstring():
 def test_a_schema_without_a_docstring_leaves_dagsters_own_fallback_standing():
     """The last fallback is Dagster's, not the package's. With nothing to fill the gap, the decorated function's docstring lands as it always did."""
 
-    @dy_asset(_Undocumented)
+    @dd.asset(_Undocumented)
     def undocumented() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -278,7 +278,7 @@ def test_the_base_schemas_docstring_never_reaches_an_asset():
 
     assert dy.Schema.__doc__ is not None
 
-    @dy_asset(_Undocumented, name="inherits_nothing")
+    @dd.asset(_Undocumented, name="inherits_nothing")
     def inherits_nothing() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -289,7 +289,7 @@ def test_the_base_schemas_docstring_never_reaches_an_asset():
 def test_an_empty_description_counts_as_absent_too():
     """Both sources share one emptiness rule. Neither can say "no description at all": Dagster's fallback takes over the moment the package has nothing."""
 
-    @dy_asset(_Documented, description="")
+    @dd.asset(_Documented, description="")
     def empty() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -299,7 +299,7 @@ def test_an_empty_description_counts_as_absent_too():
 
 
 def test_a_whitespace_only_schema_docstring_counts_as_absent():
-    @dy_asset(_Blank)
+    @dd.asset(_Blank)
     def blank() -> pl.DataFrame:
         """The decorated function's own docstring."""
         return pl.DataFrame()
@@ -311,7 +311,7 @@ def test_a_whitespace_only_schema_docstring_counts_as_absent():
 def test_a_multi_line_schema_docstring_arrives_dedented():
     """Raw `__doc__` keeps its source indentation, which the catalog renders as a code block."""
 
-    @dy_asset(Orders)
+    @dd.asset(Orders)
     def dedented() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -395,15 +395,15 @@ def test_the_column_schema_check_names_the_schema():
 _RULE_BEARING_COLUMNS = {rule.split("|")[0] for rule in _RULES if "|" in rule}
 
 # The rules no single column owns: both `@dy.rule()` bodies and the composite key.
-_MULTI_COLUMN_RULES = [rule for rule in _RULES if "|" not in rule]
+_SCHEMA_LEVEL_RULES = [rule for rule in _RULES if "|" not in rule]
 
 
-@dy_asset(Orders, name="by_column", check_granularity="column")
+@dd.asset(Orders, name="by_column", check_granularity="column")
 def by_column() -> pl.DataFrame:
     return pl.DataFrame()
 
 
-@dy_asset(Orders, name="by_schema", check_granularity="schema")
+@dd.asset(Orders, name="by_schema", check_granularity="schema")
 def by_schema() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -432,11 +432,11 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
             {f"field_{n}": dy.String(nullable=False) for n in range(10)}, nullable=True
         )
 
-    @dy_asset(Addresses, name="by_rule")
+    @dd.asset(Addresses, name="by_rule")
     def by_rule() -> pl.DataFrame:
         return pl.DataFrame()
 
-    @dy_asset(Addresses, name="collapsed", check_granularity="column")
+    @dd.asset(Addresses, name="collapsed", check_granularity="column")
     def collapsed() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -455,40 +455,40 @@ def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column():
     }
 
 
-def test_multi_column_rules_collapse_into_the_schema_check_by_default():
+def test_schema_rules_collapse_into_the_schema_check_by_default():
     """They belong to no column, so at column granularity they have no rule set of their own to land in."""
     specs = _specs_by_name(by_column)
 
     assert "dy_schema__rules" in specs
-    assert not {f"dy_rule__{rule}" for rule in _MULTI_COLUMN_RULES} & set(specs)
+    assert not {f"dy_rule__{rule}" for rule in _SCHEMA_LEVEL_RULES} & set(specs)
 
 
-def test_per_rule_gives_each_multi_column_rule_a_check_of_its_own():
+def test_per_rule_gives_each_schema_rule_a_check_of_its_own():
     """The setting serves a schema whose cross-column rules deserve their own history."""
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         name="per_rule",
         check_granularity="column",
-        multi_column_rules="per_rule",
+        schema_rules="per_rule",
     )
     def per_rule() -> pl.DataFrame:
         return pl.DataFrame()
 
     specs = _specs_by_name(per_rule)
 
-    assert {f"dy_rule__{rule}" for rule in _MULTI_COLUMN_RULES} <= set(specs)
+    assert {f"dy_rule__{rule}" for rule in _SCHEMA_LEVEL_RULES} <= set(specs)
     assert "dy_schema__rules" not in specs
 
 
-def test_the_multi_column_rule_set_cannot_be_collided_with_by_a_user_column():
+def test_the_schema_rule_set_cannot_be_collided_with_by_a_user_column():
     """The name is `dy_schema__rules` rather than `dy_col__schema` because somebody has a column named `schema`."""
 
     class Tables(dy.Schema):
         table_id = dy.String(primary_key=True)
         schema = dy.String(nullable=False)
 
-    @dy_asset(Tables, name="tables", check_granularity="column")
+    @dd.asset(Tables, name="tables", check_granularity="column")
     def tables() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -512,7 +512,7 @@ def test_a_schema_with_no_rules_gets_the_column_schema_check_and_nothing_else(
     class Blob(dy.Schema):
         payload = dy.String(nullable=True)
 
-    @dy_asset(Blob, name=f"blob_{granularity}", check_granularity=granularity)
+    @dd.asset(Blob, name=f"blob_{granularity}", check_granularity=granularity)
     def blob() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -548,7 +548,7 @@ def test_a_collapsed_check_names_the_rules_it_reports_for():
     )
 
 
-def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
+def test_a_granularity_outside_the_allowed_values_raises_at_definition_time():
     """Definition time, so a misconfiguration never reaches a run.
 
     The value arrives through an untyped name because the literal is already a static error. The runtime guard serves a user without a type checker.
@@ -557,7 +557,7 @@ def test_a_granularity_outside_the_vocabulary_raises_at_definition_time():
 
     with pytest.raises(InvalidSettingError) as raised:
 
-        @dy_asset(Orders, name="misconfigured", check_granularity=wrong)
+        @dd.asset(Orders, name="misconfigured", check_granularity=wrong)
         def _misconfigured() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -576,7 +576,7 @@ def test_a_malformed_quarantine_dir_raises_at_definition_time(
 
     with pytest.raises(InvalidSettingError) as raised:
 
-        @dy_asset(Orders, name="misconfigured", quarantine=quarantine)
+        @dd.asset(Orders, name="misconfigured", quarantine=quarantine)
         def _misconfigured() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -589,7 +589,7 @@ def test_the_environment_variable_sets_the_house_granularity(
     """One export in a code location's environment sets the granularity for every asset in it."""
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "schema")
 
-    @dy_asset(Orders, name="house_style")
+    @dd.asset(Orders, name="house_style")
     def house_style() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -672,7 +672,7 @@ class Measurements(dy.Schema):
     )
 
 
-@dy_asset(Measurements)
+@dd.asset(Measurements)
 def measurements() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -689,7 +689,7 @@ def test_a_bound_reads_as_an_operator_rather_than_as_a_check_name():
 
 
 def test_a_length_bound_states_the_unit_it_counts():
-    """`min_length` and `max_length` are spelled the same on both column families and mean different things, so the renderer dispatches on the column type. A bare `length <= 254` would be wrong for any multibyte text."""
+    """`min_length` and `max_length` are spelled the same on both column types and mean different things, so the renderer dispatches on the column type. A bare `length <= 254` would be wrong for any multibyte text."""
     assert _columns()["email"].constraints.other == [
         "lowercase",
         "length <= 254 bytes",
@@ -770,7 +770,7 @@ class Ledger(dy.Schema):
     posted_at = dy.Datetime(primary_key=True)
 
 
-@dy_asset(Ledger)
+@dd.asset(Ledger)
 def ledger() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -799,11 +799,11 @@ def test_a_quarantine_adds_nothing_to_the_graph():
     `quarantine_spec` gives a quarantine a node, and the user declares it.
     """
 
-    @dy_asset(Orders, quarantine=True)
+    @dd.asset(Orders, quarantine=True)
     def kept() -> pl.DataFrame:
         return pl.DataFrame()
 
-    @dy_asset(Orders, quarantine=False)
+    @dd.asset(Orders, quarantine=False)
     def refused() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -817,7 +817,7 @@ def test_a_quarantine_adds_nothing_to_the_graph():
 def test_a_quarantine_needs_no_resource_declared():
     """The manager is borrowed off the step, never read off `context.resources`. Dagster validates a declared resource at bind time, so every direct invocation would have to supply a manager it never uses."""
 
-    @dy_asset(Orders, quarantine=True)
+    @dd.asset(Orders, quarantine=True)
     def kept() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -826,7 +826,7 @@ def test_a_quarantine_needs_no_resource_declared():
 
 # --- definition-time errors ---
 # The singular message and the collision are asserted against every schema-taking
-# function, `dy_asset` included, in `test_reserved_namespace.py`. Only the plural form
+# function, `dd.asset` included, in `test_reserved_namespace.py`. Only the plural form
 # is here, because nothing there declares a schema with two reserved columns.
 def test_the_reserved_column_error_reads_as_plural_for_several_columns():
     """The message is all a user sees of this error, so it agrees in number."""
@@ -837,7 +837,7 @@ def test_the_reserved_column_error_reads_as_plural_for_several_columns():
 
     with pytest.raises(ReservedColumnError) as raised:
 
-        @dy_asset(Reserved)
+        @dd.asset(Reserved)
         def reserved() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -852,7 +852,7 @@ def test_a_collection_is_refused_at_the_boundary():
         orders: dy.LazyFrame[Orders]
 
     with pytest.raises(CollectionNotSupportedError) as raised:
-        dy_asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
+        dd.asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
 
     assert "OrderBook" in str(raised.value)
 
@@ -861,7 +861,7 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
     """The Collection guard exists because `dy.Collection` is the plausible wrong reach. Generalising it into a type check on `schema=` was rejected."""
     with pytest.raises(Exception) as raised:  # noqa: PT011 - breadth is the point
 
-        @dy_asset(42)  # pyrefly: ignore[bad-argument-type]
+        @dd.asset(42)  # pyrefly: ignore[bad-argument-type]
         def nonsense() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -872,7 +872,7 @@ def test_a_non_schema_argument_is_left_to_fail_however_it_fails():
 def _shipments(prefix: str, *, quarantine: bool = False) -> dg.AssetsDefinition:
     """Build the asset that used to collide with itself under a second prefix (#70)."""
 
-    @dy_asset(Orders, key_prefix=prefix, name="shipments", quarantine=quarantine)
+    @dd.asset(Orders, key_prefix=prefix, name="shipments", quarantine=quarantine)
     def shipments() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -885,7 +885,7 @@ def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own():
     Asserted against a live `@dg.asset` rather than a spelled-out string, so the parity holds through an upstream change to how the identifier is built.
     """
 
-    @dy_asset(Orders, key_prefix=["warehouse", "sales"], name="shipments")
+    @dd.asset(Orders, key_prefix=["warehouse", "sales"], name="shipments")
     def attached() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -941,7 +941,7 @@ _NO_DG_ASSET_COUNTERPART = {
     "schema",
     "quarantine",
     "check_granularity",
-    "multi_column_rules",
+    "schema_rules",
     "max_failure_samples",
     "statistics",
     "row_sample",
@@ -963,7 +963,7 @@ def test_the_decorator_speaks_dg_assets_vocabulary():
 
     Asserted in both directions (#15): nothing the decorator offers has vanished from `dg.asset`, and nothing `dg.asset` gains is missing here without a line above saying why.
     """
-    decorator = set(inspect.signature(dy_asset).parameters) - _NO_DG_ASSET_COUNTERPART
+    decorator = set(inspect.signature(dd.asset).parameters) - _NO_DG_ASSET_COUNTERPART
     upstream = set(inspect.signature(dg.asset).parameters) - {"compute_fn", "kwargs"}
 
     assert decorator <= upstream, f"no longer on dg.asset: {decorator - upstream}"
@@ -973,8 +973,8 @@ def test_the_decorator_speaks_dg_assets_vocabulary():
 
 
 def test_the_schema_is_the_one_positional_parameter_and_is_required():
-    """The schema is the reason the decorator exists, so it reads as `@dy_asset(Orders, ...)` rather than as one keyword among thirty. No default can make it optional."""
-    parameters = inspect.signature(dy_asset).parameters
+    """The schema is the reason the decorator exists, so it reads as `@dd.asset(Orders, ...)` rather than as one keyword among thirty. No default can make it optional."""
+    parameters = inspect.signature(dd.asset).parameters
     positional = [
         name
         for name, parameter in parameters.items()
@@ -992,6 +992,6 @@ def test_the_schema_is_the_one_positional_parameter_and_is_required():
 
 def test_the_surfaces_the_package_owns_are_not_parameters():
     """Statically unpassable, so no runtime guard is needed."""
-    parameters = set(inspect.signature(dy_asset).parameters)
+    parameters = set(inspect.signature(dd.asset).parameters)
 
     assert parameters.isdisjoint({"check_specs", "key", "output_required"})

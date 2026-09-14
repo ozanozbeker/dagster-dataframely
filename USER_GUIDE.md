@@ -1,0 +1,1298 @@
+# User guide
+
+Everything `dagster-dataframely` does, in the order you will meet it. [`README.md`](README.md) has the install and a quick start. [`CONTEXT.md`](CONTEXT.md) is the glossary this guide is written in, and [`docs/adr/`](docs/adr/) has the decisions behind the behaviour.
+
+## Contents
+
+- [Declaring an asset](#declaring-an-asset)
+- [What the decorated function returns](#what-the-decorated-function-returns)
+- [The failure policy is the asset's declaration](#the-failure-policy-is-the-assets-declaration)
+- [Where invalid rows go](#where-invalid-rows-go)
+- [A partition with no data](#a-partition-with-no-data)
+- [The package never casts](#the-package-never-casts)
+- [Materializing an asset](#materializing-an-asset)
+- [Testing an asset](#testing-an-asset)
+- [Attaching your own metadata](#attaching-your-own-metadata)
+- [Partitioning](#partitioning)
+- [Automation](#automation)
+- [`LazyFrame`s](#lazyframes)
+- [Settings](#settings)
+- [Naming](#naming)
+- [Errors](#errors)
+- [Three ways to get this wrong](#three-ways-to-get-this-wrong)
+- [Hand-wiring](#hand-wiring)
+
+## Declaring an asset
+
+The schema is the only argument you have to pass, and it is positional.
+Everything else either forwards to Dagster under the name Dagster already uses, or resolves through [Settings](#settings).
+
+The decorated function is the part you write, so it is where parity with `@dg.asset` matters most:
+
+```python
+@dd.asset(Orders, quarantine=True, group_name="sales")
+def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
+    context.log.info("%d rows arrived", raw_orders.height)
+    return raw_orders.select("order_id", "amount")
+```
+
+Upstream assets bind by parameter name, just as they do on a plain `@dg.asset`, and `ins=` and `deps=` cover the cases a name cannot express.
+Declare `context` when you want to reach the run itself: the partition key, the log, resources and configuration all hang off it.
+Nothing rewrites your signature, so what you decorate stays a function you can read.
+
+Two things exist as soon as the module imports, before you run anything:
+
+- **The Columns tab**, built from the schema.
+  Dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
+- **A check spec per rule set**, so the catalog lists the checks an asset will report and a failing one has a name before it ever fails.
+
+The asset's description comes from the schema's docstring, which [Naming](#naming) covers.
+
+`@dg.asset` is the mechanism underneath, and the vocabulary.
+Anything `@dg.asset` lets you say about one asset, you can say here under the same name, and a test asserts that in both directions.
+
+### The schema is a single `dy.Schema`, never a `dy.Collection`
+
+Passing a Collection raises `CollectionNotSupportedError` at decoration time.
+Declare one asset per member instead, each with the member's own schema.
+
+The parts under [Hand-wiring](#hand-wiring) are no route to one either, because `validation_results` is single-schema by signature.
+Assembling a Collection means reimplementing the hardest part of this package rather than composing it.
+
+## What the decorated function returns
+
+Five things are accepted:
+
+```text
+pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
+pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
+None
+```
+
+**What you return decides what happens, not how you annotated it.**
+A `LazyFrame` is filtered by the same call as a `DataFrame` whichever way the signature reads it, and a `dg.MaterializeResult` is unwrapped the same way.
+
+`@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it.
+This decorator cannot, because `Schema.filter` materializes the valid rows and the invalid rows, so the asset always stores a `DataFrame` however the decorated function arrived at one.
+Annotate it anyway and a type checker will hold you to it instead.
+Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker refuses.
+
+Return a result rather than a bare frame as soon as you have something to say about the materialization.
+It is the route this package prefers over the context, and the only one that survives a direct call.
+[Attaching your own metadata](#attaching-your-own-metadata) has both routes.
+
+Return `None` to skip, which [A partition with no data](#a-partition-with-no-data) covers.
+`dg.MaterializeResult(value=None)` is refused rather than read as the skip: a returned result exists to put metadata, tags or a data version on a materialization, and a skipped run has none.
+
+Return anything else and the run fails with `dg.DagsterInvariantViolationError` before the column-schema check.
+Dagster calls the decorated function dynamically, so it cannot enforce the return annotation, and without this guard a forgotten `return` surfaced two frames down as `'NoneType' object has no attribute 'collect_schema'`.
+
+## The failure policy is the asset's declaration
+
+There is no lenient mode and no strict flag, and that is deliberate.
+Declaring a quarantine **is** your consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares.
+
+| what was returned | the table | the quarantine | checks | run |
+| --- | --- | --- | --- | --- |
+| columns or dtypes that are not the schema's | not written | not written | the column-schema check fails, blocking | fails, `ColumnSchemaError` |
+| every row valid | written | not written | all pass | succeeds |
+| some rows failed, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
+| some rows failed, quarantine declared | the valid rows | the invalid rows | fail at `WARN` | succeeds |
+| every row failed, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
+| `None`, meaning no source data | skipped | not written | all pass | succeeds |
+
+Six rows, and they are the six ways a run can end.
+Severity is a property of the run's outcome rather than of any one rule, so no two sibling checks in a run can carry different severities.
+
+**Without a quarantine, every row has to be valid.**
+A run with even one failing row writes nothing, so your last-known-good table stays in place.
+Writing the valid rows and dropping the rest is the failure this package exists to make visible, so you cannot get there by configuration.
+If you want to drop rows, drop them yourself, in your own asset body, where the drop is a line you wrote:
+
+```python
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    valid, _ = Orders.filter(raw_orders)
+    return valid
+```
+
+**A quarantine is consent to partial data, not to no data.**
+A run where nothing survived writes every row to the quarantine and skips the table rather than materializing it empty.
+An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce.
+
+**Every row that failed goes to the quarantine, aborts included.**
+The rows are written before the run picks its outcome, so a run that dies with `NothingSurvivedError` still leaves them where you can open them.
+That is what the quarantine is for: the run that fails is the one you most want the evidence from.
+
+## Where invalid rows go
+
+`quarantine=True` is the whole setup.
+There is no directory to configure and no second asset to declare.
+
+**The invalid rows are written through the IO manager the asset is already bound to**, under the asset's own key with `_quarantine` on the end.
+`analytics/orders` puts them at `analytics/orders_quarantine`.
+Nothing in this package learns which manager that is: every asset-key-addressed IO manager already turns a key into its own address, so one suffix places the quarantine natively on every backend (ADR-0006).
+
+That means one declaration and two outcomes, rather than two integrations:
+
+```python
+@dd.asset(Orders, quarantine=True)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+```
+
+| what you bound | where the invalid rows land |
+| --- | --- |
+| `PolarsParquetIOManager` | `orders_quarantine.parquet`, beside `orders.parquet` |
+| `DuckDBPolarsIOManager` | the table `orders_quarantine`, beside `orders` in the same schema |
+
+The first is a `UPathIOManager` and the second is a `DbIOManager`, which are the two base classes Dagster ships.
+Between them they cover nearly every first-party manager.
+
+The rows carry their original columns, then one `String` rule column per rule reading `valid`, `invalid` or `unknown`, named exactly as that rule's asset check.
+Check metadata samples are bounded, so without these columns the per-row attribution exists nowhere at volume.
+
+The valid table's materialization carries the quarantine address the rows went to, how many there were, and which sets of rules they broke together.
+See [Materializing an asset](#materializing-an-asset).
+
+**A partitioned asset on a database manager needs `partition_expr`.** `DbIOManager` raises without it, and you already declare it for your own partitioned table.
+It reaches the quarantine automatically, on the definition metadata the write carries.
+
+**`quarantine=True` adds a `context` parameter to the asset**, whether or not your function declared one.
+The writer is built from the execution context, and a wrapper cannot ask Dagster for a parameter it did not declare.
+Calling such an asset therefore takes a `dg.build_asset_context()` first.
+See [Testing an asset](#testing-an-asset).
+An asset without a quarantine keeps exactly the signature you wrote.
+
+### The quarantine is not an asset
+
+It is evidence of a run.
+It holds no place in the graph, receives no materialization event, and nothing downstream can depend on it until you say so.
+
+`quarantine_spec` is how you say so:
+
+```python
+defs = dg.Definitions(
+    assets=[raw_orders, orders, dd.quarantine_spec(Orders, orders)],
+    resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
+)
+```
+
+That returns a `dg.AssetSpec` keyed `orders_quarantine`, depending on `orders`, with its own Columns tab.
+It has no compute, because the decorator already wrote the rows.
+The spec's key resolves through the same IO manager the write used, so a downstream asset can name it as an input and read it back with no routing at all.
+
+**The quarantine's Columns tab carries no column constraints.**
+The schema's columns are mirrored with their dtypes, descriptions and tags, then one `String` column per rule.
+Every constraint the valid table states is one these rows break, so a `not null` on a column full of nulls would state something false about every row.
+The primary key is stated at table level on the valid table and nowhere here, because a duplicate key is exactly what ends up in the quarantine.
+
+The schema is passed explicitly because nothing on an `AssetsDefinition` carries the live class.
+Pass the asset itself and its partitions come along; pass a key form and use `partitions_def=` instead.
+Passing both raises `dg.DagsterInvariantViolationError`.
+
+**It never receives a materialization event.**
+Nothing materializes it, and saying otherwise would be a lie the catalog then repeats.
+That is the fact to design around if you want to automate on invalid rows.
+See [Automation](#automation).
+
+### `quarantine_dir` is for calling, not running
+
+A call has no step, so there is no IO manager to write through.
+`DAGSTER_DATAFRAMELY_QUARANTINE_DIR` is the directory the rows go to on that path, and it is read on that path only.
+
+```bash
+DAGSTER_DATAFRAMELY_QUARANTINE_DIR=/tmp/quarantine
+```
+
+It is read where the rows are handed over, so a `monkeypatch.setenv` in a test counts even though the module holding the asset imported long before.
+A call whose every row is valid never reads it at all.
+
+Unset, a call with rows to hold back raises `QuarantineDirError` rather than choosing a directory on your behalf.
+The rows are evidence, and writing them somewhere nobody named is how evidence gets lost.
+
+There is deliberately no per-asset override.
+A directory is meaningless to a warehouse, so the three cases an override would serve are recorded in ADR-0006 and deferred until somebody needs one.
+
+Under that directory the layout mirrors `UPathIOManager`, with the key and partition naming the rest of the file path:
+
+```text
+<quarantine_dir>/<key part>/.../<name>_quarantine.parquet
+<quarantine_dir>/<key part>/.../<name>_quarantine/<partition>.parquet
+```
+
+A partition is a file under a directory rather than a longer file name, so a backfill of one partition rewrites one file.
+Parquet only: the quarantine holds whatever dtypes the schema declares, and a format that cannot round-trip them would make the evidence disagree with the table it came from.
+
+A multi-partition key is formatted as its dimension keys joined by `/`, ordered by dimension name.
+A partition key that would climb out of the directory is escaped rather than refused, so no partition can name a file outside `quarantine_dir`.
+
+## A partition with no data
+
+Some partitions have no source data, and never will.
+A monthly by distributor grid where one distributor left the marketplace two years ago is the shape: its historical partitions hold real data and must stay, its recent ones have no file.
+
+That is not a failure, and it is not an empty table either.
+Return `None` and the asset skips: nothing is validated, nothing materializes, and the run succeeds, so the partition stays unmaterialized instead of materializing zero rows or failing with an error.
+
+```python
+@dd.asset(SupplierReport, partitions_def=grid)
+def supplier_reports(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
+    path = source_path(context.partition_key)
+    if not path.exists():
+        return None
+    return pl.read_parquet(path)
+```
+
+**The existence test is yours to write.**
+The decorator never catches `FileNotFoundError`, or anything else, to decide this for you.
+It cannot tell a file that is legitimately absent from a path that is misconfigured, and guessing wrong would turn a broken pipeline into a silently missing partition.
+`None` is how you say the first; letting the error escape is still how you say the second.
+
+The trade is taken knowingly.
+A forgotten `return` is the same object as a deliberate skip, so it now costs a run that materializes nothing, and the missing partition is what makes that visible.
+
+**Every check still reports on a skipped run, and passes.**
+That is not politeness.
+A check spec is a non-optional output whatever the asset declares, so a step that answers none of them fails outright, and `@dg.asset(output_required=False)` hits the same wall the moment it declares one check.
+So the rules are run over `Schema.create_empty()` and report what that says.
+Nothing is fabricated: every rule was evaluated, over zero rows, and none was violated.
+Dagster records those evaluations with no `target_materialization_data`, so a passing check on a skipped partition does not claim to have checked the last one that had data.
+
+## The package never casts
+
+The column-schema check compares your frame's dtypes against the schema's and aborts on a mismatch, and the filter runs with `cast=False`.
+A dtype that disagrees is a pipeline defect, and coercing it quietly is how a wrong number reaches a table nobody re-reads.
+A `Float64` arriving where the schema declares `Int64` is the shape of it: `1.9` becomes `1`, every rule still passes, and the row sits in the table looking fine.
+
+The check is explicit rather than a `try`/`except` around the filter.
+`Schema.filter` takes a plan, so a mismatch would appear only at `collect_all`, after the plan had run, as whatever Polars raises for the first bad column.
+The column-schema check runs first, executes nothing, and names every offending column at once.
+
+**Extra columns are not a mismatch, and neither is column order.**
+The check reads the schema's columns, so one the schema never declared is never compared, and `Schema.filter` drops it.
+What comes back is the schema's columns, in the schema's order, however they arrived:
+
+```python
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    # `net` is working state, and `raw_orders` carries columns `Orders` never declared.
+    # Both are dropped. What materializes is `order_id` then `amount`.
+    return raw_orders.with_columns(net=pl.col("amount") * 0.8)
+```
+
+So a transform that produces a superset needs no `select` on the way out, and no cast either.
+Narrowing to the declared table is the one job of `Schema.cast` you are already getting.
+
+**Casting is yours to write, in the asset body, where you can see it:**
+
+```python
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return Orders.cast(raw_orders)
+```
+
+That is the intended home for it rather than a workaround, and it should be uncommon.
+An asset needs it when its source reads a dtype differently from the schema, which is mostly a warehouse read.
+DuckDB returns `DECIMAL` where the schema declares `Float64`, so an asset reading from `DuckDBPolarsIOManager` fails the column-schema check on its first run unless it casts.
+If you find yourself writing it in every asset, check whether the frames disagree on dtype at all, because narrowing alone never needs it ([#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88)).
+
+The one cast the package makes is on columns it generated itself.
+The quarantine's rule columns go from `Enum` to `String`, because a raw `Enum` panics the Delta writer with a Rust `unreachable!()`.
+
+## Materializing an asset
+
+Launching is Dagster's business and works the way it always does: materialize from the UI, from a schedule or a sensor, or call `dg.materialize([orders], resources={...})`.
+What the run leaves behind is the part this package is for, and it lands in two places: the table's materialization, and the asset checks.
+
+### The table's materialization
+
+Everything this package writes there sits under `dataframely/`, so it sorts in one block apart from Dagster's own keys and your IO manager's.
+
+| key | what it holds |
+| --- | --- |
+| `dagster/row_count` | how many rows passed validation, not how many arrived |
+| `dataframely/valid_sample` | the first few of those rows |
+| `dataframely/valid_statistics/<group>` | one table per dtype group present |
+| `dataframely/quarantine_address` | where the invalid rows went, on the runs that wrote any |
+| `dataframely/invalid_count` | how many rows failed at least one rule |
+| `dataframely/invalid_sample` | the first few of those, rule columns included |
+| `dataframely/invalid_by_rules` | which sets of rules the rows broke together, biggest group first |
+
+The last four are absent on a clean run, where there is nothing to say.
+`dataframely/invalid_by_rules` is what stops one broken upstream field that trips three rules reading as three unrelated counts.
+It names rules by their asset-check names, because that is how both places it sends you read them: the check list, and the quarantine's own columns.
+
+Every value is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
+
+### The statistics tables
+
+One table per dtype group present in what was written, each a row per column in the frame's own order.
+A column whose dtype belongs to no group reaches no table: a `List`, `Struct` or `Array` has nothing to say past a count and a null count.
+
+| group | dtypes | columns |
+| --- | --- | --- |
+| `numeric` | `Int*`, `UInt*`, `Float*`, `Decimal` | `count`, `null_count`, `mean`, `std`, `min`, `p50`, `max` |
+| `temporal` | `Date`, `Datetime`, `Time`, `Duration` | `count`, `null_count`, `min`, `max`, `span` |
+| `string` | `String`, `Categorical`, `Enum`, `Binary` | `count`, `null_count`, `n_unique`, `min_len`, `max_len`, `n_empty` |
+| `boolean` | `Boolean` | `count`, `null_count`, `n_true`, `n_false`, `true_rate` |
+
+`mean`, `std`, `p50` and `true_rate` are derived, so they round to four places.
+`min` and `max` exist in the data, so they show exactly.
+The UI never displays a number nobody stored.
+
+Lengths are bytes throughout, which is also the unit Dataframely's `max_length` bounds a `String` in, so a column constraint and this table agree.
+A `span` is rendered in Polars' own duration form, `8d` or `1m 30s`, rather than ISO-8601.
+
+**The string group carries no value-bearing statistic**, at any setting.
+A `min` or `max` on an email column would print real addresses permanently into a shared, exported event log.
+Lengths and cardinality catch the same defects.
+The `statistics` setting does not cover this, because consenting to summary statistics is not consenting to raw values.
+
+The quarantine carries no statistics at all.
+What the invalid rows look like in aggregate is a question about a table nobody consumes.
+
+### The checks
+
+The column-schema check reports first and blocks, then one check per rule set.
+
+| check metadata | on which check |
+| --- | --- |
+| `dy_rule`, `dy_rule__expr` | a check reporting for one rule |
+| `dy_failed_count` | a check reporting for one rule, when anything failed |
+| `dy_failed_sample` | any check, when anything failed |
+| `dy_rules` | a collapsed check: a row per member rule with its failure count and expression |
+| `dy_schema__errors` | the column-schema check, when it fails: a row per offending column |
+
+`dy_rule__expr` carries the expression rather than the bound, so tightening a `min` does not rename the check and orphan its history.
+A collapsed check's `dy_failed_sample` carries `dy_rule` on each row, so a sample standing for several rules still names the one that put each row there.
+There is no total failure count on a collapsed check: counts are per rule and one row can break several, so a sum would state a row count that is not one.
+
+Samples are bounded per rule rather than per check.
+A bound shared across a rule set would let the rule a thousand rows failed crowd out the rule one row failed, and the second is the more interesting.
+
+On the outcomes that raise there is no materialization to carry the quarantine address, so `dataframely/quarantine_address` is copied onto every check result instead.
+A reader looking at a failed run finds it wherever they look.
+
+The Columns tab is not one of these two places.
+It comes off the definition, so it is filled in before the first run and stays filled after a failed one.
+
+## Testing an asset
+
+To test an asset, call it.
+Direct invocation is Dagster's documented unit-testing path, and here it costs you nothing: no run, no IO manager, no instance.
+A call hands back the same materializations and check results a run yields, as ordinary Python objects, and the validated frame comes off `value`:
+
+```python
+import pytest
+
+
+@pytest.fixture
+def quarantine_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(tmp_path))
+    return tmp_path
+
+
+@dd.asset(Orders, quarantine=True)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+
+
+def test_orders_quarantines_the_negative_amount(quarantine_dir):
+    raw_orders = pl.DataFrame({"order_id": ["a", "b", "c"], "amount": [1.0, 2.0, -3.0]})
+
+    events = list(orders(dg.build_asset_context(), raw_orders))
+    tables = {
+        event.asset_key: event.value
+        for event in events
+        if isinstance(event, dg.MaterializeResult)
+    }
+    checks = {
+        event.check_name: event.passed
+        for event in events
+        if isinstance(event, dg.AssetCheckResult)
+    }
+
+    assert tables[dg.AssetKey(["orders"])].height == 2
+    assert not checks["dy_rule__amount__min"]
+    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 1
+```
+
+Two things about that call are worth reading twice.
+
+**The quarantine is written, not yielded.**
+There is one materialization, for the table, so the invalid rows are read off disk rather than off an event.
+That is the same asymmetry a run has, where the rows go through the IO manager and never become an event either.
+
+**A quarantined asset takes a context**, because `quarantine=True` added the parameter.
+It comes first and the frames follow, exactly as Dagster orders them.
+The `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` above is what a call needs in place of the IO manager it does not have, and only for the rows it holds back.
+
+An asset without a quarantine needs neither:
+
+```python
+@dd.asset(Orders)
+def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+
+
+clean = pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
+events = list(plain_orders(clean))
+```
+
+Every check the asset declares comes back, standalone and fully addressed, so a call and a run report the same names against the same keys.
+The keys are resolved where you declared the asset rather than looked up from a running step, which is what makes them knowable outside a run (ADR-0002).
+
+If the decorated function declares a `context` of its own, build one with `dg.build_asset_context()`.
+A partitioned root asset takes one and nothing else, so its whole call is a context carrying the key:
+
+```python
+@dd.asset(Orders, partitions_def=daily)
+def daily_orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    return pl.read_parquet(f"raw/orders/{context.partition_key}.parquet")
+
+
+events = list(daily_orders(dg.build_asset_context(partition_key="2026-01-02")))
+```
+
+An asset that aborts raises out of the call, so `pytest.raises(dd.errors.ValidationAbortError)` is how you test the policy itself, and `dd.errors.ColumnSchemaError` is how you test a drifting frame.
+
+**A decorated function that attaches metadata through the context is the one thing you cannot test this way.** `context.add_asset_metadata` raises under a direct call:
+
+```text
+AttributeError: 'DirectAssetExecutionContext' object has no attribute '_step_execution_context'
+```
+
+A plain `@dg.asset` raises the same thing, so this is Dagster's gap rather than something this package introduces.
+A returned `dg.MaterializeResult` has no such gap: its metadata, tags and data version all come back on the object the call yields, which is one more reason to prefer it.
+
+## Attaching your own metadata
+
+Use the context to read the run.
+Use the return to write the materialization.
+
+**Return a `dg.MaterializeResult` carrying the frame.**
+It is what `@dg.asset` accepts, it is the only supported route to a materialization's tags and data version, and it survives direct invocation:
+
+```python
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
+    return dg.MaterializeResult(
+        value=raw_orders.select("order_id", "amount"),
+        metadata={"source": "stripe", "extracted_at": "2026-08-13"},
+        data_version=dg.DataVersion("2026-08-13"),
+        tags={"run/flavour": "backfill"},
+    )
+```
+
+`value` is the frame to validate, and you have to set it.
+`metadata`, `data_version` and `tags` land on the table's materialization, which is the only one there is.
+The quarantine materializes no event, so nothing you set here can reach it.
+
+The result's own `asset_key` and `check_results` fields are refused by name with `MaterializeResultFieldError`, because the decorator decides the key from what it was declared with and the check results from the schema's rules.
+Naming the culprit beats dropping it silently, which would leave your check result nowhere and say nothing about why.
+
+**This package's own metadata keys win a collision.**
+A returned `dagster/row_count` loses to the count this package made, and so does anything under `dataframely/`.
+This package generates those keys, so a collision is a mistake rather than an override.
+Everything else you attach is yours, and it is carried through untouched.
+
+### The context route
+
+`context.add_asset_metadata` is the other way in, and it is what older Dagster examples reach for.
+Nothing here blocks it, and since the decorator builds one asset with one key, the bare call works:
+
+```python
+@dd.asset(Orders)
+def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
+    context.add_asset_metadata({"source": "stripe"})
+    return raw_orders.select("order_id", "amount")
+```
+
+Two things about it are worth knowing, and one neighbouring call is worth avoiding.
+
+**It overrides this package's own keys, where a returned result loses to them.**
+Dagster builds an event's metadata from the output's first and applies the context's accumulator last.
+So `context.add_asset_metadata({"dagster/row_count": 999})` puts 999 in the catalog for a table with two rows.
+Nothing here can defend against that, because the merge happens after this package has yielded.
+
+**`context.set_data_version` is not supported.**
+It is mentioned here so you know why it is missing rather than going looking for it: it carries no `@public`, and you cannot reach it by calling the asset.
+Return `data_version=` on a `dg.MaterializeResult` instead, which produces the same event tags.
+
+One more call looks right and is not: `context.add_output_metadata`.
+Every asset check is an output, and this package always declares at least the column-schema check, so an asset here always has several:
+
+```text
+DagsterInvariantViolationError: Attempted to add metadata without providing output_name, but multiple outputs exist. Please provide an output_name to the invocation of `context.add_output_metadata`.
+```
+
+Naming the output does work, but the output name is the asset's name and not its key, so under a `key_prefix` you would be hardcoding a string the catalog never shows you.
+Reach for `add_asset_metadata` instead.
+
+> [!NOTE]
+> `add_asset_metadata`, `set_data_version` and `add_output_metadata` are the whole of what this package has checked against Dagster's context, and no more will be checked.
+> Nothing is guaranteed about the rest of the context, now or in a future Dagster.
+> If you find another method that works and is worth teaching, [open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues).
+
+## Partitioning
+
+`partitions_def` forwards to the underlying `dg.asset` verbatim, so partitioning needed no code here and has no setting of its own.
+The quarantine is written under the same partition key, which is what stops it escaping its asset's partitioning.
+Validation runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the column-schema check without touching any other partition's data.
+
+**A root asset reaches its own partition key through a declared `context`.**
+Root, because nothing upstream of it is a Dagster asset, so finding today's file is its own job:
+
+```python
+daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
+
+
+@dd.asset(Orders, partitions_def=daily)
+def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    day = context.partition_key  # "2026-01-02"
+    raw = pl.read_parquet(f"raw/orders/{day}.parquet")
+    return raw.select("order_id", "amount")
+```
+
+That is how a partitioned `@dg.asset` does it, and this decorator is no different.
+It is also what keeps the decorated function testable, since `dg.build_asset_context(partition_key=...)` can supply a key and nothing else can.
+
+**Downstream of it, the key stops being your problem.**
+An asset on the same partitions gets that partition's rows bound to the parameter, because the IO manager read the one file:
+
+```python
+@dd.asset(Orders, partitions_def=daily)
+def priority_orders(orders: pl.DataFrame) -> pl.DataFrame:
+    # orders is one partition's rows, the same shape unpartitioned code sees
+    return orders.filter(pl.col("amount") > 100)
+```
+
+No `context`, no key, no path.
+This is the body you would write with no partitioning at all, which is the point: partitioning is a property of the asset, not of the code inside it.
+
+**A fan-in over every partition arrives as one frame per partition.**
+An unpartitioned asset that depends on the whole of a partitioned one gets a dict instead, because the IO manager reads every key and assembles the results:
+
+```python
+@dd.asset(Orders)
+def rollup(orders: dict[str, pl.DataFrame]) -> pl.DataFrame:
+    # orders == {
+    #     "2026-01-01": pl.DataFrame,   # that day's rows
+    #     "2026-01-02": pl.DataFrame,
+    # }
+    return pl.concat(orders.values())
+```
+
+Annotate the dict, not the frame.
+The obvious annotation, `pl.DataFrame`, fails Dagster's type check after every partition has already been read.
+
+**Swap the element type and the whole fan-in goes lazy:**
+
+```python
+@dd.asset(Orders)
+def rollup(orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+    # orders == {
+    #     "2026-01-01": pl.LazyFrame,   # a scan of that day's file
+    #     "2026-01-02": pl.LazyFrame,
+    # }
+    return pl.concat(orders.values())
+```
+
+Every value is now that partition's scan rather than its rows, so the concat is one plan over every partition and nothing is read until the sink runs.
+That is the difference worth having at a hundred partitions: the eager form holds all of them in memory at once, and this one holds the engine's buffers.
+The keys are the same either way, and so is the validation that follows.
+
+**A `MultiPartitionsDefinition` needs nothing special either.**
+It forwards like any other, so a grid partitions the asset and the quarantine cell for cell:
+
+```python
+grid = dg.MultiPartitionsDefinition(
+    {
+        "day": dg.DailyPartitionsDefinition(start_date="2026-01-01"),
+        "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+    }
+)
+
+
+@dd.asset(Orders, partitions_def=grid)
+def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    cell = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
+    raw = pl.read_parquet(f"raw/orders/{cell['region']}/{cell['day']}.parquet")
+    return raw.select("order_id", "amount")
+
+
+@dd.asset(Orders, partitions_def=grid, quarantine=True)
+def priority_orders(
+    context: dg.AssetExecutionContext, orders: pl.DataFrame
+) -> pl.DataFrame:
+    # orders is one cell's rows: one day, one region
+    return orders.filter(pl.col("amount") > 100)
+```
+
+The root one handles the grid; the one below it does not, exactly as with a single dimension.
+That is worth saying because a grid looks like it should arrive nested, and it never does: an asset on the same grid gets **one** frame, the cell it is running for.
+
+`context.partition_key` is a `dg.MultiPartitionKey`, a `str` subclass rendering as `2026-01-01|eu`.
+Read a dimension off `keys_by_dimension` rather than parsing that string, because the string's order is not yours: both it and the paths below sort by dimension name, so renaming a dimension reorders them.
+
+Under a `UPathIOManager`, that is one file per cell, nested one directory per dimension:
+
+```text
+orders/2026-01-01/eu.parquet
+orders/2026-01-01/us.parquet
+priority_orders/2026-01-01/eu.parquet
+priority_orders_quarantine/2026-01-01/eu.parquet
+```
+
+**A fan-in over a grid is flat, not nested.**
+One entry per cell, keyed by the same rendering:
+
+```python
+@dd.asset(Orders)
+def eu_orders(orders: dict[dg.MultiPartitionKey, pl.LazyFrame]) -> pl.LazyFrame:
+    # orders == {
+    #     "2026-01-01|eu": pl.LazyFrame,   # one cell, one scan
+    #     "2026-01-01|us": pl.LazyFrame,
+    #     "2026-01-02|eu": pl.LazyFrame,
+    #     "2026-01-02|us": pl.LazyFrame,
+    # }
+    return pl.concat(
+        frame
+        for key, frame in orders.items()
+        if key.keys_by_dimension["region"] == "eu"
+    )
+```
+
+Every key is a `MultiPartitionKey` at runtime, so grouping by a dimension is a `keys_by_dimension` read rather than a parse of the string.
+Naming the key type in the annotation, as above, is what makes that read type-check as well as run.
+`dict[str, pl.LazyFrame]` is accepted too and leaves you casting.
+
+Collapsing one dimension is a partition mapping and nothing more.
+An asset partitioned by `day` alone, depending on the grid through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`, gets that day's regions and nothing else: two entries rather than four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
+
+## Automation
+
+`automation_condition` and `freshness_policy` forward to `dg.asset` verbatim, like everything else, and they cover the asset.
+
+There is nothing to wire up to the quarantine, and nothing you can wire up.
+The rows are written inside the asset's own step, with no schedule, sensor or condition in between, and the quarantine emits no materialization event.
+So `dg.AutomationCondition.eager()` on a downstream asset has nothing to react to, however you declare it.
+
+**Automate on the check instead.**
+A rule that failed is a failing check with its own history, which is the place Dagster gives you for exactly this:
+
+```python
+@dg.asset_check(asset=orders, name="triage_needed")
+def triage_needed() -> dg.AssetCheckResult: ...
+```
+
+Or read the quarantine on a schedule, through the spec `quarantine_spec` gives it.
+What you cannot do is treat it as an event source, and that is a property of it being evidence rather than an asset.
+
+## `LazyFrame`s
+
+Two places meet a `pl.LazyFrame`, and they read it differently on purpose.
+A read has no object yet, so the annotation is the only signal it has.
+Validation takes the plan and executes it, once, in `Schema.filter`.
+
+```mermaid
+flowchart TB
+    subgraph validated["@dd.asset"]
+        direction TB
+        V1["LazyFrame returned"] --> V2["column-schema check"]
+        V2 --> V3["Schema.filter, streaming engine"]
+        V3 --> V4["valid rows and invalid rows, in memory"]
+        V4 --> V5["per-rule checks"]
+        V5 --> V6["DataFrame handed to the IO manager"]
+    end
+```
+
+### Reads dispatch on the annotation
+
+Annotate an input `pl.LazyFrame` and the IO manager hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded:
+
+```python
+@dd.asset(Orders)
+def recent(orders: pl.LazyFrame) -> pl.LazyFrame:
+    return orders.filter(pl.col("amount") > 100)
+```
+
+The read is the IO manager's, so this is a property of the one you bound rather than of this decorator, and the annotation works the same on a plain `@dg.asset`.
+Annotate `pl.DataFrame` instead and the file is read whole.
+
+### Validation materializes
+
+`Schema.filter` takes a plan and hands back two: the valid rows and the invalid rows.
+This package collects both, together, in one `collect_all` on the streaming engine, so the source is not read twice.
+
+**A `LazyFrame` return executes there, once, and is validated exactly as a `DataFrame` return is.**
+
+```python
+@dd.asset(Orders)
+def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
+    return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
+```
+
+Your joins, filters and aggregations therefore run in the streaming engine, which the package's `collect_all` names rather than leaves to `auto`.
+Polars falls back to the in-memory engine for anything streaming cannot run, so naming it never fails a plan.
+An `auto` that chose to collect would keep the plan's own peak.
+
+What comes into memory is what the plan produced, not the plan.
+Peak memory is that frame plus one boolean column per rule, held once while the valid rows and the invalid rows are cut from it, rather than the plan's own high-water mark.
+That is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
+A `DataFrame` return takes the same call after a free `.lazy()`, so there is one path and nothing past `Schema.filter` can tell the two apart.
+The column-schema check runs before `Schema.filter`, off `collect_schema()`, so a frame whose columns disagree with the schema is refused before a single row is pulled through the plan.
+
+What stays eager is storage, not the computation.
+This package does not promise to write a table.
+It promises to write a table and report on it.
+Every outcome past `Schema.filter` counts, samples, writes or profiles the valid rows and the invalid rows, and validation cannot choose among its outcomes without counting both.
+So the outcomes whose whole purpose is that nothing gets written would have to execute the plan to learn that, and writing straight to storage would have written before it knew.
+A plain `@dg.asset` streams end to end with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
+The measurements are in [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
+
+This is the cost of schema on write, and it is paid at silver and gold scale rather than at ingestion scale.
+
+## Settings
+
+Every setting resolves in order, each overriding the one before: the package default, then an environment variable, then the argument on the asset.
+That way a platform engineer sets a house style once for a whole code location, and you override it on the one asset where that style is wrong.
+Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
+
+| setting | what it decides | default |
+| --- | --- | --- |
+| `check_granularity` | how far the schema's rules collapse into checks: `rule`, `column` or `schema` | `rule` |
+| `schema_rules` | where the schema-level rules land at `column` granularity: `collapsed` or `per_rule` | `collapsed` |
+| `statistics` | whether each materialization carries statistics for what it wrote | `true` |
+| `max_failure_samples` | how many of the rows that failed a rule reach that rule's check | `5` |
+| `row_sample` | how many rows reach the materialization, of what was written and of what failed | `5` |
+| `quarantine_dir` | where invalid rows go when the asset is called rather than run | unset, and a call with rows to hold back raises |
+
+`quarantine_dir` is the one with two sources rather than three: there is no argument for it, because that would be the override ADR-0006 defers.
+It is also the one whose value is read where the rows are written rather than where the asset is declared, because nothing about a declaration depends on it.
+A malformed one still raises where the asset is declared, so `${SCRATCH}` unexpanded is reported where you wrote it rather than on whichever run first has a row to hold back.
+
+Every source validates on resolve, the package's own default included, so a typo raises `InvalidSettingError` naming the value and where it came from rather than quietly becoming something else three modules later.
+`statistics="false"` is a non-empty string that would otherwise turn the pass on, and `True` is an `int` that would resolve a count to one row, so the check runs even over values a type checker has already narrowed.
+
+**A flag reads `true` or `false`, and nothing else.**
+Case does not matter, so `TRUE` is the same instruction.
+`1`, `yes` and `on` are plausible and wrong, so they raise rather than guess.
+
+There is no fourth source and no `set_default_*()` function.
+Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order you do not control, and the same asset would derive different checks depending on which module imported first.
+
+Settings are resolved once, where the asset is declared, and handed to both the check specs and the runtime.
+Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared.
+
+### Changing `check_granularity` orphans check history
+
+`rule` gives every rule its own check and its own history.
+`column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a 40-column schema's check list readable.
+A column's rules land together whatever they are, which makes a wide `Struct` bearable: Dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten rules and one rule set.
+`schema` gives a single `dy_schema__rules` for all of them.
+
+`schema_rules` decides where the schema-level rules go at `column` granularity, since no column owns them.
+`collapsed` puts them all in `dy_schema__rules`; `per_rule` gives each one a check of its own.
+The other two granularities have no second place to put them, so nothing else reads the setting.
+
+A schema with no rules gets no rule checks at any granularity, because a check reporting for nothing would pass forever.
+The column-schema check is always there and always blocking.
+
+**Changing `check_granularity` on an asset that has already run orphans that asset's check history.**
+The old check names stop being reported and their histories end where the change landed, while the new ones start empty.
+Nothing migrates them, so choose it before the asset ships rather than after.
+
+### Statistics and both samples are on by default
+
+Each materialization carries `skimr`-style statistics for what it wrote.
+[The statistics tables](#the-statistics-tables) has the columns.
+
+> [!IMPORTANT]
+> Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
+> The event log is shared across a deployment, it is exportable, and nothing here is redacted.
+> If a column holds an email address, a name or an account number, that value lands in the log and stays there.
+
+| setting | what it writes | where |
+| --- | --- | --- |
+| `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dy_failed_sample` |
+| `row_sample` | up to this many valid rows and this many invalid rows | the materialization, under `dataframely/valid_sample` and `dataframely/invalid_sample` |
+
+One number governs the valid rows and the invalid rows alike, so consenting to a sample is one decision rather than two.
+
+A sample is the head of the frame rather than a random draw.
+A sample somebody reports a bug against has to be the same sample when they reopen the run, and `head` is the only draw a re-read reproduces.
+
+A sample is absent, never empty.
+Zero rows does not answer "what does a row look like", and an empty table in the UI would read as an answer.
+
+Dataframely's own comparable setting defaults to `0`, so this package is deliberately the more generous of the two.
+The reason is that a failing check raises exactly one question the counts cannot answer: not that 43 rows failed `amount|min`, but what three of those rows held.
+Paying for that in the event log should be a decision, which is what this section is for.
+
+Set either to `0` and it is off entirely, with the metadata key absent rather than empty.
+Per asset:
+
+```python
+@dd.asset(Orders, max_failure_samples=0, row_sample=0)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+```
+
+Or once for a whole code location, in the deployment's environment:
+
+```bash
+DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES=0
+DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
+```
+
+Turning the samples off leaves `statistics` on, and the two consents stay separate on purpose.
+A `Decimal` reaches a sample as a string, keeping every digit, where the statistics tables coerce it to a float for display.
+A statistic is a number nobody stored; a sampled row is the value somebody did.
+
+## Naming
+
+Four things this package names rather than leaving to Dagster: the asset's description, each check's description, the op underneath the asset, and the namespaces its own keys sit under.
+
+### The description comes from the schema
+
+`@dd.asset` resolves the asset's description in order, most specific first: `description=` on the decorator, then the schema's own docstring, then Dagster's own fallback to the decorated function's docstring.
+
+```python
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+
+@dd.asset(Orders)
+def orders() -> pl.DataFrame:
+    """Joins the two extracts and drops the test accounts."""
+    ...
+```
+
+`Customer orders, one row per order line.` is what the catalog reads.
+The schema outranks the function because the schema describes the table, whereas the function's docstring describes the code that fills it, and the two are rarely the same sentence.
+Passing `description=` still wins over both, and a schema with no docstring leaves the function's standing exactly as it did before.
+
+The schema's own `__doc__` is read rather than `inspect.getdoc`, which walks the class hierarchy: a schema with no docstring would otherwise inherit `dy.Schema`'s and describe itself as a base class for schema definitions.
+
+A quarantine spec writes its own: `Invalid rows from <asset>, with a column per rule saying why.`
+
+### Where a check's text comes from
+
+A schema's constraints reach a data consumer as three kinds of text, and each falls back differently.
+
+| place | first choice | then | then |
+| --- | --- | --- | --- |
+| Columns tab | the rendered column constraint | the rule name | never the docstring |
+| check name | always `dy_rule__<rule>` | | |
+| check description | the rule's docstring | `<column> <rendered constraint>` | the rule name |
+| collapsed check description | each member's rendered constraint | that member's rule name | never the docstring |
+
+The docstring stays out of the Columns tab and out of a collapsed check's description.
+Two sibling rules must not read in different voices because one author wrote a docstring and the other did not.
+From the UI that is a change of register with no visible cause.
+
+Values are rendered but never named.
+A bound is a parameter, so it belongs in a column constraint and in the per-evaluation `dy_rule__expr` metadata, never in a check name that tightening it would orphan.
+
+Column constraints render as operators: `>= 0.0`, `length <= 64 bytes`, `matches ^[a-z]+$`, `in (a, b)`, `aligned to 1h`.
+`nullability` and `unique` are omitted, because Dagster models them as their own fields on the column and a constraint would say it twice.
+`inf` and `nan` are omitted too: Dataframely generates them from a default, so allowing the value removes the rule rather than inverting it, and a constraint for either says nothing about intent.
+Both still reach the check name and the check description.
+
+A `check=` given a bare lambda has no name to recover, so it renders as `custom check` wherever it appears.
+Name your checks, `check={"lowercase": ...}`, and the data consumer sees the key.
+
+### The op is named after the whole asset key
+
+`@dd.asset(Orders, key_prefix="sales", name="orders")` builds an op called `sales__orders`, which is how `@dg.asset` names its own.
+The asset name alone will not do, because an op name has to be unique across a code location and an asset name is not.
+Two assets sharing a name under different prefixes would be two ops called the same thing.
+Dagster allows a repeated op name only where the two definitions compare equal, and two of these never are, since every check output name embeds its own asset key.
+
+The op name is the step key and the address run config resolves against, so both read the whole key:
+
+```yaml
+ops:
+  sales__orders:
+    config:
+      threshold: 4
+```
+
+### The reserved namespaces
+
+There are three.
+The first two are namespaces Dagster forces apart.
+
+**`dy_`** covers every check name, every quarantine rule column and every key in check metadata: the column-schema check `dy_schema__columns`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
+A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, so a slash is not available there.
+
+A rule name reaches a check name by rewriting `|` to `__`, so `amount|min` becomes `dy_rule__amount__min`.
+`check_name(rule)` is exported, so a test can name a check without doing that rewrite by hand.
+
+**`dataframely/`** covers every key on a materialization, which has no such limit.
+It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
+
+A schema with a column of its own inside `dy_` raises `ReservedColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
+Every public function that takes a schema raises them, so the decorator refuses one where it is declared and a hand-wired asset refuses one wherever it first hands the schema over (ADR-0008).
+
+**`<name>_quarantine`** is the third, and it is unlike the other two.
+It is the asset key a quarantine is written under, and asset keys are yours as much as they are this package's, so it is the one reservation somebody else can take first.
+A run of a quarantined asset proves it is free before it runs the body, and fails with `QuarantineKeyCollisionError` if it is not.
+
+All three are hardcoded rather than configurable.
+Their whole value is being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
+
+## Errors
+
+Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
+Every message names the schema, the culprit and the fix.
+
+| error | raised | what to do |
+| --- | --- | --- |
+| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member |
+| `ReservedColumnError` | at decoration, and from every public function taking a schema | rename the column that starts with `dy_` |
+| `CheckNameCollisionError` | the same | rename one of the two rules that rewrite alike |
+| `InvalidSettingError` | on resolve, from whichever source supplied the value | fix the value at the source the message names |
+| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame, or use `context.add_asset_metadata`, or write a plain `@dg.asset` |
+| `MaterializeResultFieldError` | the same | drop `asset_key=` or `check_results=`; the decorator owns both |
+| `ColumnSchemaError` | after the column-schema check fails | fix the producing function, or cast deliberately in the asset body |
+| `ValidationAbortError` | after the filter, with no quarantine declared | fix the rows upstream, add `quarantine=True`, or drop them deliberately |
+| `NothingSurvivedError` | after the filter, with a quarantine declared and nothing left | read the quarantine at the address in the message |
+| `QuarantineKeyCollisionError` | before the body, on every run of a quarantined asset | rename the colliding asset, or use `quarantine_spec` |
+| `QuarantineDirError` | where the rows are handed over, under direct invocation only | set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or run the asset |
+
+`ColumnSchemaError` names every offending column at once, with its expected and actual dtype, and the same list feeds the failing check's `dy_schema__errors` table, so the two cannot disagree.
+
+`ValidationAbortError` and `NothingSurvivedError` both state the damage per rule.
+The counts can sum past the invalid-row count, because one row can break several rules.
+
+## Three ways to get this wrong
+
+**Do not declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.** `orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
+An asset of your own keyed `orders_quarantine` resolves to that same address, so the two writes land on one table or one file and whichever ran last wins.
+Every run of the quarantined asset checks first and fails before its body:
+
+```text
+QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows go to
+'orders_quarantine', which another asset in this code location already materializes.
+```
+
+Rename your asset, or drop `quarantine=True` from `orders`.
+If that asset *is* your quarantine table, `quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
+
+**A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
+Under PEP 563 every annotation reaches Dagster as a string.
+Its check on the `context` parameter compares against the real classes, so it refuses `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
+
+```text
+DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.AssetExecutionContext.
+`context` must be annotated with AssetExecutionContext, AssetCheckExecutionContext, OpExecutionContext, or left blank.
+```
+
+That is Dagster's restriction rather than one this package imposes.
+`@dg.asset` refuses the same annotation with the same message, and both accept the parameter left blank, which is the one option in that message PEP 563 leaves standing:
+
+```python
+@dd.asset(Orders)
+def orders(context) -> pl.DataFrame:
+    context.log.info("run %s", context.run_id)
+    return pl.read_parquet("raw/orders.parquet").select("order_id", "amount")
+```
+
+**A `@dy.rule()` body needs its class parameter.**
+Write one without it and the class still builds and the asset still defines.
+The run then fails when this package reads the rule's expression for the check metadata:
+
+```text
+TypeError: Orders.amount_is_positive() takes 0 positional arguments but 1 was given
+```
+
+`@dy.rule()` is a classmethod-style decorator, so the body takes `cls`:
+
+```python
+class Orders(dy.Schema):
+    status = dy.String(nullable=False)
+    amount = dy.Float64(nullable=False)
+
+    @dy.rule()
+    def paid_orders_have_amount(cls) -> pl.Expr:
+        """Paid orders must carry a positive amount."""
+        return (cls.status.col != "paid") | (cls.amount.col > 0)
+```
+
+The docstring is not decoration: it becomes that check's description in the catalog.
+
+## Hand-wiring
+
+The decorator is the happy path because it does the most work: one declaration fills the Columns tab, reports every rule as a check, filters the rows and routes the invalid ones.
+It is assembled from parts the package also exports under `dd.wiring`, and each helper plugs one feature of it into an asset the decorator does not fit: a schema attached to an asset you did not declare, or a reporting arrangement the decorator does not offer.
+The asset is then yours to declare, out of the same parts.
+
+The parts compose to less than the decorator does.
+Each part does one feature, and even `validation_results` stops short of the decorator: it takes the settings and the keys as arguments, and the decorator resolves them once, at definition time, so the specs and the results cannot disagree.
+Nothing will be added to `dd.wiring` to make reassembling the decorator easier.
+The source is short, and a reader who wants the assembly reads it.
+
+They sit in their own namespace rather than the root because the decorator is the happy path, and if you never hand-wire you should not have to read past `quarantine_spec` to find it.
+
+`orders_frame()` stands in for whatever produces your frame, since none of the parts care where it came from.
+
+### The parts
+
+Four features.
+Each leads with the part you reach for, then names the pieces that part calls and why they are exported at all.
+
+**The Columns tab.** `schema_metadata(schema)` is the definition metadata a schema-backed asset declares.
+Put it on any `@dg.asset` and the Columns tab fills from the schema: dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
+It is a one-entry mapping so the decorator can merge it over your own `metadata`.
+`table_schema(schema)` is the bare `dg.TableSchema` inside it, for a metadata dict you build yourself, under `dagster/column_schema`.
+
+Column tags come from `dy.Column(metadata=...)`, which Dataframely stores and never reads.
+Values are stringified, because `dg.TableColumn.tags` is `Mapping[str, str]` and Dagster refuses anything else at definition time.
+That is a display rendering and touches no data.
+
+`unique` is read from the column's own flag and never derived from `primary_key`.
+Dataframely keeps the two independent: a key member gets a composite uniqueness rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
+
+**The checks.** `check_specs(schema, asset=key)` declares every check the schema implies, the column-schema check included.
+`check_results(schema, frame, asset_key=key, severity=...)` answers them, for an asset that writes nothing.
+One declares, the other answers, and neither knows anything about storage.
+Pass the same `check_granularity` and `schema_rules` to both or to neither, because a result answers a spec by name.
+
+**Validation and the write.** `validation_results(schema, frame, valid_key=key, quarantine_writer=...)` is the decorator's whole runtime: the column-schema check, `Schema.filter`, the quarantine write, then the materialization and every check result, yielded as an `AssetYield`.
+The quarantine is written, never yielded.
+Six outcomes, and you make one choice.
+`quarantine_writer` is the whole of the failure policy, and the data decides everything after it.
+
+```mermaid
+flowchart TD
+    F["frame handed to validation_results"] --> N{"None?"}
+    N -- yes --> SKIP["nothing written<br/>every check passes<br/>run succeeds"]
+    N -- no --> CS{"column schema matches?"}
+    CS -- no --> DRIFT["nothing written<br/>dy_schema__columns fails, ERROR<br/>rules never evaluated<br/>run fails, ColumnSchemaError"]
+    CS -- yes --> FILTER["Schema.filter"]
+    FILTER --> ANY{"any invalid rows?"}
+    ANY -- no --> CLEAN["valid table written<br/>every check passes<br/>run succeeds"]
+    ANY -- yes --> Q{"quarantine_writer passed?"}
+    Q -- no --> ABORT["nothing written<br/>failing checks ERROR<br/>run fails, ValidationAbortError"]
+    Q -- yes --> SURV{"any valid rows left?"}
+    SURV -- no --> NONE["quarantine written, table skipped<br/>failing checks ERROR<br/>run fails, NothingSurvivedError"]
+    SURV -- yes --> PARTIAL["valid table and quarantine written<br/>failing checks WARN<br/>run succeeds"]
+```
+
+The branch count makes the feature look bigger than it is.
+[The failure policy is the asset's declaration](#the-failure-policy-is-the-assets-declaration) has the same six as a table, with what each one writes.
+
+**The quarantine.** `validation_results` takes a `QuarantineWriter`: a callable handed the invalid rows that returns the quarantine address, as a string, because the answer can be a database table.
+
+`delegating_writer(context)` is what the decorator builds in a run.
+It hands the rows to the IO manager the asset is already bound to, under the key `<name>_quarantine`, so they land wherever that manager puts things.
+It shallow-copies the step's own output context and re-points only the asset key, so a database manager still reads the connection settings it needs off a real context and nothing here learns which manager it is talking to.
+Whatever metadata that manager emits goes nowhere, so this package reports the address itself.
+
+`file_writer(key, quarantine_dir, partition_key)` serves a direct invocation, where there is no step to delegate through.
+It writes parquet, and nothing else.
+
+`validate_quarantine_key(context)` is the other half of declaring a quarantine.
+Call it before the body, and it fails the run when another asset in the code location already materializes `<name>_quarantine`.
+
+Two pieces sit under these.
+`quarantine_frame(schema, failure)` is the frame every writer is handed: the invalid rows, then a `String` rule column per rule in the reserved namespace.
+It is exported for an asset that runs `Schema.filter` itself and wants the same frame the decorator would write.
+`quarantine_path(key, quarantine_dir, partition_key)` is where `file_writer` will put the file, exported so a test can ask without writing.
+
+### The decorator is a `@dg.asset`, a writer and `validation_results`
+
+The schema's metadata and check specs go straight on the asset, and `validation_results` does the rest:
+
+```python
+@dg.asset(
+    metadata=dd.wiring.schema_metadata(Orders),
+    check_specs=dd.wiring.check_specs(Orders, asset="orders"),
+    output_required=False,
+)
+def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
+    dd.wiring.validate_quarantine_key(context)
+    yield from dd.wiring.validation_results(
+        Orders,
+        orders_frame(),
+        valid_key=context.asset_key,
+        quarantine_writer=dd.wiring.delegating_writer(context),
+    )
+```
+
+That is the Columns tab, one check per rule, the row filter, and the invalid rows written beside the table.
+`context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve.
+
+`output_required=False` lets the column-schema check, both aborts and the skip end the step without yielding.
+Leave it off and every path that does not raise has to yield the output.
+
+Pass no `quarantine_writer` and invalid rows abort the run, exactly as they do when the decorator is given `quarantine=False`.
+
+`delegating_writer` needs a real step, so it raises `dagster._core.errors.DagsterInvalidPropertyError` under direct invocation.
+`file_writer(context.asset_key, quarantine_dir, partition_key)` is the decorator's choice there, and you can reach for it on the same terms.
+
+`validate_quarantine_key(context)` goes before the body, where the decorator calls it on every run.
+A call passes straight through it, since there is no graph to check against.
+
+### Split the checks off entirely
+
+The arrangement above hands its frame to `validation_results`, and `validation_results` is what fuses the write and the checks into one step.
+Pull them apart and the asset goes back to being an ordinary one that returns a frame; the checks become a `@dg.multi_asset_check` of their own, reading the table back through the IO manager:
+
+```python
+from collections.abc import Iterator
+
+KEY = dg.AssetKey(["orders"])
+
+
+@dg.asset(metadata=dd.wiring.schema_metadata(Orders))
+def orders() -> pl.LazyFrame:
+    return orders_frame()
+
+
+@dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=KEY))
+def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
+    yield from dd.wiring.check_results(
+        Orders, orders, asset_key=KEY, severity=dg.AssetCheckSeverity.WARN
+    )
+```
+
+This is the arrangement to reach for when the write must not depend on the verdict: the asset returns its frame, lazy or eager, the IO manager writes whatever it returned, and the checks run afterwards against what was written.
+What you give up is the guarantee the decorator exists for.
+The table is written before anything is validated, so the invalid rows reach storage and a failing check is what tells you.
+The decorator would have refused to write them at all.
+
+`check_results` is the evaluating counterpart to `check_specs`.
+It is `validation_results` without the writing: no materialization, no quarantine, and neither of the two errors that carry the decorator's failure policy.
+A caller that writes nothing has no rows to route and no table to withhold, so it never raises `ValidationAbortError` or `NothingSurvivedError`.
+
+Two things it asks of you that `validation_results` works out for itself:
+
+- **`severity`.** `validation_results` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
+  So you say which: `WARN` for a report beside a table that was written anyway, `ERROR` to grade the failure with the ones that stop a run.
+  Every rule check in the step carries it.
+  The precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the invalid rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`.
+- **The same settings the specs were derived with.**
+  Pass `check_granularity` and `schema_rules` to both calls or to neither.
+  A result answers a spec by name, so two calls that group the rules differently leave the step with outputs nobody wrote.
+
+A column-schema mismatch still raises.
+`ColumnSchemaError` says the frame is not what the asset claimed, so the rules never ran and nothing reports for them: the column-schema check comes back failing, the step fails on the raise, and no rule check claims a verdict nobody computed.
+
+### Without the package at all
+
+Everything above still imports `dd.wiring`.
+This is the same asset with nothing from this package in it: the Columns tab, one check per rule, the column-schema check, the row filter and the quarantine, all by hand.
+
+```python
+VALID = dg.AssetKey(["orders"])
+QUARANTINE = dg.AssetKey(["orders_quarantine"])
+COLUMNS = Orders.columns()
+# Private in Dataframely: nothing public lists a schema's rules before it runs.
+RULES = list(Orders._validation_rules(with_cast=False))
+
+
+def check_name(rule: str) -> str:
+    return f"dy_rule__{rule.replace('|', '__')}"
+
+
+COLUMN_SCHEMA = dg.TableSchema(
+    columns=[
+        dg.TableColumn(
+            name=name,
+            type=str(column.dtype),
+            description=column.description,
+            constraints=dg.TableColumnConstraints(
+                nullable=column.nullable, unique=column.unique
+            ),
+        )
+        for name, column in COLUMNS.items()
+    ]
+)
+
+
+@dg.multi_asset(
+    outs={
+        "orders": dg.AssetOut(
+            metadata={"dagster/column_schema": COLUMN_SCHEMA}, is_required=False
+        ),
+        "orders_quarantine": dg.AssetOut(is_required=False),
+    },
+    check_specs=[
+        dg.AssetCheckSpec(name="dy_schema__columns", asset=VALID, blocking=True),
+        *(dg.AssetCheckSpec(name=check_name(rule), asset=VALID) for rule in RULES),
+    ],
+)
+def orders():
+    frame = orders_frame()
+
+    drift = {
+        name: (column.dtype, frame.schema.get(name))
+        for name, column in COLUMNS.items()
+        if frame.schema.get(name) != column.dtype
+    }
+    yield dg.AssetCheckResult(
+        check_name="dy_schema__columns", asset_key=VALID, passed=not drift
+    )
+    if drift:
+        raise ValueError(f"{Orders.__name__} does not match the frame: {drift}")
+
+    valid, failure = Orders.filter(frame, cast=False)
+    counts = failure.counts()
+    aborting = bool(len(failure)) and not len(valid)
+
+    if len(valid):
+        yield dg.MaterializeResult(
+            asset_key=VALID, value=valid, metadata={"dagster/row_count": len(valid)}
+        )
+    if len(failure):
+        rule_columns = {rule: check_name(rule) for rule in RULES}
+        invalid = failure.details().rename(rule_columns)
+        yield dg.MaterializeResult(
+            asset_key=QUARANTINE,
+            value=invalid.with_columns(
+                pl.col(name).cast(pl.String) for name in rule_columns.values()
+            ),
+            metadata={"dagster/row_count": len(failure)},
+        )
+    for rule in RULES:
+        yield dg.AssetCheckResult(
+            check_name=check_name(rule),
+            asset_key=VALID,
+            passed=not counts.get(rule),
+            severity=dg.AssetCheckSeverity.ERROR
+            if aborting
+            else dg.AssetCheckSeverity.WARN,
+        )
+```
+
+That runs, and it writes both tables.
+It is worth reading for what it does not do:
+
+- It rests on `Orders._validation_rules`, which is private.
+  Nothing public in Dataframely lists a schema's rules before it runs, so every check name and every rule column here comes from an API with no deprecation promise.
+  This package takes the same dependency and pins it with a characterization test, so an upstream change fails one named test instead of every asset you own.
+- The Columns tab carries dtypes, descriptions, nullability and uniqueness.
+  The rest of what `Orders` says is missing: no `>= 0`, no regex, no length bound, no primary key stated at table level, no column tags.
+- The checks have no descriptions, so a failing one names the rule and never what it meant.
+- No statistics, no row sample, no failure samples, no `invalid_by_rules` table: a failing check says how many rows failed and nothing about what they held.
+- No `check_granularity`, so a 40-column schema is 40-odd checks and stays that way.
+- A `LazyFrame` return is yours to execute and validate; nothing filters it for you.
+- Three outcomes rather than six.
+  A run where every row failed succeeds here, with the valid out skipped and nobody told.
+  The decorator fails it with `NothingSurvivedError`, because consenting to partial data was never consent to no data.
+- The quarantine is a second out, so it is skipped on an abort, which is the run you most want the rows from.
+- Nothing guards the names.
+  A schema with a column already called `dy_rule__amount__min`, or two rules that rewrite to one check name, collide silently instead of raising at definition time.
+- Under a `key_prefix` both asset keys are yours to build and yours to get wrong.
+
+#### Or you could just do
+
+```python
+@dd.asset(Orders, quarantine=True)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+```

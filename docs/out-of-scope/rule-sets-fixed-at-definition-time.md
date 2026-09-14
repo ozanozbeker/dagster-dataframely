@@ -1,6 +1,6 @@
 # Rule Sets Fixed at Definition Time
 
-`check_granularity` and `multi_column_rules` stay parameters of the run-time functions.
+`check_granularity` and `schema_rules` stay parameters of the run-time functions.
 `_rule_sets` is called twice: once from `check_specs` where the asset is declared, and once from `rule_results` while it runs.
 The two must group the schema's rules identically, or a check reports for a set of rules its spec never claimed.
 That agreement is held by a test, not by a value both sides read from.
@@ -27,7 +27,7 @@ def test_the_results_answer_exactly_the_specs_at_every_granularity(
     assert [result.check_name for result in results] == [spec.name for spec in specs]
 ```
 
-`test_multi_column_rules_reaches_the_results_too` covers the second setting, which only `column` granularity reads.
+`test_schema_rules_reach_the_results_too` covers the second setting, which only `column` granularity reads.
 `test_a_skip_answers_whatever_check_list_the_asset_declared` pins the decorator's own relay, parametrized the same way.
 
 A bug that broke the agreement would have to break it on a data-bearing run at non-default granularity while the skip at that same granularity still passed.
@@ -47,7 +47,7 @@ A proposal whose main benefit lands on the hand-wirer has to overturn both, and 
 
 The proposal read `tests/test_asset_definition.py` at 1,103 lines and 74 tests as evidence that nothing in `_asset.decorate` can be inspected without building an asset.
 It reads the wrong way round.
-That file opens "Definition-time behaviour of `@dy_asset`, asserted without running anything", and nothing in it runs.
+That file opens "Definition-time behaviour of `@dd.asset`, asserted without running anything", and nothing in it runs.
 `check_specs` is public and directly callable, so a test wanting the grouping alone can have it in one line.
 
 The tests reach through the decorator because the decorator's wiring is the thing under test.

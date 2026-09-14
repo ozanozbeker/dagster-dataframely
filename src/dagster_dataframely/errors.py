@@ -1,8 +1,10 @@
 """The package's exception family. All subclass `DagsterDataframelyError`, so they can be caught together.
 
-This is the one module in the package with a public name. Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root namespace would be eleven of its twenty-six, and what a user reaches for most would be outnumbered by what they reach for after something went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0. Dataframely keeps its four in `dataframely.exc`. The cost is the freedom to rename or split this file, which is worth nothing: a leaf holding one class per failure has nothing to split along.
+`USER_GUIDE.md` has each one with what to do about it.
 
-`errors`, not `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`. The module is named for what it holds.
+This is the one module in the package with a public name. Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root namespace would be eleven of its twenty-six, and what a user reaches for most would be outnumbered by what they reach for after something went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0. Dataframely keeps its four in `dataframely.exc`.
+
+`errors`, not `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`.
 
 Every message names the schema, the culprit and the fix, because the message is all a user sees. It carries no colon: Python already prints `ModuleError: ` ahead of it, and a second colon in the first clause reads as a stutter. Each error takes its culprits as data and builds its own message. None knows how the culprits were found.
 """
@@ -30,7 +32,7 @@ class DagsterDataframelyError(Exception):
 
 
 class InvalidSettingError(DagsterDataframelyError):
-    """A setting resolved to a value outside its vocabulary.
+    """A setting resolved to a value the setting does not allow.
 
     Raised on resolve, from whichever source supplied the value, so a typo fails where it was written instead of misconfiguring everything downstream.
     """
@@ -47,24 +49,18 @@ class InvalidSettingError(DagsterDataframelyError):
 
         Parameters
         ----------
-        setting
-            The setting's name, which is also the argument's.
-        value
-            The value that was refused.
         allowed
-            The setting's whole vocabulary. A closed one arrives as its members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because every value it accepts cannot be printed.
+            Everything the setting accepts. A closed set arrives as its members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because every value it accepts cannot be printed.
         source
             Where this value came from, worded as a phrase.
-        env_var
-            The setting's environment variable.
         """
-        vocabulary: str = (
+        rendered: str = (
             allowed
             if isinstance(allowed, str)
             else ", ".join(f"'{allowed_value}'" for allowed_value in allowed)
         )
         super().__init__(
-            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {vocabulary}. It resolves in three, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {rendered}. It resolves in three, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
         )
 
 
@@ -75,21 +71,13 @@ class ReservedColumnError(DagsterDataframelyError):
     """
 
     def __init__(self, schema_name: str, columns: list[str]) -> None:
-        """Name the offending columns only, never the whole schema.
-
-        Parameters
-        ----------
-        schema_name
-            The schema the columns belong to.
-        columns
-            The column names inside the reserved namespace.
-        """
+        """Name the offending columns only, never the whole schema."""
         culprits: str = ", ".join(f"'{column}'" for column in columns)
         plural, verb, pronoun = (
             ("", "uses", "it") if len(columns) == 1 else ("s", "use", "them")
         )
         super().__init__(
-            f"Column{plural} {culprits} of {schema_name} {verb} the reserved 'dy_' prefix. Rename {pronoun}. This package generates every check name and quarantine column under that namespace."
+            f"Column{plural} {culprits} of {schema_name} {verb} the reserved 'dy_' namespace. Rename {pronoun}. This package generates every check name and quarantine column under it."
         )
 
 
@@ -100,19 +88,7 @@ class CheckNameCollisionError(DagsterDataframelyError):
     """
 
     def __init__(self, schema_name: str, first: str, second: str, name: str) -> None:
-        """Name both culprits and the name they collide on.
-
-        Parameters
-        ----------
-        schema_name
-            The schema both rules belong to.
-        first
-            The rule seen first.
-        second
-            The rule that collided with it.
-        name
-            The asset-check name they both rewrite to.
-        """
+        """Name both culprits and the name they collide on."""
         super().__init__(
             f"Rules '{first}' and '{second}' of {schema_name} both become asset-check name '{name}' after the '|' -> '__' rewrite. Rename one of them."
         )
@@ -125,13 +101,7 @@ class CollectionNotSupportedError(DagsterDataframelyError):
     """
 
     def __init__(self, collection_name: str) -> None:
-        """State the boundary and make no promise about a future release.
-
-        Parameters
-        ----------
-        collection_name
-            The collection class that was passed.
-        """
+        """State the boundary and make no promise about a future release."""
         super().__init__(
             f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema."
         )
@@ -146,14 +116,9 @@ class MaterializeResultValueError(DagsterDataframelyError):
     def __init__(self, asset: str) -> None:
         """Name the asset and all three routes out.
 
-        Two kinds of user hit this, and `value=` answers neither on its own. One wants metadata on a table this package does write; the `context` route is the one they need. Sending them to build a returned result around a frame they were not returning would answer a question they did not ask. The other manages their own storage and has no frame at any point. That is a plain `@dg.asset`, and they keep the Columns tab through `wiring.schema_metadata`.
+        Two kinds of user hit this, and `value=` answers neither on its own. One wants metadata on a table this package does write; the `context` route is the one they need. The other manages their own storage and has no frame at any point, which is a plain `@dg.asset` plus `schema_metadata`.
 
         The `context` route is named bare. A decorated function produces one asset, so `add_asset_metadata` has one materialization to land on and needs no `asset_key=`.
-
-        Parameters
-        ----------
-        asset
-            The asset key, rendered, whose decorated function returned the result.
         """
         super().__init__(
             f"The `dg.MaterializeResult` returned by '{asset}' carries no frame on `value`. Set it to the Polars DataFrame or LazyFrame this asset produces. To attach metadata to a table this package does write, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
@@ -167,15 +132,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
     """
 
     def __init__(self, asset: str, field: str) -> None:
-        """Name the field, why the decorator owns it, and the four a result may set.
-
-        Parameters
-        ----------
-        asset
-            The asset key, rendered, whose decorated function returned the result.
-        field
-            The `dg.MaterializeResult` field that was set.
-        """
+        """Name the field, why the decorator owns it, and the four a result may set."""
         super().__init__(
             f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`. The decorator owns it: the asset keys come from the outs it declares, and the check results from the schema's rules. Drop it. `value` carries the frame this package validates. `metadata`, `data_version` and `tags` land on the materialization it yields."
         )
@@ -192,10 +149,8 @@ class ColumnSchemaError(DagsterDataframelyError):
 
         Parameters
         ----------
-        schema_name
-            The schema the frame failed to match.
         problems
-            One mapping of `column`, `expected` and `actual` per offending column.
+            One mapping of `column`, `expected` and `actual` per offending column, as `column_schema_problems` returns. The failing check tabulates the same list, so the two cannot disagree.
         """
         culprits: str = ", ".join(
             f"'{problem['column']}' (expected {problem['expected']}, got {problem['actual']})"
@@ -223,14 +178,10 @@ class ValidationAbortError(DagsterDataframelyError):
     ) -> None:
         """State the damage per rule, and the three fixes.
 
-        Naming `quarantine=` makes this error the one place a user who has not read the README learns the keyword exists. That became possible once the decorator accepted the keyword (#19); before, it would have sent the reader to a `TypeError`.
+        Naming `quarantine=` makes this error the one place a user who has not read the guide learns the keyword exists.
 
         Parameters
         ----------
-        schema_name
-            The schema the rows failed.
-        invalid_count
-            How many rows failed at least one rule.
         counts
             Failure count per rule, for the rules anything failed. The counts can sum past `invalid_count`, because one row can break several rules.
         """
@@ -257,18 +208,12 @@ class NothingSurvivedError(DagsterDataframelyError):
 
         Parameters
         ----------
-        schema_name
-            The schema the rows failed.
-        invalid_count
-            How many rows failed at least one rule, which is all of them.
-        counts
-            Failure count per rule, for the rules anything failed.
         address
-            Where the writer put the rows, rendered, so the message says where to look. An asset key under delegation, a file path under the fallback.
+            The quarantine address, so the message says where to look.
         """
         plural = "" if invalid_count == 1 else "s"
         super().__init__(
-            f"All {invalid_count} row{plural} failed {schema_name} validation, {_culprits(counts)}. Every row is in {address} with its per-rule outcome, and the valid rows were skipped rather than written empty, so the last-known-good table survives."
+            f"All {invalid_count} row{plural} failed {schema_name} validation, {_culprits(counts)}. Every row is in {address} with a column per rule saying why, and the valid rows were skipped rather than written empty, so the last-known-good table survives."
         )
 
 
@@ -279,15 +224,7 @@ class QuarantineKeyCollisionError(DagsterDataframelyError):
     """
 
     def __init__(self, asset: str, quarantine: str) -> None:
-        """Name both assets, the key they contend for, and every way out.
-
-        Parameters
-        ----------
-        asset
-            The quarantined asset's key, rendered.
-        quarantine
-            The quarantine's key, rendered, which is the other asset's key too.
-        """
+        """Name both assets, the key they contend for, and every way out."""
         super().__init__(
             f"'{asset}' declares `quarantine=True`, so its invalid rows go to '{quarantine}', which another asset in this code location already materializes. Rename that asset, or drop `quarantine=True` from '{asset}'. If that asset is your own quarantine table, delete it and declare `quarantine_spec` instead, which stands for the quarantine rather than competing with it."
         )
@@ -302,13 +239,7 @@ class QuarantineDirError(DagsterDataframelyError):
     """
 
     def __init__(self, asset: str) -> None:
-        """Name the asset and the one setting that answers.
-
-        Parameters
-        ----------
-        asset
-            The asset key, rendered, whose invalid rows had nowhere to go.
-        """
+        """Name the asset and the one setting that answers."""
         super().__init__(
             f"'{asset}' declares `quarantine=True` and was called with no IO manager to delegate to, so the invalid rows have nowhere to go. Set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` to the directory a called asset should write them under, or run the asset instead, where its own manager places them."
         )

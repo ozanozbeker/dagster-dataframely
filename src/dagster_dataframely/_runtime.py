@@ -1,12 +1,10 @@
-"""What a schema-backed asset runs after its decorated function: check the column schema, run `Schema.filter`, then report one of six outcomes.
+"""What a schema-backed asset runs after its decorated function: the column-schema check, `Schema.filter`, then one of six outcomes.
 
-The asset's declaration is the failure policy. There is no lenient/strict flag, so the failure behaviour is visible in the definition and cannot disagree with what the asset declares. Declaring a quarantine takes the outcomes from four to six: it is the consent to partial data, and its absence is the refusal.
+`USER_GUIDE.md` has the six and what each one writes.
 
-The sixth outcome is the skip, and the asset's declaration does not decide it. A decorated function that returns `None` says this partition has no source data and never will. That is neither a failure nor an empty table. Nothing is validated and nothing materializes, so the partition stays unmaterialized rather than materializing zero rows (#95).
+The return type decides nothing past the column-schema check. `Schema.filter` takes a plan, so one call serves both return types on the streaming engine. A `DataFrame` costs a free `.lazy()`. A `LazyFrame` executes once, in that call, with its intermediates streamed and only its output held.
 
-The return type decides nothing past the column-schema check. `Schema.filter` takes a plan, so one call serves both return types on the streaming engine. A `DataFrame` costs a free `.lazy()`. A `LazyFrame` executes once, in that call, with its intermediates streamed and only its output held. The peak is that frame, one boolean column per rule in the engine's cache, and the valid rows and the invalid rows.
-
-Validation materializes the valid rows and the invalid rows. This package promises to write a file and report on it, so every outcome past `Schema.filter` counts, samples, writes or profiles them, and none can be chosen without counting both. `docs/research/lazyframe-end-to-end.md` has the measurements; its §12 has why `Schema.filter` runs in the engine rather than through a file on disk.
+Validation materializes the valid rows and the invalid rows. This package promises to write a table and report on it, so every outcome past `Schema.filter` counts, samples, writes or profiles them, and none can be chosen without counting both. `docs/research/lazyframe-end-to-end.md` has the measurements; its §12 has why `Schema.filter` runs in the engine rather than through a file on disk.
 """
 
 from collections.abc import Iterator, Mapping
@@ -30,7 +28,7 @@ from dagster_dataframely._settings import (
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
-    MultiColumnRules,
+    SchemaRules,
 )
 from dagster_dataframely._statistics import statistics_metadata
 from dagster_dataframely.errors import NothingSurvivedError, ValidationAbortError
@@ -59,19 +57,15 @@ def _require_frame(frame: object, asset: str) -> None:
 
     Dagster calls the decorated function dynamically, so it cannot enforce the return annotation. Before this guard, a forgotten return surfaced two frames down as `'NoneType' object has no attribute 'collect_schema'`.
 
-    `check_results` has no counterpart and is not missing one. Nothing dynamic reaches it, so the paragraph above does not carry. `docs/out-of-scope/wiring-argument-type-guards.md` has that decision (#124).
+    `check_results` has no counterpart and is not missing one. Nothing dynamic reaches it; `docs/out-of-scope/wiring-argument-type-guards.md` has that decision (#124).
 
-    `None` is now the skip, so a forgotten return and a deliberate skip are the same object and this guard cannot tell them apart. The trade is taken knowingly: the skip has to be a value for a decorated function to reach it, and `None` is the only value every early return already produces. A forgotten `return` now costs a run that materializes nothing, and the missing partition makes that visible.
+    `None` is now the skip, so a forgotten return and a deliberate skip are the same object and this guard cannot tell them apart. The trade is taken knowingly: the skip has to be a value for a decorated function to reach it, and `None` is the only value every early return already produces.
 
     Dagster's own error, not the package's: this is a wiring mistake, not a data one.
-
-    A `dg.MaterializeResult` reaching here is hand-wiring, and the message says which decorator unwraps one. `dy_asset` takes the frame off it before `validation_results` sees anything (#77).
-
-    The message names four routes. The old advice sent every reader to a plain `@dg.asset`, which was wrong for anyone who wanted metadata on a validated table. It stays right for one case: an asset that writes its own storage and never holds a frame. That reader keeps `schema_metadata`, which fills a plain asset's Columns tab without the decorator.
     """
     if frame is None or isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. `dy_asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. A schema-backed asset must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. `dd.asset` also accepts a `dg.MaterializeResult` carrying one, which is how metadata, tags and a data version reach the materialization, and `None` to skip the asset where a partition has no source data. An asset that writes its own storage has no frame for this package to validate, so write it as a plain `@dg.asset`, where `dagster_dataframely.wiring.schema_metadata` still fills its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
@@ -81,13 +75,6 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
     `FailureInfo.details()` rather than `invalid()`: the invalid rows plus a rule column for every rule, reading `valid` / `invalid` / `unknown`. Check-metadata samples are bounded, so without these columns the per-row attribution exists nowhere at volume.
 
     Two changes to what Dataframely hands over. The rule columns are renamed into the reserved namespace, so a column of this table and the asset check for the same rule share one string. They are also cast from `Enum` to `String`, because a raw `Enum` panics the Delta writer with a Rust `unreachable!()`. It is the one cast this package makes, and it touches only columns the package generated.
-
-    Parameters
-    ----------
-    schema
-        The schema the rows failed.
-    failure
-        What `Schema.filter` reported.
 
     Returns
     -------
@@ -166,45 +153,43 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
     valid_key: dg.AssetKey,
     quarantine_writer: QuarantineWriter | None = None,
     check_granularity: Granularity | None = None,
-    multi_column_rules: MultiColumnRules | None = None,
+    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
 ) -> AssetYield:
     """Validate a decorated function's output and report it to Dagster.
 
-    Two steps and six outcomes. The skip runs neither step. Otherwise the column-schema check runs first, off `collect_schema()`, so a frame whose columns do not match never executes. Then `Schema.filter` separates the valid rows from the invalid rows, with `cast=False`, in one `collect_all` on the streaming engine. A `DataFrame` takes the same call after a free `.lazy()`, so there is one path and nothing downstream can tell the two returns apart. It is the only validation call: `validate()` carries per-rule detail as a string, and this package needs structured counts.
+    Two calls and six outcomes. The skip makes neither. Otherwise the column-schema check runs first, off `collect_schema()`, then `Schema.filter` separates the valid rows from the invalid rows, with `cast=False`, in one `collect_all` on the streaming engine. It is the only validation call: `validate()` carries per-rule detail as a string, and this package needs structured counts.
 
-    The asset's declaration decides which of the other five a run reaches, never an argument's value. `quarantine_writer` is the whole policy. With it, invalid rows go to the quarantine and the run succeeds. Without it, the same rows fail the run. It does not rescue a run where nothing survived: that run skips the table rather than materializing it empty.
+    The asset's declaration decides which of the other five a run reaches, never an argument's value. `quarantine_writer` is the whole policy. `USER_GUIDE.md` has the six as a table and as a flowchart.
 
-    **This writes the quarantine and never learns where it went.** The writer takes the invalid rows and hands back an address: no directory, no file path, no IO manager, no context (ADR-0001). The decorator builds the writer, and that is the one place the execution context is read. A hand-wirer builds their own, or reaches for `delegating_writer` and `file_writer`.
+    **This writes the quarantine and never learns where it went.** The writer takes the invalid rows and hands back an address: no directory, no file path, no IO manager, no context (ADR-0001).
 
-    **The skip still reports every check.** A check spec is a non-optional op output whatever `output_required` the asset carries, so a step that answers none of them fails with `did not return an output for non-optional output`. The rules therefore run over `Schema.create_empty()` and report what that says: a pass for every one. Each rule was evaluated over zero rows and none was violated. Dagster records the evaluations with no `target_materialization_data`, so a passing check on a skipped partition does not attach to an earlier run's materialization (#95).
+    **The skip still reports every check.** A check spec is a non-optional op output whatever `output_required` the asset carries, so a step that answers none of them fails with `did not return an output for non-optional output`. The rules therefore run over `Schema.create_empty()`, and Dagster records the evaluations with no `target_materialization_data` (#95).
 
     Parameters
     ----------
-    schema
-        The schema the frame must satisfy.
     frame
         Whatever the decorated function returned, or `None` to skip.
     valid_key
-        The asset key the validated frame materializes under. On a single-asset step, which `dg.asset` builds, it is `context.asset_key`. A key the asset does not own fails the step on the first yield with `Asset key ... not found in AssetsDefinition`, so build it from the definition, not by hand. The decorator resolves it where the asset is declared, which leaves it callable outside a run (ADR-0002).
+        The asset key the validated frame materializes under. A key the asset does not own fails the step on the first yield, so build it from the definition rather than by hand. The decorator resolves it where the asset is declared, which leaves it callable outside a run (ADR-0002).
     quarantine_writer
-        What puts the invalid rows somewhere a reader can open them, or `None` when the asset declares no quarantine. It is called once, with the quarantine frame, on each of the two outcomes that have rows to hold: rows failed and some survived, and no rows survived. Its return value is reported as the quarantine's address. `None` makes the abort the third of those outcomes, because there is nowhere to route the rows.
+        What puts the invalid rows somewhere a reader can open them, or `None` when the asset declares no quarantine. Called once, with the quarantine frame, on each of the two outcomes that have rows to hold. `None` makes the abort the third of those outcomes, because there is nowhere to route the rows.
     check_granularity
         How far the rules collapse. Pass the value the check specs were derived with. The decorator resolves it once at definition time and hands it to both, so a run cannot report against a check list it did not declare.
-    multi_column_rules
-        Where the rules no single column owns land at `column` granularity, on the same terms.
+    schema_rules
+        Where the schema-level rules land at `column` granularity, on the same terms.
     max_failure_samples
-        How many rows that failed a rule reach that rule's check metadata. Unset resolves through the settings chain, which ships five.
+        How many rows that failed a rule reach that rule's check metadata. Unset resolves through the setting's sources.
     statistics
-        Whether each materialization carries statistics for what it wrote. Unset resolves through the settings chain, which ships it on.
+        Whether each materialization carries statistics for what it wrote. Unset resolves through the setting's sources.
     row_sample
-        How many rows reach the materialization metadata, of what was written and of what was held back. Unset resolves through the settings chain, which ships five.
+        How many rows reach the materialization metadata. Unset resolves through the setting's sources.
 
     Yields
     ------
-    The valid table's `MaterializeResult` where the run wrote one, then every check result standalone. Nothing is bundled onto a materialization: direct invocation satisfies a check output only from a standalone `AssetCheckResult`, and that keeps an asset built on this callable in a unit test (ADR-0002). Every result carries its own `asset_key`, so a standalone yield is fully addressed. The quarantine is written, not yielded, so it never appears here.
+    The valid table's `MaterializeResult` where the run wrote one, then every check result standalone. Nothing is bundled onto a materialization: direct invocation satisfies a check output only from a standalone `AssetCheckResult`, and that keeps an asset built on this callable in a unit test (ADR-0002). The quarantine is written, not yielded, so it never appears here.
 
     Raises
     ------
@@ -213,7 +198,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     InvalidSettingError
-        A setting resolved to a value outside its vocabulary.
+        A setting resolved to a value outside its allowed values.
     DagsterInvariantViolationError
         The decorated function returned something that is neither a Polars frame nor `None`.
     ColumnSchemaError
@@ -252,7 +237,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
                 if aborting
                 else dg.AssetCheckSeverity.WARN,
                 check_granularity=check_granularity,
-                multi_column_rules=multi_column_rules,
+                schema_rules=schema_rules,
                 max_failure_samples=failure_samples,
             ),
         ]

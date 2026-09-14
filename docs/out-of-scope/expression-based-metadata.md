@@ -4,7 +4,7 @@ This package writes the statistics it derives from the schema, and takes no expr
 There is no way to say "profile these columns with this aggregate", and no way to put a revenue total, a ratio between two columns, or a count matching a predicate on a materialization.
 
 The `statistics` setting is on or off.
-What it writes is one table per dtype family present, under `dataframely/valid_stats/<family>`, and the families are fixed.
+What it writes is one table per dtype group present, under `dataframely/valid_statistics/<group>`, and the groups are fixed.
 
 ## Why this is out of scope
 
@@ -12,7 +12,7 @@ Deferred from #15 when the statistics pass was designed, and closed on 2026-09-1
 
 ### The two features answer different questions
 
-The family tables answer "what does this table look like", which is why a data consumer opens an asset.
+The group tables answer "what does this table look like", which is why a data consumer opens an asset.
 Every aggregate in them is typed and total, so the pass has no failure mode at all.
 
 A named derived metric answers "how is the business doing", which is a question about the data rather than about the table.

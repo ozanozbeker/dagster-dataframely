@@ -1,4 +1,4 @@
-"""Calling a `@dy_asset` instead of running it.
+"""Calling a `@dd.asset` instead of running it.
 
 Direct invocation is Dagster's documented unit-testing path: no run, no IO manager, no instance. `MaterializeResult` carries the frame on `value`, so a call hands back the validated rows and every check outcome as ordinary Python objects.
 
@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from dagster_dataframely.errors import ColumnSchemaError, QuarantineDirError
 from tests.scenario import (
     Orders,
@@ -37,7 +37,7 @@ _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefinition:
     """The same decorated function under whichever declaration a case asks for."""
 
-    @dy_asset(Orders, name="orders", **settings)
+    @dd.asset(Orders, name="orders", **settings)
     def orders() -> pl.DataFrame:
         return frame()
 
@@ -223,7 +223,7 @@ def test_a_called_partitioned_quarantine_lands_under_its_partition(
 ):
     """The fallback reads only the partition key off the context, and `build_asset_context(partition_key=...)` supplies it. One file per partition means a backfill of one partition rewrites one file."""
 
-    @dy_asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
+    @dd.asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
     def orders() -> pl.DataFrame:
         return mixed_orders()
 
@@ -236,7 +236,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
     """`dg.build_asset_context` makes a partitioned asset testable by calling it. It cannot set the ContextVar `AssetExecutionContext.get()` reads, so the wrapper no longer reads one."""
     seen: dict[str, str] = {}
 
-    @dy_asset(Orders, name="orders", partitions_def=_DAYS)
+    @dd.asset(Orders, name="orders", partitions_def=_DAYS)
     def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
         seen["partition"] = context.partition_key
         return clean_orders()
@@ -250,7 +250,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
 def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too():
     """The context comes first and the frames follow, as Dagster orders them."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders(
         context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
     ) -> pl.DataFrame:

@@ -1,7 +1,5 @@
 """Every setting resolves in order: the package default, then a `DAGSTER_DATAFRAMELY_*` environment variable, then the argument on the asset.
 
-A platform engineer sets a house style once for a code location. An asset overrides it where that style is wrong. The environment variables carry the package name because a deployment sets them, and `DAGSTER_DATAFRAMELY_` is long enough that nothing else claims it.
-
 Every source validates on resolve, the package default included. A typo raises at the source that wrote it instead of becoming something else three modules later.
 
 One class, not one per kind of value. A setting differs from the next in two places: how the environment variable's word becomes a value, and which values it accepts. Both are callables on the instance, so the precedence is written once and a new setting is a few lines of data.
@@ -19,8 +17,10 @@ from dagster_dataframely.errors import InvalidSettingError
 type Granularity = Literal["rule", "column", "schema"]
 """How many asset checks a schema's rules collapse into."""
 
-type MultiColumnRules = Literal["schema", "per_rule"]
-"""Where the rules that no single column owns land at `column` granularity."""
+type SchemaRules = Literal["collapsed", "per_rule"]
+"""Where a schema-level rule lands at `column` granularity.
+
+Dataframely's own word: it warns about "Schema-level rules" and keeps them in `_schema_validation_rules()`, apart from the `column_rules` it builds as `f"{col_name}|{rule_name}"`. `primary_key` joins them here because Dataframely builds it at schema level too, and a single-column key is still not a column rule."""
 
 
 @dataclass(frozen=True)
@@ -33,8 +33,8 @@ class _Setting[T]:
         The setting's name. It is also the argument's name and the suffix of its environment variable, so the three cannot drift.
     default
         The value the package ships.
-    vocabulary
-        What the setting accepts, for the error. A closed vocabulary arrives as its members, in the order the docs list them. A setting over a range arrives as a phrase, because every value it accepts cannot be printed.
+    allowed
+        What the setting accepts, for the error. A closed set arrives as its members, in the order the docs list them. A setting over a range arrives as a phrase, because every value it accepts cannot be printed.
     accepts
         Whether a value from any source is one the setting holds. The argument and the package default arrive as values a type checker has already narrowed, and this still runs over them: `statistics="false"` is a non-empty string that would otherwise turn the pass on, and `True` is an `int` that would resolve a count to one row.
     parse
@@ -43,7 +43,7 @@ class _Setting[T]:
 
     name: str
     default: T
-    vocabulary: Sequence[str] | str
+    allowed: Sequence[str] | str
     accepts: Callable[[object], bool]
     parse: Callable[[str], object] = str
 
@@ -84,7 +84,7 @@ class _Setting[T]:
             raise InvalidSettingError(
                 self.name,
                 str(value),
-                self.vocabulary,
+                self.allowed,
                 source=source,
                 env_var=self.env_var,
             )
@@ -92,10 +92,10 @@ class _Setting[T]:
 
 
 _GRANULARITIES: tuple[Granularity, ...] = ("rule", "column", "schema")
-_MULTI_COLUMN_RULES: tuple[MultiColumnRules, ...] = ("schema", "per_rule")
+_SCHEMA_RULES: tuple[SchemaRules, ...] = ("collapsed", "per_rule")
 
 _FLAG_WORDS = {"true": True, "false": False}
-"""The two words the environment variable spells a flag as. Case does not matter: `TRUE` is the same instruction as `true`, and refusing it buys nothing. `1`, `yes` and `on` are plausible and wrong, so the vocabulary stays closed and the error names it."""
+"""The two words the environment variable spells a flag as. Case does not matter: `TRUE` is the same instruction as `true`, and refusing it buys nothing. `1`, `yes` and `on` are plausible and wrong, so the allowed values stay closed and the error names them."""
 
 
 def _flag(word: str) -> object:
@@ -130,23 +130,23 @@ def _path(value: object) -> bool:
 CHECK_GRANULARITY = _Setting[Granularity](
     name="check_granularity",
     default="rule",
-    vocabulary=_GRANULARITIES,
+    allowed=_GRANULARITIES,
     accepts=_GRANULARITIES.__contains__,
 )
-"""How many checks a schema's rules become. Definition-time: see `dy_asset` for what changing it costs a check's history."""
+"""How many checks a schema's rules become. Definition-time: see `dd.asset` for what changing it costs a check's history."""
 
-MULTI_COLUMN_RULES = _Setting[MultiColumnRules](
-    name="multi_column_rules",
-    default="schema",
-    vocabulary=_MULTI_COLUMN_RULES,
-    accepts=_MULTI_COLUMN_RULES.__contains__,
+SCHEMA_RULES = _Setting[SchemaRules](
+    name="schema_rules",
+    default="collapsed",
+    allowed=_SCHEMA_RULES,
+    accepts=_SCHEMA_RULES.__contains__,
 )
-"""Where the rules no single column owns land at `column` granularity. The other two granularities have no second place to put them, so nothing else reads it."""
+"""Where a schema-level rule lands at `column` granularity. The other two granularities have no second place to put them, so nothing else reads it."""
 
 STATISTICS = _Setting[bool](
     name="statistics",
     default=True,
-    vocabulary=tuple(_FLAG_WORDS),
+    allowed=tuple(_FLAG_WORDS),
     accepts=lambda value: type(value) is bool,
     parse=_flag,
 )
@@ -155,7 +155,7 @@ STATISTICS = _Setting[bool](
 MAX_FAILURE_SAMPLES = _Setting[int](
     name="max_failure_samples",
     default=5,
-    vocabulary="non-negative integers",
+    allowed="non-negative integers",
     accepts=_non_negative,
     parse=_count,
 )
@@ -164,7 +164,7 @@ MAX_FAILURE_SAMPLES = _Setting[int](
 ROW_SAMPLE = _Setting[int](
     name="row_sample",
     default=5,
-    vocabulary="non-negative integers",
+    allowed="non-negative integers",
     accepts=_non_negative,
     parse=_count,
 )
@@ -173,7 +173,7 @@ ROW_SAMPLE = _Setting[int](
 QUARANTINE_DIR = _Setting[str | None](
     name="quarantine_dir",
     default=None,
-    vocabulary="filesystem paths",
+    allowed="filesystem paths",
     accepts=_path,
 )
-"""Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources: `dy_asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a call with invalid rows to write raises rather than choosing a directory on the operator's behalf. It is also the one setting whose package default is `None`, which means no directory rather than the absence of a setting, and the one whose resolved value the decorator drops: the rows decide whether a directory is needed at all, so the one a call writes under is read where the rows are written. The decorator resolves it anyway, for the refusal alone, so a malformed variable still fails where the asset is declared (#115)."""
+"""Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources: `dd.asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a call with invalid rows to write raises rather than choosing a directory on the operator's behalf. It is also the one setting whose package default is `None`, which means no directory rather than the absence of a setting, and the one whose resolved value the decorator drops: the rows decide whether a directory is needed at all, so the one a call writes under is read where the rows are written. The decorator resolves it anyway, for the refusal alone, so a malformed variable still fails where the asset is declared (#115)."""

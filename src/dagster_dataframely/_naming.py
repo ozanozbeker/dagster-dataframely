@@ -6,7 +6,7 @@ Strings in, strings out. This module knows nothing about a schema, a rule or a f
 """
 
 # Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
-RESERVED_PREFIX = "dy_"
+RESERVED_NAMESPACE = "dy_"
 
 COLUMN_SCHEMA_CHECK = "dy_schema__columns"
 """The column-schema check. Present at every granularity, always blocking."""
@@ -25,21 +25,9 @@ def check_name(rule_name: str) -> str:
 
     The rewrite is forced. Every check spec becomes an op output named `<asset>_<check>`, and Dagster validates that against `^[A-Za-z0-9_]+$`, which `|` fails.
 
-    Parameters
-    ----------
-    rule_name
-        The rule name Dataframely reports, `|`-delimited for column rules.
-
     Returns
     -------
     The asset-check name, inside the reserved namespace.
-
-    Examples
-    --------
-    ```python
-    check_name("amount|min")  # 'dy_rule__amount__min'
-    check_name("paid_orders_have_amount")  # 'dy_rule__paid_orders_have_amount'
-    ```
     """
     return f"dy_rule__{rule_name.replace('|', '__')}"
 
@@ -47,19 +35,8 @@ def check_name(rule_name: str) -> str:
 def column_check_name(column: str) -> str:
     """Name the check that reports every rule on one column.
 
-    Parameters
-    ----------
-    column
-        The column the rules belong to.
-
     Returns
     -------
     The asset-check name, inside the reserved namespace.
-
-    Examples
-    --------
-    ```python
-    column_check_name("amount")  # 'dy_col__amount'
-    ```
     """
     return f"dy_col__{column}"

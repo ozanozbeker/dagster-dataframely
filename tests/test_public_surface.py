@@ -12,7 +12,7 @@ import dagster_dataframely as dd
 # The root: the happy path, and one name for each namespace that is not it.
 _PUBLIC = {
     # The decorator, and the spec that puts its quarantine in the graph.
-    "dy_asset",
+    "asset",
     "quarantine_spec",
     # The two namespaces, rather than their twenty names.
     "errors",
@@ -21,7 +21,7 @@ _PUBLIC = {
     # namespace of their own: a heavily annotated code base reaches for these
     # constantly, and two aliases do not earn the indirection.
     "Granularity",
-    "MultiColumnRules",
+    "SchemaRules",
 }
 
 # What `dd.wiring` puts in reach, for a `@dg.asset` a user assembles themselves.

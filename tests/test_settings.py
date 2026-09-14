@@ -1,8 +1,8 @@
-"""The settings chain, asserted at the one call every setting resolves through.
+"""The three sources of a setting, asserted at the one call every setting resolves through.
 
 The three sources meet in `resolve`, so precedence and validation are both testable without going near an asset. The shipped settings are exercised through it. A fake one covers the default source, because a shipped default is valid by construction.
 
-A flag and a count parse the environment variable rather than match it, because the environment arrives as a string whatever the setting holds. A count's vocabulary is a range, so it is the one setting with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`, which means no directory rather than the absence of a setting.
+A flag and a count parse the environment variable rather than match it, because the environment arrives as a string whatever the setting holds. A count accepts a range, so it is the one setting with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`, which means no directory rather than the absence of a setting.
 """
 
 from dataclasses import replace
@@ -14,9 +14,9 @@ import pytest
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
-    MULTI_COLUMN_RULES,
     QUARANTINE_DIR,
     ROW_SAMPLE,
+    SCHEMA_RULES,
     STATISTICS,
 )
 from dagster_dataframely.errors import InvalidSettingError
@@ -29,7 +29,7 @@ _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 # The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. A user without a type checker gets the same.
 _WRONG: Any = "per_column"
 
-# The same, for a count, whose vocabulary a type checker narrows to `int`.
+# The same, for a count, whose allowed values a type checker narrows to `int`.
 _FRACTION: Any = 2.5
 _YES: Any = True
 
@@ -39,7 +39,7 @@ _WORD: Any = "false"
 # The same, for the setting that holds a path. A user reaches for a `Path`; the setting holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own vocabulary. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted. Each is a shipped setting with its default swapped for a wrong one.
+# A setting whose package default is already outside its own allowed values. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted. Each is a shipped setting with its default swapped for a wrong one.
 _BROKEN = replace(CHECK_GRANULARITY, name="fake_setting", default=_WRONG)
 
 # A count whose default is a number it does not accept.
@@ -54,7 +54,7 @@ _BROKEN_DIRECTORY = replace(QUARANTINE_DIR, name="fake_directory", default="")
 
 def test_a_setting_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
-    assert MULTI_COLUMN_RULES.resolve(None) == "schema"
+    assert SCHEMA_RULES.resolve(None) == "collapsed"
     assert STATISTICS.resolve(None) is True
     assert MAX_FAILURE_SAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
@@ -80,7 +80,7 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 def test_every_setting_names_its_environment_variable_after_itself():
     """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously meant for a machine to read. It is derived, not transcribed, so the name and the setting cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
-    assert MULTI_COLUMN_RULES.env_var == "DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES"
+    assert SCHEMA_RULES.env_var == "DAGSTER_DATAFRAMELY_SCHEMA_RULES"
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
@@ -196,7 +196,7 @@ def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
 
 
 def test_a_count_rejects_a_fraction():
-    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, like a value outside a vocabulary."""
+    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, like a value outside a setting's allowed values."""
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_FRACTION)
 
@@ -248,7 +248,7 @@ def test_a_directory_rejects_something_that_is_not_a_path():
     assert "argument" in str(raised.value)
 
 
-def test_a_value_outside_the_vocabulary_raises_from_the_environment(
+def test_a_value_outside_the_allowed_values_raises_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """A wrong value in a deployment's environment is the source where a silent misconfiguration would spread furthest."""
@@ -260,7 +260,7 @@ def test_a_value_outside_the_vocabulary_raises_from_the_environment(
     assert _GRANULARITY_ENV in str(raised.value)
 
 
-def test_a_value_outside_the_vocabulary_raises_from_the_default_source():
+def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
     """The chain validates on resolve, so no source is trusted, including the package's own."""
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)

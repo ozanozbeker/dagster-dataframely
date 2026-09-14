@@ -14,7 +14,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from dagster_dataframely.errors import (
     MaterializeResultFieldError,
     MaterializeResultValueError,
@@ -26,10 +26,10 @@ from tests.scenario import (
     clean_orders,
     cooccurring_orders,
     events,
-    hopeless_orders,
     materializations,
     materialize,
     mixed_orders,
+    no_valid_orders,
     results,
 )
 
@@ -40,7 +40,7 @@ _VALID = dg.AssetKey(["orders"])
 def test_a_returned_result_carries_its_metadata_onto_the_valid_out():
     """The gap #77 opened with: one line of metadata on a validated table, without giving up the schema."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=clean_orders(), metadata={"source": "stripe", "batch": 7}
@@ -55,7 +55,7 @@ def test_a_returned_result_carries_its_metadata_onto_the_valid_out():
 def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: Path):
     """Beside, not instead: the row count the package emits is still there."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=clean_orders(), metadata={"source": "stripe"})
 
@@ -71,7 +71,7 @@ def test_the_packages_own_key_wins_a_collision():
     Asserted on the call, not through a run. An IO manager that counts rows writes the same key last, so a run's materialization cannot tell the package's precedence from the manager's.
     """
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=clean_orders(), metadata={"dagster/row_count": 999}
@@ -85,7 +85,7 @@ def test_the_packages_own_key_wins_a_collision():
 def test_a_returned_data_version_and_tags_reach_the_valid_result():
     """Neither has another route. `context.set_data_version` carries no `@public`, and the context exposes nothing for a materialization's tags."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=clean_orders(),
@@ -102,7 +102,7 @@ def test_a_returned_data_version_and_tags_reach_the_valid_result():
 def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path: Path):
     """Dagster decides where they land: both become tags on the materialization event."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=clean_orders(),
@@ -119,7 +119,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
 def test_a_lazy_return_folds_the_same_way():
     """`with_returned_fields` sits over what `validation_results` yields. `Schema.filter` takes both frame kinds through the same call, so laziness changes nothing."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:
         return dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
 
@@ -133,7 +133,7 @@ def test_a_lazy_return_folds_the_same_way():
 def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
     """The quarantine is written, not materialized, so the returned result has one place to land. The package's own keys still win a collision."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=cooccurring_orders(),
@@ -154,7 +154,7 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
 
 
 # --- what stays refused ---
-# Every refusal is asserted twice, once by calling and once through a run. `separated_return` runs inside
+# Every refusal is asserted twice, once by calling and once through a run. `frame_and_result` runs inside
 # the wrapper's generator, so nothing happens until something advances it. A refusal that only
 # surfaced on a direct call would let a run write a table the package never validated.
 # Declared as bare returns, not decorated assets: the two tests below share the same seven cases,
@@ -219,7 +219,7 @@ def _refusing(fn: Callable[[], object]) -> dg.AssetsDefinition:
 
     The decorated functions carry no annotation: each returns what the decorator's own type says it cannot.
     """
-    return dy_asset(Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
+    return dd.asset(Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
 
 @pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
@@ -247,10 +247,10 @@ def test_a_refused_return_fails_the_run_and_writes_nothing(
 def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
     """Nothing survived, so `with_returned_fields` has only checks to pass through and no materialization to land on. The error `validation_results` raises must reach the caller unchanged; the stage wrapping it must not swallow it."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
-            value=hopeless_orders(), metadata={"source": "stripe"}
+            value=no_valid_orders(), metadata={"source": "stripe"}
         )
 
     with pytest.raises(NothingSurvivedError):
@@ -260,7 +260,7 @@ def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
 def test_an_abort_with_no_quarantine_still_raises_its_own_error():
     """Rows failed and no quarantine is declared, so the run yields only checks and no materialization. `with_returned_fields` has nothing to land on and must not invent one."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=mixed_orders(), metadata={"source": "stripe"})
 
@@ -285,7 +285,7 @@ def test_the_frame_guard_names_every_route_out():
 def test_a_bare_frame_carries_no_data_version_and_no_tags():
     """The guarantee `with_returned_fields` rests on: an asset that returns a frame produces what it produced before #77."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders() -> pl.DataFrame:
         return clean_orders()
 
@@ -298,11 +298,11 @@ def test_a_bare_frame_carries_no_data_version_and_no_tags():
 def test_a_bare_frame_and_a_returned_result_agree_on_everything_else(tmp_path: Path):
     """Same metadata keys, same rows on disk. Only what the result carried is different."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def bare() -> pl.DataFrame:
         return clean_orders()
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def returning_a_result() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=clean_orders())
 

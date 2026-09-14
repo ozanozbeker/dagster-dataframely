@@ -46,7 +46,7 @@ class Orders(dy.Schema):
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 
 
-# One clean row, then one row per rule kind: `amount|min`, `paid_orders_have_amount`, and a `primary_key` duplicate pair.
+# One clean row, then one row per rule: `amount|min`, `paid_orders_have_amount`, and a `primary_key` duplicate pair.
 _MIXED_ORDERS = pl.DataFrame(
     {
         "order_id": ["ORD-1", "ORD-2", "ORD-3", "ORD-3"],
@@ -384,7 +384,7 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 ):
     """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
 
-    # #77 documents that `dy_asset` does the opposite, a claim worth making only while this side of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and filtering collects the valid rows and the invalid rows, so the asset holds a `DataFrame` however the decorated function arrived at it.
+    # #77 documents that `dd.asset` does the opposite, a claim worth making only while this side of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and filtering collects the valid rows and the invalid rows, so the asset holds a `DataFrame` however the decorated function arrived at it.
     # Undocumented as a contrast, though each side is documented alone. A reader carries this expectation over from `@dg.asset`, and the decorator breaks it.
     @dg.asset(name="mismatch")
     def mismatch() -> pl.DataFrame:
@@ -438,7 +438,7 @@ def test_a_check_input_is_still_type_checked_against_its_annotation():
 
 def test_materialize_result_value_still_defaults_to_a_sentinel():
     """`dg.MaterializeResult().value` is a sentinel rather than `None`."""
-    # The sentinel lets one `isinstance` check in `separated_return` cover a result carrying nothing and one carrying a non-frame. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
+    # The sentinel lets one `isinstance` check in `frame_and_result` cover a result carrying nothing and one carrying a non-frame. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
     assert dg.MaterializeResult().value is not None
 
 
@@ -482,7 +482,7 @@ def test_the_three_path_escapes_dagster_applies_are_still_importable():
     assert coerce_to_relative_parts(UPath("sales/orders")) == ("sales", "orders")
 
 
-def test_upath_io_manager_still_spells_a_multi_partition_key_by_dimension_name(
+def test_upath_io_manager_still_formats_a_multi_partition_key_by_dimension_name(
     tmp_path: Path,
 ):
     """The one path rule `quarantine_path` restates instead of importing, because upstream keeps it in a closure inside `_get_paths_for_partitions` (#104).

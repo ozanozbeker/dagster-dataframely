@@ -183,7 +183,7 @@ class Orders(dy.Schema):
 
     - `Decimal` crashes `TableRecord` emission unless coerced (#23).
     - `Duration` has no readable Polars string form (#23).
-    - `Binary` is the one member of the string statistics family with no string form to read, so the cast has to exempt it (#23).
+    - `Binary` is the one member of the string statistics group with no string form to read, so the cast has to exempt it (#23).
     - The composite primary key is the case where a per-column `unique` constraint would be false; `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both need exercising.
     - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, so both paths of the description fallback run (#17).
     - `email` names its check and `note` leaves it anonymous, so both paths of the check-name renderer run (#20).
@@ -328,7 +328,7 @@ def cooccurring_orders() -> pl.DataFrame:
     )
 
 
-def hopeless_orders() -> pl.DataFrame:
+def no_valid_orders() -> pl.DataFrame:
     """Every row violates `amount|min`, so nothing survives the filter."""
     return _frame(
         [

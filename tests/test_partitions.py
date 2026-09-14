@@ -1,4 +1,4 @@
-"""What a partitioned `@dy_asset` does, asserted rather than assumed.
+"""What a partitioned `@dd.asset` does, asserted rather than assumed.
 
 Partitioning is forwarded, not designed around (#25). The risk was not wrong mechanics but that nobody looked. This file is the executable version of `docs/research/partitioned-assets.md`. Every claim that document makes is covered here, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test instead of leaving the document wrong.
 
@@ -12,7 +12,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from tests.scenario import (
     Orders,
     check_evaluations,
@@ -32,7 +32,7 @@ _QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
 _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 
 
-@dy_asset(Orders, name="orders", quarantine=True, partitions_def=_PARTITIONS)
+@dd.asset(Orders, name="orders", quarantine=True, partitions_def=_PARTITIONS)
 def _orders() -> pl.DataFrame:
     # Reached through `.get()` rather than a `context` parameter, which this decorated function is free to declare (ADR-0002). Both work inside a run. Covering the accessor here keeps a Dagster release that broke it visible.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
@@ -192,7 +192,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
     """
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
-    @dy_asset(Orders, name="daily_orders", partitions_def=daily)
+    @dd.asset(Orders, name="daily_orders", partitions_def=daily)
     def daily_orders() -> pl.DataFrame:
         return clean_orders()
 
@@ -216,7 +216,7 @@ def test_a_time_window_partition_orphans_the_planned_check_row(tmp_path: Path):
 def test_a_single_run_backfill_is_refused_by_the_io_manager(tmp_path: Path):
     """`backfill_policy` forwards like every other `dg.asset` parameter, but `dg.BackfillPolicy.single_run()` cannot reach storage: `UPathIOManager` resolves one path per output and refuses a range. The refusal is upstream's, names the fix, and arrives on the first run rather than after a wrong write. So the decorator does not reject the policy; it cannot know which manager will run."""
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         name="ranged",
         partitions_def=_PARTITIONS,
@@ -260,7 +260,7 @@ _DEPARTED = dg.MultiPartitionKey({"month": "2026-02", "distributor": "departed"}
 _REPORTS_KEY = dg.AssetKey(["reports"])
 
 
-@dy_asset(Orders, name="reports", partitions_def=_GRID)
+@dd.asset(Orders, name="reports", partitions_def=_GRID)
 def _reports() -> pl.DataFrame | None:
     keys = dg.AssetExecutionContext.get().partition_key.keys_by_dimension
     if keys == {"month": "2026-02", "distributor": "departed"}:

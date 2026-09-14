@@ -1,14 +1,10 @@
-"""The statistics a materialization carries: four tables, one per dtype family.
+"""The statistics a materialization carries: four tables, one per dtype group.
 
-A data consumer gets a `skimr`-style distribution off the asset itself. Every materialization carries the tables unless the `statistics` setting turns the pass off.
+`USER_GUIDE.md` has the columns each group reports, and why the string group carries no value-bearing statistic.
 
 Nothing here goes through `describe()`. It stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in one column. Everything here is computed with typed Polars expressions and stringified once, at the display step.
 
 Two rules divide the cells. `mean`, `std`, `p50` and `true_rate` are derived, so they round to four places. `min` and `max` exist in the data, so they show exactly. The UI must never display a number nobody stored.
-
-**The string family carries no value-bearing statistic.** A `min` or `max` on an email column would print real addresses permanently into a shared, exported event log. Lengths and cardinality catch the same defects. The setting does not cover this: consenting to summary statistics is not consenting to raw values.
-
-A column whose dtype belongs to no family reaches no table. A `List`, `Struct` or `Array` has nothing to say past a count and a null count, and two numbers do not earn a fifth table.
 
 This is its own module, not part of `_metadata`. That module holds what an asset declares before it runs. This one is computed from what a run wrote, and the two differ when the schema and the frame disagree.
 """
@@ -30,14 +26,14 @@ _PLACES = 4
 _DURATION_STYLE = "polars"
 """Polars' own duration rendering, `8d` / `1m 30s` / `2h 5m`, the form its frame repr uses. The default gives ISO-8601 and a plain cast to `String` raises, so this format string is the only route to a span a human reads. Covered by a characterization test (#23)."""
 
-_STRING_FAMILY = (pl.String, pl.Categorical, pl.Enum, pl.Binary)
+_STRING_GROUP = (pl.String, pl.Categorical, pl.Enum, pl.Binary)
 """The dtypes whose useful statistics are all lengths and counts. Sharing one set of statistics makes them one table rather than four."""
 
 
 def _cell(value: object) -> Cell:
     """Render one aggregate as a value a table record accepts.
 
-    `_samples.cell` with one step ahead of it. The numeric family picks up `Decimal` columns, `min` and `max` on one return a Python `Decimal`, and `TableRecord` rejects it, so a money column would take the whole materialization down. A high-precision decimal loses digits through `float()`. That is display only; the exact value is still in the table it came from. A sampled row keeps a `Decimal` as a string instead, because it is the value somebody stored.
+    `_samples.cell` with one step ahead of it. The numeric group picks up `Decimal` columns, `min` and `max` on one return a Python `Decimal`, and `TableRecord` rejects it, so a money column would take the whole materialization down. A high-precision decimal loses digits through `float()`. That is display only; the exact value is still in the table it came from. A sampled row keeps a `Decimal` as a string instead, because it is the value somebody stored.
 
     Everything left is a date, a datetime or a time, and `cell` is where any of them becomes a string.
     """
@@ -53,14 +49,7 @@ def _rounded(value: object) -> Cell:
 def _record(column: str, stats: Mapping[str, object]) -> dg.TableRecord:
     """Render one column's aggregates as a table row.
 
-    The rounding rule lives here, not in the expressions, so it is stated once for every family instead of once per statistic.
-
-    Parameters
-    ----------
-    column
-        The column the row is about, the table's first cell.
-    stats
-        The aggregates, keyed by statistic name, in the order the table shows them.
+    The rounding rule lives here, not in the expressions, so it is stated once for every group instead of once per statistic.
 
     Returns
     -------
@@ -153,55 +142,41 @@ _AGGREGATES: dict[str, Callable[[str, pl.DataType], pl.Expr]] = {
     "string": _string,
     "boolean": _boolean,
 }
-"""The families and the aggregate each one runs, keyed by the name its metadata key ends in."""
+"""The groups and the aggregate each one runs, keyed by the name its metadata key ends in."""
 
 
-def _family(dtype: pl.DataType) -> str | None:
-    """Name the family a dtype belongs to.
+def _group(dtype: pl.DataType) -> str | None:
+    """Name the group a dtype belongs to.
 
-    Polars' own predicates, not a transcribed dtype list, so a new integer width reaches the numeric family without touching this file.
-
-    Parameters
-    ----------
-    dtype
-        The column's dtype.
+    Polars' own predicates, not a transcribed dtype list, so a new integer width reaches the numeric group without touching this file.
 
     Returns
     -------
-    The family, or `None` for a dtype that belongs to none.
+    The group, or `None` for a dtype that belongs to none.
     """
     if dtype.is_numeric():
         return "numeric"
     if dtype.is_temporal():
         return "temporal"
-    if dtype in _STRING_FAMILY:
+    if dtype in _STRING_GROUP:
         return "string"
     if dtype == pl.Boolean:
         return "boolean"
     return None
 
 
-def _family_table(
+def _group_table(
     frame: pl.DataFrame,
     columns: Mapping[str, pl.DataType],
     aggregate: Callable[[str, pl.DataType], pl.Expr],
 ) -> dg.TableMetadataValue:
-    """Render one family's table.
+    """Render one group's table.
 
-    One `select` aggregates every column of the family, so a wide frame costs one pass per family, not one per column. Each column returns one struct aliased to its own name, so its statistics stay together and no name needs mangling to sit beside another column's in one row.
-
-    Parameters
-    ----------
-    frame
-        The frame that materialized.
-    columns
-        The family's columns and their dtypes, in the frame's own order.
-    aggregate
-        The family's aggregate, applied to each of them.
+    One `select` aggregates every column of the group, so a wide frame costs one pass per group, not one per column. Each column returns one struct aliased to its own name, so its statistics stay together and no name needs mangling to sit beside another column's in one row.
 
     Returns
     -------
-    The family's table, one row per column in the frame's own order.
+    The group's table, one row per column in the frame's own order.
     """
     # One row of structs, one struct per column. `Any` is the type a row of anything comes back as.
     stats: dict[str, Any] = frame.select(
@@ -213,7 +188,7 @@ def _family_table(
 def statistics_metadata(
     frame: pl.DataFrame, *, enabled: bool
 ) -> dict[str, dg.TableMetadataValue]:
-    """Summarize a frame as one table per dtype family present in it.
+    """Summarize a frame as one table per dtype group present in it.
 
     Table values, not markdown. A table value renders as a full-featured HTML table in the UI; the same rows as markdown render as printed text. Judged in the running UI.
 
@@ -226,18 +201,18 @@ def statistics_metadata(
 
     Returns
     -------
-    One entry per family present, keyed `dataframely/valid_stats/<family>`, each holding a row per column in the frame's own column order. Empty when the setting is off. No entry for a family the frame has no column of.
+    One entry per group present, keyed `dataframely/valid_statistics/<group>`, each holding a row per column in the frame's own column order. Empty when the setting is off. No entry for a group the frame has no column of.
     """
     if not enabled:
         return {}
-    families: dict[str, dict[str, pl.DataType]] = {}
+    groups: dict[str, dict[str, pl.DataType]] = {}
     for name, dtype in frame.collect_schema().items():
-        family: str | None = _family(dtype)
-        if family is not None:
-            families.setdefault(family, {})[name] = dtype
+        group: str | None = _group(dtype)
+        if group is not None:
+            groups.setdefault(group, {})[name] = dtype
     return {
-        f"dataframely/valid_stats/{family}": _family_table(
-            frame, columns, _AGGREGATES[family]
+        f"dataframely/valid_statistics/{group}": _group_table(
+            frame, columns, _AGGREGATES[group]
         )
-        for family, columns in families.items()
+        for group, columns in groups.items()
     }

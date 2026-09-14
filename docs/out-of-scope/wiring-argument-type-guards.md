@@ -4,7 +4,7 @@
 A wrong type reaches `column_schema_problems` and fails on `collect_schema()`, two frames inside the package.
 
 One `wiring` part does refuse a frame for its type, and it is not a precedent.
-`validation_results` runs `_require_frame`, which belongs to the decorator: `dy_asset` routes the decorated function's return value through it, and Dagster cannot hold that function to its return annotation.
+`validation_results` runs `_require_frame`, which belongs to the decorator: `dd.asset` routes the decorated function's return value through it, and Dagster cannot hold that function to its return annotation.
 A hand-wirer inherits the refusal by sharing the code path.
 Nothing dynamic reaches `check_results`, so the reason does not carry.
 
@@ -42,7 +42,7 @@ orders, or orders: Any
 AttributeError: 'dict' object has no attribute 'collect_schema'
 ```
 
-Both the README and the `check_results` docstring teach the annotated form, so a reader who follows either is on the enforced path.
+Both the user guide and the `check_results` docstring teach the annotated form, so a reader who follows either is on the enforced path.
 
 The decision turns on this.
 `_require_frame` justifies itself with "Dagster calls the decorated function dynamically, so it cannot enforce the return annotation".
@@ -71,7 +71,7 @@ Neither is.
 It refuses a property no annotation can express.
 A schema declaring a `dy_` column satisfies `type[dy.Schema]` perfectly, and only a run-time read of its columns tells you otherwise.
 
-`dy_asset` refuses a `dy.Collection` handed to it as a schema, and a type checker does see that one: `dy.Collection` does not subclass `dy.Schema`.
+`dd.asset` refuses a `dy.Collection` handed to it as a schema, and a type checker does see that one: `dy.Collection` does not subclass `dy.Schema`.
 Its comment draws the line.
 "Only a `Collection` is refused here.
 Anything else keeps failing however it already fails."

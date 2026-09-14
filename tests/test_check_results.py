@@ -23,8 +23,8 @@ from dagster_dataframely.wiring import check_results, check_specs, schema_metada
 from tests.scenario import (
     Orders,
     clean_orders,
-    hopeless_orders,
     mixed_orders,
+    no_valid_orders,
     storage,
     wrong_dtype_orders,
 )
@@ -83,9 +83,9 @@ def test_the_results_answer_exactly_the_specs_at_every_granularity(
     assert [result.check_name for result in results] == [spec.name for spec in specs]
 
 
-def test_multi_column_rules_reaches_the_results_too():
+def test_schema_rules_reach_the_results_too():
     """The second grouping setting. Only `column` granularity reads it, so it needs its own case."""
-    settings = {"check_granularity": "column", "multi_column_rules": "per_rule"}
+    settings = {"check_granularity": "column", "schema_rules": "per_rule"}
     specs = check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type]
     results = _results(mixed_orders(), **settings)
 
@@ -134,7 +134,7 @@ def test_the_column_schema_failure_is_an_error_whatever_the_caller_asked_for():
 
 
 # --- the failure policy stays with the decorator ---
-@pytest.mark.parametrize("frame", [mixed_orders, hopeless_orders])
+@pytest.mark.parametrize("frame", [mixed_orders, no_valid_orders])
 def test_no_data_reaches_the_two_errors_that_carry_the_failure_policy(
     frame: Callable[[], pl.DataFrame],
 ):
@@ -145,7 +145,7 @@ def test_no_data_reaches_the_two_errors_that_carry_the_failure_policy(
 
 
 def test_nothing_surviving_is_not_a_special_case():
-    results = _results(hopeless_orders())
+    results = _results(no_valid_orders())
 
     assert not next(r for r in results if r.check_name == "dy_rule__amount__min").passed
     assert next(r for r in results if r.check_name == COLUMN_SCHEMA).passed

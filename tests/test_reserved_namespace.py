@@ -38,9 +38,9 @@ _KEY = dg.AssetKey(["orders"])
 _, _FAILURE = Orders.filter(clean_orders())
 """A failure nothing reads. `quarantine_frame` takes one, and its guard raises before it looks."""
 
-# Every public function that takes a schema, called with whatever else it needs to reach its guard. The two generators are drained, because theirs raises on first iteration rather than at call time. `dy_asset` is the factory itself, never applied: `maker = dy_asset(Reserved)` has to raise rather than hand back a decorator that will (ADR-0008).
+# Every public function that takes a schema, called with whatever else it needs to reach its guard. The two generators are drained, because theirs raises on first iteration rather than at call time. `dd.asset` is the factory itself, never applied: `maker = dd.asset(Reserved)` has to raise rather than hand back a decorator that will (ADR-0008).
 _TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
-    "dy_asset": dd.dy_asset,
+    "asset": dd.asset,
     "quarantine_spec": lambda schema: dd.quarantine_spec(schema, _KEY),
     "wiring.check_results": lambda schema: list(
         dd.wiring.check_results(

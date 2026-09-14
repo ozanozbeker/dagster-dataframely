@@ -1,16 +1,12 @@
 """What a quarantine is called, where it goes, and who puts it there.
 
-`_LEAF_SUFFIX` decides what a quarantine is called. Everything here uses that name: a writer addresses the rows by it, a path spells it, a spec is keyed by it, and `validate_quarantine_key` proves no other asset already owns it. They sit together because a spec keyed differently from the quarantine it describes depends on nothing.
+`_LEAF_SUFFIX` decides what a quarantine is called. Everything here uses that name: a writer addresses the rows by it, a path carries it, a spec is keyed by it, and `validate_quarantine_key` proves no other asset already owns it. They sit together because a spec keyed differently from the quarantine it describes depends on nothing.
 
 That last one is here because the suffix reserves a name in a space the package does not own. Dagster's asset keys are the user's too, so the reservation is the one this package cannot enforce by generating the string itself, and a run proves it rather than a load (ADR-0007).
 
-The delegating writer is the usual route (ADR-0006). It shallow-copies the step's own `OutputContext`, re-points it at `<name>_quarantine`, and hands the frame to the manager the asset is already bound to. The rows land wherever that manager puts things: a parquet file beside the table under `UPathIOManager`, a second table beside it under `DbIOManager`. Nothing here knows which manager it is talking to.
+`quarantine_writer` picks between the two writers, and the decorator is its only caller. It waits for the rows rather than deciding when it is built, because the answers differ only where there is no step and a call holding nothing back needs no directory at all (#115).
 
-The file writer is the fallback for direct invocation, where there is no step and so no manager to borrow. It writes parquet to `quarantine_path`, which mirrors `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` still lands each quarantine beside its table.
-
-`quarantine_writer` is the rule that picks between the two, and the decorator is its only caller. It waits for the rows rather than deciding when it is built, because the answers differ only where there is no step and a call holding nothing back needs no directory at all (#115).
-
-Whatever upstream already spells, this module imports rather than restates. A second implementation of one rule is a second answer waiting to differ. The multi-partition spelling is the one exception: it lives in a closure inside `_get_paths_for_partitions` and cannot be imported. `_spelling` restates it, and a characterization test pins it against upstream's own path.
+Whatever upstream already names, this module imports rather than restates. A second implementation of one rule is a second answer waiting to differ. The multi-partition format is the one exception: it lives in a closure inside `_get_paths_for_partitions` and cannot be imported. `_formatted_partition_key` restates it under upstream's own word, and a characterization test pins it against upstream's own path.
 
 **A partition key is escaped as `FilesystemIOManager` escapes it, not as the `UPathIOManager` base class does.** The base escapes a leading `/` and leaves `..` alone; upstream documents that as the behaviour to override on a hierarchical filesystem. A key of `../../etc/x` would otherwise resolve out of the quarantine_dir and write wherever it landed, and a partition key can come from data where an asset key cannot. Safety beats parity here, because the package writes this path itself rather than handing it to a manager.
 """
@@ -58,7 +54,7 @@ type QuarantineWriter = Callable[[pl.DataFrame], str]
 """What a writer returns: where the invalid rows went, rendered for a reader. A string, not a path, because the answer can be a database table."""
 
 _LEAF_SUFFIX = "_quarantine"
-"""Keeps a quarantine from overwriting the table it came from when the two share a quarantine_dir. Spelled once, because the file's name and the spec's key must be the same string."""
+"""Keeps a quarantine from overwriting the table it came from when the two share a quarantine_dir. Written once, because the file's name and the spec's key must be the same string."""
 
 _EXTENSION = ".parquet"
 
@@ -120,12 +116,12 @@ def validate_quarantine_key(context: dg.AssetExecutionContext) -> None:
         )
 
 
-def _spelling(partition_key: str) -> str:
-    """Render a partition key as `UPathIOManager` renders it in a path.
+def _formatted_partition_key(partition_key: str) -> str:
+    """Format a partition key as `UPathIOManager` formats it in a path.
 
-    A single-dimension key is its own spelling. A multi-partition key is its dimension keys joined by `/`, ordered by dimension name, never by the order the dimensions were declared or the key was built.
+    A single-dimension key is its own format. A multi-partition key is its dimension keys joined by `/`, ordered by dimension name, never by the order the dimensions were declared or the key was built.
 
-    Restated from `UPathIOManager._get_paths_for_partitions`, where it is a closure with no import path. `test_upstream_characterization.py` pins it against a real manager's path, so upstream changing the spelling fails a test instead of hiding a quarantine.
+    Restated from `UPathIOManager._get_paths_for_partitions`, whose `_formatted_multipartitioned_path` is a closure with no import path. `test_upstream_characterization.py` pins it against a real manager's path, so upstream changing the format fails a test instead of hiding a quarantine.
     """
     if isinstance(partition_key, dg.MultiPartitionKey):
         return "/".join(
@@ -141,16 +137,7 @@ def quarantine_path(
 ) -> UPath:
     """Resolve the file an asset's invalid rows go to when no IO manager places them.
 
-    The fallback address. A quarantine is normally written through the asset's own manager and lands wherever that manager puts things (ADR-0006). This answers when there is no manager to ask, which is direct invocation, or when the user named a quarantine_dir instead.
-
-    ```text
-    <quarantine_dir>/<key part>/.../<name>_quarantine.parquet
-    <quarantine_dir>/<key part>/.../<name>_quarantine/<partition>.parquet
-    ```
-
-    Everything but the leaf is `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` lands each quarantine beside its table. The leaf carries `_quarantine`, the same suffix the delegating writer puts on the asset key, so sharing a quarantine_dir never means sharing a file.
-
-    A partition is a file under a directory, not a longer file name, so a backfill of one partition rewrites one file.
+    Everything but the leaf is `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` lands each quarantine beside its table. The leaf carries `_quarantine`, the same suffix the delegating writer puts on the asset key, so sharing a quarantine_dir never means sharing a file. `USER_GUIDE.md` has the layout.
 
     Parameters
     ----------
@@ -159,28 +146,18 @@ def quarantine_path(
     quarantine_dir
         Where quarantines go. Anything `UPath` accepts, so a local directory and `s3://bucket/prefix` are the same call on credentials from the ambient environment.
     partition_key
-        The partition being written, or `None` for an unpartitioned asset. A `dg.MultiPartitionKey` is spelled as its dimension keys in dimension-name order. A key that would climb out of the quarantine_dir is escaped, not refused, so no partition can name a file outside the quarantine_dir.
+        The partition being written, or `None` for an unpartitioned asset. A `dg.MultiPartitionKey` is formatted as its dimension keys in dimension-name order. A key that would climb out of the quarantine_dir is escaped, not refused, so no partition can name a file outside the quarantine_dir.
 
     Returns
     -------
     The file's path, parents not created.
-
-    Examples
-    --------
-    ```python
-    import dagster as dg
-
-    import dagster_dataframely as dd
-
-    dd.wiring.quarantine_path(dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse")
-    ```
     """
     path: UPath = UPath(quarantine_dir).joinpath(
         *_suffixed(coerce_to_relative_parts(UPath(*key.path)))
     )
     if partition_key is not None:
         path = path / escape_dotdot_segments(
-            escape_leading_slash(_spelling(partition_key))
+            escape_leading_slash(_formatted_partition_key(partition_key))
         )
     # Appended to whatever suffix the name already has, as `_with_extension` does, so an
     # asset named `orders.v2` keeps its own dot instead of losing it to `with_suffix`.
@@ -212,7 +189,7 @@ def delegating_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
     Raises
     ------
     dagster._core.errors.DagsterInvalidPropertyError
-        There is no step, which is direct invocation. Callers with a fallback catch this and use `file_writer` instead.
+        There is no step, which is direct invocation. `quarantine_writer` catches this and uses `file_writer` instead.
     """
     step = context.get_step_execution_context()
     # The asset's own output, never a check's: a check spec is an op output too, so the step has one more output per declared check.
@@ -244,7 +221,7 @@ def file_writer(
 ) -> QuarantineWriter:
     """Build the writer that puts the invalid rows in a parquet file under `quarantine_dir`.
 
-    The fallback for direct invocation, where the asset is called rather than run and there is no step to borrow an output context from.
+    For direct invocation, where the asset is called rather than run and there is no step to borrow an output context from.
 
     Parquet only. The quarantine holds whatever dtypes the schema declares, and a format that cannot round-trip them would make the evidence disagree with the table it came from.
 
@@ -252,10 +229,6 @@ def file_writer(
     ----------
     key
         The asset key of the table the rows failed validation in, not the quarantine's own. `quarantine_path` suffixes the leaf.
-    quarantine_dir
-        Where quarantines go. Anything `UPath` accepts.
-    partition_key
-        The partition being written, or `None` for an unpartitioned asset.
 
     Returns
     -------
@@ -283,16 +256,11 @@ def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
 
     The step is asked for on its own, ahead of the writer. No predicate answers "is this a run", so the question has to be a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property raising the same error inside a real run would silently reroute the rows to a file.
 
-    **The route is chosen inside the returned writer, not here.** `delegating_writer` reads its step where it is built, so a caller holding no fallback fails before a write it cannot finish. This one holds the fallback, so it waits for the rows instead (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
-
-    Parameters
-    ----------
-    context
-        The executing asset's context.
+    **The route is chosen inside the returned writer, not here.** `delegating_writer` reads its step where it is built, so a caller holding no fallback fails before a write it cannot finish. This one holds `file_writer` in reserve, so it waits for the rows instead (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
 
     Returns
     -------
-    A writer taking the invalid rows and returning where they went, rendered: the quarantine's asset key under delegation, the file's path under the fallback. It raises `QuarantineDirError` when there is no manager to delegate to and no quarantine_dir to fall back on.
+    A writer taking the invalid rows and returning where they went, rendered: the quarantine's asset key under `delegating_writer`, the file's path under `file_writer`. It raises `QuarantineDirError` when there is no manager to delegate to and no quarantine_dir to fall back on.
     """
 
     def write(frame: pl.DataFrame) -> str:
@@ -324,16 +292,12 @@ def quarantine_spec(
 ) -> dg.AssetSpec:
     """Build the spec that gives a quarantine its place in the graph.
 
-    The package writes the quarantine whether or not this is called. This adds a node: a key a downstream asset can name as an input, a Columns tab saying what it holds, and a dependency edge back to the asset the invalid rows came from. The quarantine is written through the asset's own manager and the spec's key resolves through that same manager, so the downstream read needs no code and no second manager from this package.
-
-    It never receives a materialization event, because nothing materializes it.
+    The package writes the quarantine whether or not this is called. This adds a node, and it never receives a materialization event, because nothing materializes it.
 
     The schema is passed, not read off the definition. Every other assembled part in `wiring` takes it first, and after ADR-0004 nothing on an `AssetsDefinition` carries the live class. Key, prefix and partitions still come off the definition, so the spec cannot disagree with its parent about any of them.
 
     Parameters
     ----------
-    schema
-        The schema the rows failed.
     asset
         The asset the invalid rows came from. A definition is the normal form and supplies its own partitions. The key forms serve an asset that cannot be imported: generated or foreign.
     partitions_def
@@ -351,28 +315,6 @@ def quarantine_spec(
         Two rules rewrite to the same check name, which this spec's Columns tab would also collapse.
     dg.DagsterInvariantViolationError
         A definition and a `partitions_def` were both given. Dagster's own error, not the package's, because two sources of one fact is a wiring mistake, not a data one.
-
-    Examples
-    --------
-    ```python
-    import dagster as dg
-    import dataframely as dy
-    import polars as pl
-
-    import dagster_dataframely as dd
-
-
-    class Orders(dy.Schema):
-        order_id = dy.String(primary_key=True)
-
-
-    @dd.dy_asset(Orders, quarantine=True)
-    def orders() -> pl.DataFrame:
-        return pl.DataFrame({"order_id": ["a"]})
-
-
-    defs = dg.Definitions(assets=[orders, dd.quarantine_spec(Orders, orders)])
-    ```
     """
     validate_namespace(schema)
     if isinstance(asset, dg.AssetsDefinition):

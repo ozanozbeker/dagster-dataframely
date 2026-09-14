@@ -1,10 +1,8 @@
 """The rows a run puts in front of a reader, bounded.
 
-A check and a materialization want the same thing. A failing check says 43 rows failed `amount|min`, and the reader asks what three of them held. A materialization says 90,000 rows were written, and the reader asks what one looks like. A count answers neither. A handful of rows answers both.
-
 Bounded by construction. There is no unbounded setting and no unbounded read. Nothing leaves this module without a caller saying how many rows it wanted. **These rows go into the Dagster event log, which is shared, exported and not redacted**, so somebody chooses the amount that lands there.
 
-A sample is absent, never empty. Zero rows does not answer "what does a row look like", and an empty table in the UI would read as an answer. Dagster enforces the same from the other side: a table value with no records and no schema is an error, so an empty one would fail the run rather than show nothing.
+A sample is absent, never empty. Dagster enforces the same from the other side: a table value with no records and no schema is an error, so an empty one would fail the run rather than show nothing.
 
 Its own module rather than `_metadata`'s or `_statistics`'. `_metadata` holds what an asset declares before it runs. This module holds what a run held. And unlike a statistic, a cell here is a value out of the data, which decides the rendering rule in `cell`.
 """
@@ -13,7 +11,7 @@ import dagster as dg
 import polars as pl
 
 VALID_SAMPLE_KEY = "dataframely/valid_sample"
-"""The valid rows' materialization display key. Namespaced like `dataframely/valid_stats/*`, so everything this package writes sorts in one block apart from Dagster's and the IO manager's."""
+"""The valid rows' materialization display key. Namespaced like `dataframely/valid_statistics/*`, so everything this package writes sorts in one block apart from Dagster's and the IO manager's."""
 
 type Cell = str | int | float | bool | None
 """What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's field and exports no name for it."""
@@ -39,13 +37,6 @@ def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
 
     The head, not a random draw. A sample somebody reports a bug against must be the same sample when they reopen the run, and `head` is the only draw a re-read reproduces.
 
-    Parameters
-    ----------
-    frame
-        The rows to sample from, in the order they should be shown.
-    limit
-        How many rows to take at most.
-
     Returns
     -------
     One mapping per row, keyed by column in the frame's own order. Empty when the limit is zero or the frame has no rows.
@@ -62,13 +53,6 @@ def sample_metadata(key: str, rows: list[Row]) -> dict[str, dg.TableMetadataValu
     Every check and materialization that shows sampled rows goes through here, so "absent, never empty" stays one decision.
 
     Table values rather than markdown: a table value renders as a full HTML table in the UI, and the same rows as markdown render as printed text.
-
-    Parameters
-    ----------
-    key
-        The metadata key to show the rows under.
-    rows
-        The rows, already sampled and rendered.
 
     Returns
     -------

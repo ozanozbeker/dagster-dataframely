@@ -1,4 +1,4 @@
-"""Runtime behaviour of `@dy_asset`, asserted through `dg.materialize`.
+"""Runtime behaviour of `@dd.asset`, asserted through `dg.materialize`.
 
 Every test asserts what Dagster ends up holding: the materialization events, the check evaluations, the metadata on both, and the bytes on disk. All six outcomes are covered. The frame and the quarantine declaration decide which of the five validating outcomes a frame reaches. The sixth is the skip, which has no frame to decide anything (#95).
 """
@@ -12,7 +12,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import (
     ColumnSchemaError,
@@ -32,10 +32,10 @@ from tests.scenario import (
     check_evaluations,
     clean_orders,
     cooccurring_orders,
-    hopeless_orders,
     materializations,
     materialize,
     mixed_orders,
+    no_valid_orders,
     results,
     wrong_dtype_orders,
 )
@@ -46,7 +46,7 @@ def _raw_orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dy_asset(Orders)
+@dd.asset(Orders)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
@@ -121,7 +121,7 @@ def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
 
     # Set by hand so one body can carry an annotation that contradicts it. The function is declared here, because setting it on an imported one would leave the annotation on a module-level object every other test shares.
     fn.__annotations__ = {"return": annotation}
-    asset = dy_asset(Orders, name="orders")(fn)
+    asset = dd.asset(Orders, name="orders")(fn)
 
     assert materialize(tmp_path, asset).success
     assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
@@ -139,7 +139,7 @@ def test_a_decorated_function_can_take_a_bare_context(tmp_path: Path):
     """The parameter is unannotated: that is the one spelling that survives a user-side `from __future__ import annotations`."""
     seen: dict[str, str] = {}
 
-    @dy_asset(Orders, name="orders", partitions_def=_DAYS)
+    @dd.asset(Orders, name="orders", partitions_def=_DAYS)
     # Unannotated: that is the spelling under test.
     def orders(context) -> pl.DataFrame:  # pyrefly: ignore[implicit-any-parameter]
         seen["partition"] = context.partition_key
@@ -157,7 +157,7 @@ def test_a_decorated_function_can_take_the_context_alongside_an_upstream_frame(
     """The context binds first and the frames follow, so taking one does not cost the ordinary parameter binding."""
     seen: dict[str, object] = {}
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def orders(
         context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
     ) -> pl.DataFrame:
@@ -176,7 +176,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
     """The op name is the step key, so the two steps must differ for the run to execute at all (#70). Both tables land under the prefixes their keys spell."""
 
     def shipments(prefix: str) -> dg.AssetsDefinition:
-        @dy_asset(Orders, key_prefix=prefix, name="shipments")
+        @dd.asset(Orders, key_prefix=prefix, name="shipments")
         def _shipments() -> pl.DataFrame:
             return clean_orders()
 
@@ -194,7 +194,7 @@ def test_two_assets_sharing_a_name_under_different_prefixes_both_write(tmp_path:
 
 
 # --- a frame whose columns do not match ---
-@dy_asset(Orders, name="orders")
+@dd.asset(Orders, name="orders")
 def _wrong_dtype() -> pl.DataFrame:
     return wrong_dtype_orders()
 
@@ -212,7 +212,7 @@ def test_a_wrong_dtype_aborts_and_names_the_column(tmp_path: Path):
 
 
 def test_a_missing_column_aborts_too(tmp_path: Path):
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def missing_column() -> pl.DataFrame:
         return clean_orders().drop("quantity")
 
@@ -225,7 +225,7 @@ def test_a_missing_column_aborts_too(tmp_path: Path):
 def test_the_column_schema_error_reads_as_plural_for_several_columns(tmp_path: Path):
     """The message is the only thing a user sees of this error, so it agrees in number."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def several() -> pl.DataFrame:
         return (
             clean_orders().drop("email").with_columns(pl.col("quantity").cast(pl.Int64))
@@ -265,7 +265,7 @@ def test_the_column_schema_check_tabulates_every_offending_column(tmp_path: Path
 
 
 # --- invalid rows with no quarantine ---
-@dy_asset(Orders, name="orders")
+@dd.asset(Orders, name="orders")
 def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
@@ -311,12 +311,12 @@ def test_the_abort_still_reports_every_rule(tmp_path: Path):
 def test_a_frame_where_nothing_survives_aborts_the_same_way(tmp_path: Path):
     """With no quarantine the two frames are indistinguishable, because both discard everything. Only a declared quarantine separates them."""
 
-    @dy_asset(Orders, name="orders")
-    def hopeless() -> pl.DataFrame:
-        return hopeless_orders()
+    @dd.asset(Orders, name="orders")
+    def nothing_survives() -> pl.DataFrame:
+        return no_valid_orders()
 
     with pytest.raises(ValidationAbortError) as raised:
-        materialize(tmp_path, hopeless)
+        materialize(tmp_path, nothing_survives)
 
     assert "2 rows failed Orders validation, 2 by 'amount|min'" in str(raised.value)
     assert not list(tmp_path.rglob("*.parquet"))
@@ -335,7 +335,7 @@ def test_the_abort_raises_every_rule_check_to_error(tmp_path: Path):
 _GOOD_KEY = dg.AssetKey(["orders"])
 
 
-@dy_asset(Orders, name="orders", quarantine=True)
+@dd.asset(Orders, name="orders", quarantine=True)
 def _quarantined() -> pl.DataFrame:
     return mixed_orders()
 
@@ -367,7 +367,7 @@ def test_the_materialization_says_where_the_rest_went(tmp_path: Path):
 def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
     """A quarantine adds no node, so an asset that declares one has the lineage it would have had without one."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return mixed_orders()
 
@@ -461,7 +461,7 @@ def test_a_rule_column_says_which_rule_each_row_failed(tmp_path: Path):
 def test_the_materialization_tabulates_the_rules_that_failed_together(tmp_path: Path):
     """One broken upstream field tripping three rules at once is one row here, not three unrelated counts."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def cooccurring() -> pl.DataFrame:
         return cooccurring_orders()
 
@@ -496,7 +496,7 @@ def test_the_invalid_by_rules_table_leads_with_the_set_that_broke_the_most_rows(
         )
     )
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def repeated() -> pl.DataFrame:
         return pl.concat([mixed_orders(), duplicate_break])
 
@@ -512,9 +512,9 @@ def test_the_invalid_by_rules_table_leads_with_the_set_that_broke_the_most_rows(
 
 
 # --- invalid rows with a quarantine, none surviving ---
-@dy_asset(Orders, name="orders", quarantine=True)
+@dd.asset(Orders, name="orders", quarantine=True)
 def _nothing_survived() -> pl.DataFrame:
-    return hopeless_orders()
+    return no_valid_orders()
 
 
 def test_nothing_surviving_writes_the_quarantine_and_materializes_nothing(
@@ -535,7 +535,7 @@ def test_nothing_surviving_writes_the_quarantine_and_materializes_nothing(
 def test_nothing_surviving_leaves_the_last_known_good_table_intact(tmp_path: Path):
     """The same key, written clean and then run again on a frame nothing survives."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
@@ -572,12 +572,12 @@ def test_nothing_surviving_raises_every_rule_check_to_error(tmp_path: Path):
 # A partition that has no file and never will is neither a failure nor an empty table (#95).
 # The skip is asserted here against what Dagster ends up holding, and in `TestOutcomeSelection`
 # against what leaves the generator.
-@dy_asset(Orders, name="orders")
+@dd.asset(Orders, name="orders")
 def _skipping() -> pl.DataFrame | None:
     return None
 
 
-@dy_asset(Orders, name="orders", quarantine=True)
+@dd.asset(Orders, name="orders", quarantine=True)
 def _skipping_with_quarantine() -> pl.DataFrame | None:
     return None
 
@@ -609,7 +609,7 @@ def test_a_skip_answers_whatever_check_list_the_asset_declared(
 ):
     """Collapsing the rules into checks changes how many checks there are, so the skip must answer the list the asset declared, not a list of its own."""
 
-    @dy_asset(Orders, name="orders", check_granularity=granularity)
+    @dd.asset(Orders, name="orders", check_granularity=granularity)
     def skipping() -> pl.DataFrame | None:
         return None
 
@@ -646,7 +646,7 @@ _OUTCOMES = [
     pytest.param(clean_orders, False, id="everything survived"),
     pytest.param(mixed_orders, False, id="no quarantine"),
     pytest.param(mixed_orders, True, id="some survived"),
-    pytest.param(hopeless_orders, True, id="nothing survived"),
+    pytest.param(no_valid_orders, True, id="nothing survived"),
     pytest.param(wrong_dtype_orders, False, id="column_schema"),
 ]
 
@@ -659,11 +659,11 @@ def _both_ways(
     Same name, same schema, same rows: the two runs differ in the return type and nothing else, so their events are comparable.
     """
 
-    @dy_asset(Orders, name="orders", quarantine=quarantine)
+    @dd.asset(Orders, name="orders", quarantine=quarantine)
     def eager() -> pl.DataFrame:
         return frame()
 
-    @dy_asset(Orders, name="orders", quarantine=quarantine)
+    @dd.asset(Orders, name="orders", quarantine=quarantine)
     def lazy() -> pl.LazyFrame:
         return frame().lazy()
 
@@ -720,7 +720,7 @@ def test_a_lazy_return_executes_its_plan_once(tmp_path: Path):
     """
     plan, seen = _counted(clean_orders())
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def lazy() -> pl.LazyFrame:
         return plan
 
@@ -732,7 +732,7 @@ def test_a_plan_that_fails_the_column_schema_check_never_executes(tmp_path: Path
     """Resolving a plan's columns and dtypes costs nothing, so a frame whose columns do not match is refused before a single row is pulled through it."""
     plan, seen = _counted(wrong_dtype_orders())
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def lazy() -> pl.LazyFrame:
         return plan
 
@@ -742,12 +742,12 @@ def test_a_plan_that_fails_the_column_schema_check_never_executes(tmp_path: Path
 
 
 # --- collapsed checks ---
-@dy_asset(Orders, name="orders", quarantine=True, check_granularity="column")
+@dd.asset(Orders, name="orders", quarantine=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dy_asset(Orders, name="orders", quarantine=True, check_granularity="schema")
+@dd.asset(Orders, name="orders", quarantine=True, check_granularity="schema")
 def _by_schema() -> pl.DataFrame:
     return mixed_orders()
 
@@ -815,7 +815,7 @@ def test_schema_granularity_reports_every_rule_through_one_check(tmp_path: Path)
 def test_a_clean_run_passes_every_collapsed_check(tmp_path: Path):
     """A rule set reports 0 per member rather than going quiet, so a clean run is a row in its history."""
 
-    @dy_asset(Orders, name="orders", check_granularity="column")
+    @dd.asset(Orders, name="orders", check_granularity="column")
     def spotless() -> pl.DataFrame:
         return clean_orders()
 
@@ -976,7 +976,7 @@ class TestOutcomeSelection:
 
     def test_nothing_surviving_writes_the_rows_and_yields_no_table(self):
         """Every row is written to the quarantine. The valid table is skipped, not materialized empty, so a last-known-good table survives."""
-        yielded, written, error = self._drained(hopeless_orders(), quarantine=True)
+        yielded, written, error = self._drained(no_valid_orders(), quarantine=True)
         (invalid,) = written
 
         assert isinstance(error, NothingSurvivedError)
@@ -988,7 +988,7 @@ class TestOutcomeSelection:
 
         Compared as a `TextMetadataValue`, which is what `_addressed` puts there: `_replace` skips the normalization the constructor does, so the address is wrapped by hand.
         """
-        yielded, _, _ = self._drained(hopeless_orders(), quarantine=True)
+        yielded, _, _ = self._drained(no_valid_orders(), quarantine=True)
         checks = self._checks(yielded)
 
         assert checks
@@ -999,13 +999,13 @@ class TestOutcomeSelection:
         )
 
     def test_the_abort_names_the_address_the_writer_returned(self):
-        _, _, error = self._drained(hopeless_orders(), quarantine=True)
+        _, _, error = self._drained(no_valid_orders(), quarantine=True)
 
         assert self.ADDRESS in str(error)
 
     def test_nothing_surviving_without_a_writer_aborts_instead(self):
         """A quarantine turns three outcomes into five; without one this is the same abort as any other failing row."""
-        yielded, written, error = self._drained(hopeless_orders(), quarantine=False)
+        yielded, written, error = self._drained(no_valid_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
         assert list(results(yielded)) == []

@@ -14,7 +14,7 @@ import dagster as dg
 import polars as pl
 import pytest
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from dagster_dataframely.errors import InvalidSettingError
 from tests.scenario import (
     Orders,
@@ -59,13 +59,13 @@ def _records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
 
 
 # --- the valid rows' sample ---
-@dy_asset(Orders, name="orders")
+@dd.asset(Orders, name="orders")
 def _clean() -> pl.DataFrame:
     return clean_orders()
 
 
 def test_a_materialization_carries_a_sample_of_the_rows_it_wrote(tmp_path: Path):
-    """The key is short and unprefixed like `dataframely/valid_stats/*`: every key on a materialization is meant for a reader."""
+    """The key is short and unprefixed like `dataframely/valid_statistics/*`: every key on a materialization is meant for a reader."""
     metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
     sampled = _records(metadata["dataframely/valid_sample"])
 
@@ -76,7 +76,7 @@ def test_a_materialization_carries_a_sample_of_the_rows_it_wrote(tmp_path: Path)
 def test_the_row_sample_is_bounded(tmp_path: Path):
     """An unbounded sample would put the asset's whole data in the event log."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def wide() -> pl.DataFrame:
         return _many_orders(_DEFAULT * 2)
 
@@ -96,7 +96,7 @@ def test_the_row_sample_shows_every_column_the_row_holds(tmp_path: Path):
 def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(tmp_path: Path):
     """Absent, not empty: an empty table in the UI reads as a run that wrote no rows, not as a setting somebody turned off."""
 
-    @dy_asset(Orders, name="orders", row_sample=0)
+    @dd.asset(Orders, name="orders", row_sample=0)
     def unsampled() -> pl.DataFrame:
         return clean_orders()
 
@@ -111,7 +111,7 @@ def test_a_frame_with_no_rows_materializes_without_a_sample(tmp_path: Path):
     There is no row to show, so the key is absent for the same reason a passing check's is. Dagster refuses a table value with no records and no schema, so an empty one here would take the run down.
     """
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def nothing_today() -> pl.DataFrame:
         return clean_orders().head(0)
 
@@ -128,7 +128,7 @@ def test_the_environment_tier_sets_the_house_row_sample(
     """A platform engineer turns both samples off for a whole code location without touching an asset."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "1")
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def housed() -> pl.DataFrame:
         return clean_orders()
 
@@ -158,7 +158,7 @@ def test_both_samples_land_on_the_one_materialization_under_their_own_keys(
 ):
     """What was written and what was held back are different questions, so they are different keys on one event, not two events. `row_sample` bounds both, because both put real rows in the log."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def quarantined() -> pl.DataFrame:
         return mixed_orders()
 
@@ -171,7 +171,7 @@ def test_both_samples_land_on_the_one_materialization_under_their_own_keys(
 def test_the_invalid_sample_is_bounded_by_the_same_setting(tmp_path: Path):
     """One number governs both, so consenting to real rows in the event log is one decision."""
 
-    @dy_asset(Orders, name="orders", quarantine=True, row_sample=1)
+    @dd.asset(Orders, name="orders", quarantine=True, row_sample=1)
     def bounded() -> pl.DataFrame:
         return mixed_orders()
 
@@ -184,7 +184,7 @@ def test_the_invalid_sample_is_bounded_by_the_same_setting(tmp_path: Path):
 def test_an_invalid_sample_carries_the_rule_columns(tmp_path: Path):
     """These are the quarantine's rows, so they say why each was held back without opening the quarantine."""
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def quarantined() -> pl.DataFrame:
         return mixed_orders()
 
@@ -196,7 +196,7 @@ def test_an_invalid_sample_carries_the_rule_columns(tmp_path: Path):
 
 
 # --- the failing rows in a check's metadata ---
-@dy_asset(Orders, name="orders", quarantine=True)
+@dd.asset(Orders, name="orders", quarantine=True)
 def _quarantined() -> pl.DataFrame:
     return mixed_orders()
 
@@ -234,7 +234,7 @@ def test_a_passing_check_carries_no_sample(tmp_path: Path):
 
 
 def test_the_failure_sample_is_bounded(tmp_path: Path):
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def many_rejects() -> pl.DataFrame:
         return _invalid_orders(_DEFAULT * 2)
 
@@ -254,7 +254,7 @@ def test_the_failure_sample_is_bounded(tmp_path: Path):
 def test_a_failure_sample_of_zero_leaves_the_key_absent_rather_than_empty(
     tmp_path: Path,
 ):
-    @dy_asset(
+    @dd.asset(
         Orders,
         name="orders",
         quarantine=True,
@@ -275,7 +275,7 @@ def test_the_environment_tier_sets_the_house_failure_sample(
 ):
     monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "0")
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def housed() -> pl.DataFrame:
         return mixed_orders()
 
@@ -290,7 +290,7 @@ def test_the_environment_tier_sets_the_house_failure_sample(
 def test_an_aborting_run_still_samples_what_failed(tmp_path: Path):
     """The run writes nothing, so the checks are the only place the invalid rows exist. A sample is worth most here."""
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def aborting() -> pl.DataFrame:
         return mixed_orders()
 
@@ -304,7 +304,7 @@ def test_an_aborting_run_still_samples_what_failed(tmp_path: Path):
 
 
 # --- collapsed checks ---
-@dy_asset(Orders, name="orders", quarantine=True, check_granularity="column")
+@dd.asset(Orders, name="orders", quarantine=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
@@ -335,14 +335,16 @@ def test_a_collapsed_check_samples_every_rule_something_failed(tmp_path: Path):
 def test_turning_the_statistics_off_leaves_both_samples_on(tmp_path: Path):
     """Consenting to summary statistics is not consenting to raw values, nor the converse. Separate consents, so separate settings."""
 
-    @dy_asset(Orders, name="orders", quarantine=True, statistics=False)
+    @dd.asset(Orders, name="orders", quarantine=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
     result = materialize(tmp_path, without_statistics)
     metadata = materializations(result)[_GOOD_KEY].metadata
 
-    assert not [key for key in metadata if key.startswith("dataframely/valid_stats/")]
+    assert not [
+        key for key in metadata if key.startswith("dataframely/valid_statistics/")
+    ]
     assert "dataframely/valid_sample" in metadata
     assert (
         "dy_failed_sample" in check_evaluations(result)["dy_rule__amount__min"].metadata
@@ -350,7 +352,7 @@ def test_turning_the_statistics_off_leaves_both_samples_on(tmp_path: Path):
 
 
 def test_turning_both_samples_off_leaves_the_statistics_on(tmp_path: Path):
-    @dy_asset(
+    @dd.asset(
         Orders,
         name="orders",
         quarantine=True,
@@ -363,7 +365,7 @@ def test_turning_both_samples_off_leaves_the_statistics_on(tmp_path: Path):
     result = materialize(tmp_path, unsampled)
     metadata = materializations(result)[_GOOD_KEY].metadata
 
-    assert "dataframely/valid_stats/numeric" in metadata
+    assert "dataframely/valid_statistics/numeric" in metadata
     assert "dataframely/valid_sample" not in metadata
     assert (
         "dy_failed_sample"
@@ -371,13 +373,13 @@ def test_turning_both_samples_off_leaves_the_statistics_on(tmp_path: Path):
     )
 
 
-def test_a_sample_outside_the_vocabulary_raises_at_definition_time():
+def test_a_sample_outside_the_allowed_values_raises_at_definition_time():
     """Definition time, like every other setting, so a misconfiguration never reaches a run."""
     wrong: Any = -1
 
     with pytest.raises(InvalidSettingError) as raised:
 
-        @dy_asset(Orders, name="misconfigured", row_sample=wrong)
+        @dd.asset(Orders, name="misconfigured", row_sample=wrong)
         def _misconfigured() -> pl.DataFrame:
             return pl.DataFrame()
 

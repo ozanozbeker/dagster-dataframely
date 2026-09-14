@@ -1,6 +1,6 @@
 # Package-Sponsored Casting
 
-`dy_asset` takes no `cast` argument, and nothing in this package coerces a dtype on a user's behalf.
+`dd.asset` takes no `cast` argument, and nothing in this package coerces a dtype on a user's behalf.
 A frame whose column schema does not match the schema aborts the run through the blocking column-schema check.
 A user who wants conformance writes `Schema.cast` in their own asset body, where they can see it.
 
@@ -95,7 +95,7 @@ The last two stop the run as a raw Polars error out of `collect_all`, after the 
 
 ## What is in scope
 
-Saying all of this in the README.
+Saying all of this in the user guide.
 The doctrine is right and its stated justification was wrong: a `Duration('ns')` widened to `Duration('us')` rescales correctly, so the "thousandfold error" it warns about does not happen.
 That correction, and the fact that projection is free, are [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88).
 

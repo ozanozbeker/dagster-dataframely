@@ -31,11 +31,6 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
     Tags come from `Column.metadata`, which Dataframely stores and never reads. It is the one Dataframely attribute with no other home here, and Dagster's column tags exist for free-form key/value annotation.
 
-    Parameters
-    ----------
-    schema
-        The schema to project.
-
     Returns
     -------
     A table schema whose columns are in the schema's own order.
@@ -71,16 +66,11 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Project the quarantine's column schema onto its own Columns tab.
 
-    The schema's columns mirrored, keeping dtype, description and tags but no constraints. These rows are here because they violate them, so a `not null` constraint on a column full of nulls would state something false about every row. The same goes for the primary key: it is stated at table level on the valid table and nowhere here, because the invalid rows are where a duplicate key ends up.
+    No constraints: these rows are here because they violate them, so a `not null` on a column full of nulls would state something false about every row, and a duplicate key is exactly what ends up here.
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 
-    Then one `String` column per rule, named as that rule's asset check, so `dy_rule__amount__min` in the check list and `dy_rule__amount__min` in this table are the same string. `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
-
-    Parameters
-    ----------
-    schema
-        The schema whose invalid rows this table holds.
+    The rule columns are `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
 
     Returns
     -------
@@ -101,7 +91,7 @@ def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                 name=rule.check_name,
                 type="String",
                 description=(
-                    f"Outcome of rule '{rule.name}': 'valid' / 'invalid' / 'unknown'."
+                    f"Whether the row is 'valid', 'invalid' or 'unknown' under rule '{rule.name}'."
                 ),
             )
             for rule in described_rules(schema).values()
@@ -114,11 +104,6 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 
     One entry, the Columns tab. A mapping rather than the bare value because the decorator merges it over the user's `metadata`.
 
-    Parameters
-    ----------
-    schema
-        The schema being attached to the asset.
-
     Returns
     -------
     A mapping to hand to `dg.asset(metadata=...)`.
@@ -129,23 +114,6 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
         A user column sits inside the reserved namespace. Raised through `table_schema`, which is this function's whole body.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
-
-    Examples
-    --------
-    ```python
-    import dagster as dg
-    import dataframely as dy
-
-    import dagster_dataframely as dd
-
-
-    class Orders(dy.Schema):
-        order_id = dy.String(primary_key=True)
-
-
-    @dg.asset(metadata=dd.wiring.schema_metadata(Orders))
-    def orders() -> None: ...
-    ```
     """
     return {_COLUMN_SCHEMA_KEY: table_schema(schema)}
 
@@ -154,11 +122,6 @@ def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Build the metadata a quarantine declares about its own column schema.
 
     Its own Columns tab, because every constraint the valid table states is one these rows break.
-
-    Parameters
-    ----------
-    schema
-        The schema whose invalid rows the quarantine holds.
 
     Returns
     -------

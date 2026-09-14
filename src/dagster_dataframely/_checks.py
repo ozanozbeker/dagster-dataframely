@@ -27,9 +27,9 @@ from dagster_dataframely._samples import Row, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
-    MULTI_COLUMN_RULES,
+    SCHEMA_RULES,
     Granularity,
-    MultiColumnRules,
+    SchemaRules,
 )
 from dagster_dataframely.errors import ColumnSchemaError
 
@@ -64,7 +64,7 @@ def _single_rule_set(schema: type[dy.Schema], rule: DescribedRule) -> _RuleSet:
 def _rule_sets(
     schema: type[dy.Schema],
     check_granularity: Granularity | None,
-    multi_column_rules: MultiColumnRules | None,
+    schema_rules: SchemaRules | None,
 ) -> list[_RuleSet]:
     """Group a schema's rules under the checks that report for them.
 
@@ -74,19 +74,17 @@ def _rule_sets(
 
     Parameters
     ----------
-    schema
-        The schema to read rules from.
     check_granularity
-        How far the rules collapse, or `None` to resolve through the settings chain.
-    multi_column_rules
-        Where the rules no single column owns land, or `None` to resolve through the settings chain. Only `column` granularity reads it.
+        How far the rules collapse, or `None` to resolve through the setting's sources.
+    schema_rules
+        Where the rules no single column owns land, or `None` to resolve through the setting's sources. Only `column` granularity reads it.
 
     Returns
     -------
     One rule set per check, in the schema's own rule order, columns before the rules no column owns. A schema with no rules gets no rule sets at any granularity, because a check reporting for nothing would pass forever.
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    multi_column: MultiColumnRules = MULTI_COLUMN_RULES.resolve(multi_column_rules)
+    schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
     rules: list[DescribedRule] = list(described_rules(schema).values())
     if not rules:
         return []
@@ -107,7 +105,7 @@ def _rule_sets(
     alone: list[DescribedRule] = []
     for rule in rules:
         if rule.column is None:
-            (alone if multi_column == "per_rule" else unowned).append(rule)
+            (alone if schema_rule_checks == "per_rule" else unowned).append(rule)
         else:
             columns.setdefault(rule.column, []).append(rule)
 
@@ -141,20 +139,18 @@ def check_specs(
     # Spelled out because `dagster` exports no name for the keys a check spec accepts.
     asset: str | dg.AssetKey,
     check_granularity: Granularity | None = None,
-    multi_column_rules: MultiColumnRules | None = None,
+    schema_rules: SchemaRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
     """Build the schema's check specs, plus the column-schema check.
 
     Parameters
     ----------
-    schema
-        The schema the checks are derived from.
     asset
         The asset key the checks hang off. Build it once and pass the same key to the asset's out, so the two cannot drift.
     check_granularity
-        How far the rules collapse: one check per rule, per rule-bearing column, or one for the whole schema. Changing it on an asset that has already run orphans check history: the old names stop being reported and the new ones start empty. Unset resolves through the settings chain.
-    multi_column_rules
-        Where the rules no single column owns land at `column` granularity. Unset resolves through the settings chain.
+        How far the rules collapse: one check per rule, per rule-bearing column, or one for the whole schema. Changing it on an asset that has already run orphans check history. Unset resolves through the setting's sources.
+    schema_rules
+        Where the schema-level rules land at `column` granularity. Unset resolves through the setting's sources.
 
     Returns
     -------
@@ -163,16 +159,14 @@ def check_specs(
     Raises
     ------
     InvalidSettingError
-        A setting resolved to a value outside its vocabulary.
+        A setting resolved to a value outside its allowed values.
     ReservedColumnError
         A user column sits inside the reserved namespace.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     """
     validate_namespace(schema)
-    rule_sets: list[_RuleSet] = _rule_sets(
-        schema, check_granularity, multi_column_rules
-    )
+    rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity, schema_rules)
     column_schema = dg.AssetCheckSpec(
         COLUMN_SCHEMA_CHECK,
         asset=asset,
@@ -196,13 +190,6 @@ def column_schema_problems(
     """Compare the frame's columns and dtypes against the schema, naming every mismatch.
 
     An explicit pre-check, not a `try`/`except` around `filter`. `Schema.filter` takes a plan, so a mismatch would appear only at `collect_all`, after the plan had run, as whatever Polars raises for the first bad column. This runs first, executes nothing, and names every offending column at once. `collect_schema()` resolves a `LazyFrame`'s column schema without running it.
-
-    Parameters
-    ----------
-    schema
-        The schema the frame claims to match.
-    frame
-        The frame to compare, eager or lazy.
 
     Returns
     -------
@@ -231,8 +218,6 @@ def column_schema_result(
     ----------
     problems
         What `column_schema_problems` found, empty when the frame matched.
-    asset_key
-        The asset the result hangs off.
 
     Returns
     -------
@@ -263,22 +248,18 @@ def filtered(
 ) -> Generator[dg.AssetCheckResult, None, tuple[pl.DataFrame, dy.FailureInfo]]:
     """Run the column-schema check, then separate the valid rows from the invalid rows.
 
-    The two steps every caller takes before its own policy begins, so `cast=False` and the engine are stated once rather than once per caller.
+    The two calls every caller makes before its own policy begins, so `cast=False` and the engine are stated once rather than once per caller.
 
-    **It yields only when the column schema does not match**, and raises straight after. The result has to reach Dagster before the error does, or the failing check reports nothing; the raise is then what stops Dagster looking for the outputs the rules would have answered, so the step fails with this error rather than an opaque one about an output nobody wrote. A caller that swallowed the yield would lose the check and keep the raise.
+    **It yields only when the column schema does not match**, and raises straight after. The result has to reach Dagster before the error does, or the failing check reports nothing; the raise is then what stops Dagster looking for the outputs the rules would have answered. A caller that swallowed the yield would lose the check and keep the raise.
 
-    So it is a generator with a return value: `valid, failure = yield from filtered(...)`. The third type parameter above is what comes back from the `yield from`.
+    So it is a generator with a return value: `valid, failure = yield from filtered(...)`.
 
     `validate_namespace` is deliberately not here. ADR-0008 puts it ahead of everything, including the guard on the decorated function's return value, and `validation_results` skips this call entirely when that value is `None`.
 
     Parameters
     ----------
-    schema
-        The schema the frame must satisfy.
     frame
         The frame to check and filter, eager or lazy. A `LazyFrame` executes here, once.
-    asset_key
-        The asset the column-schema result hangs off.
 
     Yields
     ------
@@ -303,7 +284,7 @@ def filtered(
     result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
         engine="streaming"
     )
-    # Annotated because `collect_all` returns Dataframely's phantom `dy.DataFrame[Schema]`, and an asset is declared as a plain Polars frame.
+    # Annotated because `collect_all` returns Dataframely's `dy.DataFrame[Schema]`, a generic wrapper that exists for the type system and is never instantiated, and an asset is declared as a plain Polars frame.
     valid: pl.DataFrame = result
     return valid, failure
 
@@ -317,8 +298,6 @@ def rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
 
     Parameters
     ----------
-    schema
-        The schema the rules belong to.
     details
         What `FailureInfo.details()` returned, bound once by the caller because it rebuilds the frame on every call.
 
@@ -342,10 +321,6 @@ def _failed_rows(
 
     Parameters
     ----------
-    schema
-        The schema the rules belong to.
-    failure
-        What `Schema.filter` reported.
     counts
         Failure count per rule, which the caller already asked for. `counts()` is an aggregate over the invalid rows, not a lookup, so it is not read off `failure` again.
     limit
@@ -423,7 +398,7 @@ def rule_results(  # noqa: PLR0913 - the specs' settings reach the results, pinn
     asset_key: dg.AssetKey,
     severity: dg.AssetCheckSeverity,
     check_granularity: Granularity | None = None,
-    multi_column_rules: MultiColumnRules | None = None,
+    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
     """Build one result per check out of what the filter held back.
@@ -434,20 +409,12 @@ def rule_results(  # noqa: PLR0913 - the specs' settings reach the results, pinn
 
     Parameters
     ----------
-    schema
-        The schema the results report against.
-    failure
-        What `Schema.filter` reported.
     asset_key
         The asset the results hang off. Stated because a run that writes nothing yields results with no materialization to infer it from.
-    severity
-        Severity for every failing result in this run.
     check_granularity
         How far the rules collapse. Pass what the specs were derived with; the decorator does, so a run cannot report against a check list it did not declare.
-    multi_column_rules
-        Where the rules no single column owns land at `column` granularity.
     max_failure_samples
-        How many invalid rows each rule shows. Unset resolves through the settings chain.
+        How many invalid rows each rule shows. Unset resolves through the setting's sources.
 
     Returns
     -------
@@ -458,7 +425,7 @@ def rule_results(  # noqa: PLR0913 - the specs' settings reach the results, pinn
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     )
     results: list[dg.AssetCheckResult] = []
-    for rule_set in _rule_sets(schema, check_granularity, multi_column_rules):
+    for rule_set in _rule_sets(schema, check_granularity, schema_rules):
         failed: dict[str, int] = {
             rule.name: counts.get(rule.name, 0) for rule in rule_set.rules
         }
@@ -486,25 +453,21 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     asset_key: dg.AssetKey,
     severity: dg.AssetCheckSeverity,
     check_granularity: Granularity | None = None,
-    multi_column_rules: MultiColumnRules | None = None,
+    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> Iterator[dg.AssetCheckResult]:
     """Answer every check `check_specs` declared, for an asset that reports and writes nothing.
 
-    The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. Reach for it when the checks are all you want: an asset that manages its own storage, or a `@dg.multi_asset_check` reporting on a table that has already been written.
+    The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. `USER_GUIDE.md` has the arrangement this serves.
 
     `validation_results` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to rejected rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
 
-    **Severity is stated, not derived.** `validation_results` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`. So the caller says which, and every rule check in the run carries it.
-
-    **A column-schema mismatch reports that check and raises, as `validation_results` does.** The rules never ran, so nothing reports for them. The raise is what stops Dagster looking for the outputs they would have answered: a generator that raises never reaches its missing-output check, so the step fails with this error rather than an opaque one about an output nobody wrote.
+    **Severity is stated, not derived.** `validation_results` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`.
 
     The valid rows are collected with the invalid ones and discarded. It is the same `collect_all` call `validation_results` makes, so the two arrangements execute alike, and taking only the failure half measured worse: `FailureInfo` collects on `auto`, which keeps the plan's own peak.
 
     Parameters
     ----------
-    schema
-        The schema the results report against.
     frame
         The frame to evaluate, eager or lazy. A `LazyFrame` executes here, once. Nothing refuses a wrong type here; `docs/out-of-scope/wiring-argument-type-guards.md` says why (#124).
     asset_key
@@ -512,11 +475,11 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     severity
         Severity for every failing rule check. The column-schema check keeps its own.
     check_granularity
-        How far the rules collapse. Pass the value the check specs were derived with, or the results answer a check list the asset never declared. Unset resolves through the settings chain.
-    multi_column_rules
-        Where the rules no single column owns land at `column` granularity, on the same terms.
+        How far the rules collapse. Pass the value the check specs were derived with, or the results answer a check list the asset never declared. Unset resolves through the setting's sources.
+    schema_rules
+        Where the schema-level rules land at `column` granularity, on the same terms.
     max_failure_samples
-        How many invalid rows each rule shows. Unset resolves through the settings chain.
+        How many invalid rows each rule shows. Unset resolves through the setting's sources.
 
     Yields
     ------
@@ -525,44 +488,13 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
     Raises
     ------
     InvalidSettingError
-        A setting resolved to a value outside its vocabulary.
+        A setting resolved to a value outside its allowed values.
     ReservedColumnError
         A user column sits inside the reserved namespace.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema, reported through the column-schema check before this is raised.
-
-    Examples
-    --------
-    ```python
-    from collections.abc import Iterator
-
-    import dagster as dg
-    import dataframely as dy
-    import polars as pl
-
-    import dagster_dataframely as dd
-
-
-    class Orders(dy.Schema):
-        order_id = dy.String(primary_key=True)
-
-
-    KEY = dg.AssetKey(["orders"])
-
-
-    @dg.asset(name="orders", metadata=dd.wiring.schema_metadata(Orders))
-    def orders() -> pl.DataFrame:
-        return pl.DataFrame({"order_id": ["a"]})
-
-
-    @dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=KEY))
-    def orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
-        yield from dd.wiring.check_results(
-            Orders, orders, asset_key=KEY, severity=dg.AssetCheckSeverity.WARN
-        )
-    ```
     """
     # Before the settings resolve and before the frame is read, as `check_specs` does it. A schema this package cannot name is broken whatever the frame holds (ADR-0008).
     validate_namespace(schema)
@@ -575,6 +507,6 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
         asset_key=asset_key,
         severity=severity,
         check_granularity=check_granularity,
-        multi_column_rules=multi_column_rules,
+        schema_rules=schema_rules,
         max_failure_samples=max_failure_samples,
     )

@@ -1,6 +1,6 @@
 """One rule and everything this package derives about it, derived once.
 
-A Dataframely rule is a name and an expression. Its check name, the column and kind the name delimits, and the docstring behind it are this package's own derivations, and six places used to re-derive them from the string. `DescribedRule` holds them, so Dataframely's `|` is read here and nowhere else.
+A Dataframely rule is a name and an expression. Its check name, the column and rule name the `|` delimits, and the docstring behind it are this package's own derivations, and six places used to re-derive them from the string. `DescribedRule` holds them, so Dataframely's `|` is read here and nowhere else.
 
 `validate_namespace` lives here rather than in `_naming` because it asks whether a schema's columns and its rules' check names collide, and both are properties of the records below. It walked the rules a second time before (ADR-0008).
 
@@ -22,7 +22,7 @@ import polars as pl
 # tests (#16), and this is the one module that reaches for either.
 from dataframely._rule import Rule, RuleFactory
 
-from dagster_dataframely._naming import RESERVED_PREFIX, check_name
+from dagster_dataframely._naming import RESERVED_NAMESPACE, check_name
 from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnError
 
 
@@ -40,8 +40,8 @@ class DescribedRule:
         The asset-check name the `|` to `__` rewrite produces.
     column
         The column that owns the rule, or `None` for a rule no single column owns. A Python identifier cannot contain `|`, so its presence alone decides.
-    kind
-        The rule's own kind, which is the column argument Dataframely generated it from. `None` wherever `column` is.
+    rule_name
+        The column-level rule name, which is Dataframely's own word for it: it builds a column rule's key as `f"{col_name}|{rule_name}"`, and `rule_name` is the column argument the rule was generated from. `None` wherever `column` is.
     description
         The rule's docstring, dedented, or `None` for a rule with no place to carry one. A `@dy.rule()` leaves its `RuleFactory` on the class, so the decorated function and its docstring stay reachable by name after the metaclass has built the `Rule`. Column rules are generated from column arguments and have no function to document.
     """
@@ -49,7 +49,7 @@ class DescribedRule:
     name: str
     check_name: str
     column: str | None
-    kind: str | None
+    rule_name: str | None
     description: str | None
     # Dataframely's own rule, private because `expr` is the whole of what anything wants
     # from it and the laziness in the module docstring is the reason to keep the wrapper.
@@ -66,13 +66,13 @@ def _described_rule(schema: type[dy.Schema], name: str, rule: Rule) -> Described
 
     The docstring lookup is by name and needs no branch: a column rule's `|` makes `getattr` miss, and a `@dy.rule()`'s method name finds its factory.
     """
-    column, delimiter, kind = name.partition("|")
+    column, delimiter, rule_name = name.partition("|")
     factory = getattr(schema, name, None)
     return DescribedRule(
         name=name,
         check_name=check_name(name),
         column=column if delimiter else None,
-        kind=kind if delimiter else None,
+        rule_name=rule_name if delimiter else None,
         description=(
             inspect.getdoc(factory.validation_fn)
             if isinstance(factory, RuleFactory)
@@ -87,11 +87,6 @@ def described_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
 
     `with_cast=False` drops the `<column>|dtype` pseudo-rules. They would otherwise duplicate the column-schema check at a different severity and without blocking.
 
-    Parameters
-    ----------
-    schema
-        The schema to read rules from.
-
     Returns
     -------
     One record per rule, in the schema's own rule order. A caller wanting one rule indexes by the name Dataframely gives it; a caller wanting them all iterates the values.
@@ -105,11 +100,6 @@ def described_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
 def validate_namespace(schema: type[dy.Schema]) -> None:
     """Raise the two errors Dagster would otherwise report opaquely, or not at all.
 
-    Parameters
-    ----------
-    schema
-        The schema whose columns and rule names are being claimed.
-
     Raises
     ------
     ReservedColumnError
@@ -118,7 +108,7 @@ def validate_namespace(schema: type[dy.Schema]) -> None:
         Two rules rewrite to the same asset-check name.
     """
     reserved: list[str] = [
-        column for column in schema.columns() if column.startswith(RESERVED_PREFIX)
+        column for column in schema.columns() if column.startswith(RESERVED_NAMESPACE)
     ]
     if reserved:
         raise ReservedColumnError(schema.__name__, reserved)

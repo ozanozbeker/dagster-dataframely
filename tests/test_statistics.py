@@ -1,6 +1,6 @@
 """The statistics pass, asserted through the metadata a materialization carries.
 
-The families and the duration rendering are never called directly. A data consumer meets them only as tables on a materialization, so that is where they are asserted.
+The groups and the duration rendering are never called directly. A data consumer meets them only as tables on a materialization, so that is where they are asserted.
 
 Statistics are opt-out, so almost every asset here declares nothing about them.
 """
@@ -15,7 +15,7 @@ import dataframely as dy
 import polars as pl
 import pytest
 
-from dagster_dataframely import dy_asset
+import dagster_dataframely as dd
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -88,12 +88,12 @@ def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
     )
 
 
-@dy_asset(Orders, name="orders")
+@dd.asset(Orders, name="orders")
 def _orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dy_asset(Shipment, name="shipment")
+@dd.asset(Shipment, name="shipment")
 def _shipment() -> pl.DataFrame:
     return shipment_frame(_DURATIONS)
 
@@ -106,54 +106,56 @@ def _metadata(
 
 
 def _table(
-    metadata: Mapping[str, dg.MetadataValue[Any]], family: str
+    metadata: Mapping[str, dg.MetadataValue[Any]], group: str
 ) -> dict[str, dict[str, Any]]:
-    """Read one family's table back as a row per column, keyed by column name."""
-    value = metadata[f"dataframely/valid_stats/{family}"]
+    """Read one group's table back as a row per column, keyed by column name."""
+    value = metadata[f"dataframely/valid_statistics/{group}"]
     assert isinstance(value, dg.TableMetadataValue)
     rows = [dict(record.data) for record in value.records]
     return {str(row["column"]): row for row in rows}
 
 
-def _families(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    return {key for key in metadata if key.startswith("dataframely/valid_stats/")}
+def _groups(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
+    return {key for key in metadata if key.startswith("dataframely/valid_statistics/")}
 
 
 def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    """List every column that reached a table, whichever family it landed in."""
+    """List every column that reached a table, whichever group it landed in."""
     return {
         column
-        for family in _families(metadata)
-        for column in _table(metadata, family.removeprefix("dataframely/valid_stats/"))
+        for group in _groups(metadata)
+        for column in _table(
+            metadata, group.removeprefix("dataframely/valid_statistics/")
+        )
     }
 
 
-# --- which families are emitted ---
-def test_a_materialization_carries_one_table_per_family_present(tmp_path: Path):
-    """`skimr`-style statistics: four tables grouped by dtype family, so a distribution read needs no separate tool."""
+# --- which groups are emitted ---
+def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
+    """`skimr`-style statistics: four tables grouped by dtype group, so a distribution read needs no separate tool."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
-    assert _families(metadata) == {
-        "dataframely/valid_stats/numeric",
-        "dataframely/valid_stats/temporal",
-        "dataframely/valid_stats/string",
-        "dataframely/valid_stats/boolean",
+    assert _groups(metadata) == {
+        "dataframely/valid_statistics/numeric",
+        "dataframely/valid_statistics/temporal",
+        "dataframely/valid_statistics/string",
+        "dataframely/valid_statistics/boolean",
     }
 
 
-def test_a_family_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
+def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
     """An empty table would be a row of nothing in the UI, permanently."""
 
     class Weights(dy.Schema):
         weight = dy.Float64(nullable=False)
 
-    @dy_asset(Weights, name="weights")
+    @dd.asset(Weights, name="weights")
     def weights() -> pl.DataFrame:
         return pl.DataFrame({"weight": [1.0, 2.0]})
 
     metadata = _metadata(tmp_path, weights, key="weights")
 
-    assert _families(metadata) == {"dataframely/valid_stats/numeric"}
+    assert _groups(metadata) == {"dataframely/valid_statistics/numeric"}
 
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
@@ -164,25 +166,25 @@ def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Pat
     assert "address" not in _stat_columns(stats)
     assert "tags" not in _stat_columns(ordered)
     # `Orders` carries no `Bool`, so the fourth table is absent for a second reason.
-    assert _families(ordered) == {
-        "dataframely/valid_stats/numeric",
-        "dataframely/valid_stats/temporal",
-        "dataframely/valid_stats/string",
+    assert _groups(ordered) == {
+        "dataframely/valid_statistics/numeric",
+        "dataframely/valid_statistics/temporal",
+        "dataframely/valid_statistics/string",
     }
 
 
-def test_the_families_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
+def test_the_groups_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
     """A table value renders as a full-featured HTML table in the UI; markdown renders as printed text. Judged in the running UI."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert all(
-        isinstance(metadata[family], dg.TableMetadataValue)
-        for family in _families(metadata)
+        isinstance(metadata[group], dg.TableMetadataValue)
+        for group in _groups(metadata)
     )
 
 
-# --- the numeric family ---
-def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
+# --- the numeric group ---
+def test_the_numeric_group_reports_seven_statistics_per_column(tmp_path: Path):
     """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough. Both rules are visible in the row below: `min` keeps all nine digits and `mean` keeps four."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
@@ -199,7 +201,7 @@ def test_the_numeric_family_reports_seven_statistics_per_column(tmp_path: Path):
 
 
 def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
-    """The numeric family picks up `Decimal`, and the aggregate returns a Python `Decimal` that `TableRecord` rejects, so a money column would otherwise take the whole materialization down."""
+    """The numeric group picks up `Decimal`, and the aggregate returns a Python `Decimal` that `TableRecord` rejects, so a money column would otherwise take the whole materialization down."""
     amount = _table(_metadata(tmp_path, _orders), "numeric")["amount"]
 
     assert amount["min"] == 10.0
@@ -212,7 +214,7 @@ def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
     )
 
 
-# --- the temporal family ---
+# --- the temporal group ---
 def test_a_date_column_renders_as_a_date_rather_than_a_datetime(tmp_path: Path):
     """What routing through `describe()` costs: it stringifies with per-source-dtype formatting, and a `Date` comes back as a datetime nobody stored."""
     ordered_on = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
@@ -256,7 +258,7 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
     """A column nobody filled in has no bounds and no span. Zero would claim it did."""
 
-    @dy_asset(Shipment, name="shipment")
+    @dd.asset(Shipment, name="shipment")
     def unfulfilled() -> pl.DataFrame:
         return shipment_frame([None, None, None, None])
 
@@ -274,8 +276,8 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
     }
 
 
-# --- the string family ---
-def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
+# --- the string group ---
+def test_the_string_group_carries_no_value_bearing_statistic(tmp_path: Path):
     """The setting does not cover this rule, so the whole row is asserted, not the absence of one cell. A `min` here would print a real address into a shared, exported event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
@@ -291,7 +293,7 @@ def test_the_string_family_carries_no_value_bearing_statistic(tmp_path: Path):
     assert "@" not in str(string)
 
 
-def test_the_string_family_covers_every_dtype_it_claims(tmp_path: Path):
+def test_the_string_group_covers_every_dtype_it_claims(tmp_path: Path):
     """`String`, `Categorical`, `Enum` and `Binary`: four dtypes whose useful statistics are all lengths and counts, so they read as one table rather than four."""
     ordered = _table(_metadata(tmp_path, _orders), "string")
     stats = _table(_metadata(tmp_path, _shipment, key="shipment"), "string")
@@ -312,8 +314,8 @@ def test_the_string_family_covers_every_dtype_it_claims(tmp_path: Path):
     }
 
 
-# --- the boolean family ---
-def test_the_boolean_family_reports_both_counts_and_the_rate(tmp_path: Path):
+# --- the boolean group ---
+def test_the_boolean_group_reports_both_counts_and_the_rate(tmp_path: Path):
     """The rate is the computed one of the three, so it rounds where the counts do not."""
     is_gift = _table(_metadata(tmp_path, _shipment, key="shipment"), "boolean")[
         "is_gift"
@@ -334,13 +336,13 @@ def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
     tmp_path: Path,
 ):
     """Opt-out: the asset declares nothing and the tables are there."""
-    assert _families(_metadata(tmp_path, _orders))
+    assert _groups(_metadata(tmp_path, _orders))
 
 
 def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     """Off is off for the whole run, and the row count is not a statistic: it survives."""
 
-    @dy_asset(Orders, name="orders", quarantine=True, statistics=False)
+    @dd.asset(Orders, name="orders", quarantine=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
@@ -348,7 +350,7 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     (orders,) = materialized.values()
 
     assert set(materialized) == {dg.AssetKey(["orders"])}
-    assert not _families(orders.metadata)
+    assert not _groups(orders.metadata)
     assert orders.metadata["dagster/row_count"].value == 3
 
 
@@ -358,11 +360,11 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
     """The house-style source: a platform engineer turns the pass off for a whole code location without touching an asset."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
 
-    @dy_asset(Orders, name="orders")
+    @dd.asset(Orders, name="orders")
     def house_style() -> pl.DataFrame:
         return clean_orders()
 
-    assert not _families(_metadata(tmp_path, house_style))
+    assert not _groups(_metadata(tmp_path, house_style))
 
 
 def test_the_quarantine_carries_no_statistics(tmp_path: Path):
@@ -371,16 +373,16 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
     Nothing is computed, rather than computed and dropped, so a reader pays only for the pass over the table they asked for.
     """
 
-    @dy_asset(Orders, name="orders", quarantine=True)
+    @dd.asset(Orders, name="orders", quarantine=True)
     def quarantined() -> pl.DataFrame:
         return mixed_orders()
 
     metadata = _metadata(tmp_path, quarantined)
 
-    assert _families(metadata)
+    assert _groups(metadata)
     assert "dataframely/invalid_count" in metadata
     assert not [
-        name for name in metadata if name.startswith("dataframely/valid_stats/dy_")
+        name for name in metadata if name.startswith("dataframely/valid_statistics/dy_")
     ]
 
 

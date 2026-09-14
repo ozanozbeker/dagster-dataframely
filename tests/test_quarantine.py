@@ -4,7 +4,7 @@
 
 Delegation is asserted against two managers (ADR-0006). The claim is that nothing in the package knows where the rows go, and one manager cannot show that. `PolarsParquetIOManager` is a `UPathIOManager` and `DuckDBPolarsIOManager` is a `DbIOManager`: one from each base class Dagster ships.
 
-The multi-partition spelling is asserted here against a literal and pinned against `UPathIOManager`'s own path in `test_upstream_characterization.py`. This file says what the rule is; that one says whose rule it is.
+The multi-partition format is asserted here against a literal and pinned against `UPathIOManager`'s own path in `test_upstream_characterization.py`. This file says what the rule is; that one says whose rule it is.
 """
 
 from collections.abc import Callable, Sequence
@@ -21,7 +21,8 @@ from dagster._core.errors import DagsterInvalidPropertyError
 from polars.testing import assert_frame_equal
 from upath import UPath
 
-from dagster_dataframely import _quarantine, dy_asset, quarantine_spec
+import dagster_dataframely as dd
+from dagster_dataframely import _quarantine, quarantine_spec
 from dagster_dataframely.errors import NothingSurvivedError, QuarantineKeyCollisionError
 from dagster_dataframely.wiring import (
     QuarantineWriter,
@@ -36,8 +37,8 @@ from tests.scenario import (
     Orders,
     clean_orders,
     cooccurring_orders,
-    hopeless_orders,
     mixed_orders,
+    no_valid_orders,
     storage,
     tables,
     warehouse,
@@ -89,7 +90,7 @@ def test_a_partition_becomes_a_file_under_the_leaf(tmp_path: Path):
     assert path == UPath(tmp_path) / "orders_quarantine" / "2026-01-02.parquet"
 
 
-def test_a_multi_partition_key_is_spelled_in_dimension_name_order(tmp_path: Path):
+def test_a_multi_partition_key_is_formatted_in_dimension_name_order(tmp_path: Path):
     """`day` before `region` because `d` sorts before `r`, never because of the order the dimensions were declared or the key was built."""
     key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
 
@@ -306,7 +307,7 @@ def test_a_partitioned_downstream_asset_loads_the_partition_it_asked_for(
 
 
 def test_a_multi_partitioned_file_lands_where_the_manager_looks(tmp_path: Path):
-    """The spelling asserted against a literal above, asserted here against the manager that has to find it."""
+    """The format asserted against a literal above, asserted here against the manager that has to find it."""
     loaded, written = _loaded(
         tmp_path,
         partitions_def=_GRID,
@@ -325,7 +326,7 @@ _PARTITION_EXPR = {"partition_expr": "ordered_at"}
 
 _REJECTING = [
     pytest.param(mixed_orders, 3, False, id="partial"),
-    pytest.param(hopeless_orders, 2, True, id="nothing survived"),
+    pytest.param(no_valid_orders, 2, True, id="nothing survived"),
 ]
 """The two outcomes with failing rows and somewhere to put them. The third has no writer, so nothing to place."""
 
@@ -341,7 +342,7 @@ def _delegating(
     Prefixed with the warehouse schema, because `DbIOManager` addresses a table as `<schema>.<name>` off the key's last part and reads the schema off its own configuration.
     """
 
-    @dy_asset(
+    @dd.asset(
         Orders,
         name="orders",
         key_prefix=WAREHOUSE_SCHEMA,
@@ -452,7 +453,7 @@ def test_the_step_probe_does_not_widen_to_the_whole_writer(
 
     Widened to wrap `delegating_writer`, any other property raising the same error inside a real run would reroute the rows to a file rather than failing, and the run would report success over a quarantine nobody was told about.
 
-    The quarantine_dir is set and the fallback works, so a widened guard would pass by writing there. Only the narrow one leaves the directory untouched and fails the run.
+    The quarantine_dir is set and `file_writer` works, so a widened guard would pass by writing there. Only the narrow one leaves the directory untouched and fails the run.
     """
     fallback = tmp_path / "fallback"
     monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(fallback))
@@ -478,7 +479,7 @@ def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):
     """ADR-0004 promised the rows survive a run that fails, and delegation keeps that promise: the writer is called inside the asset body, before anything raises."""
     with pytest.raises(NothingSurvivedError):
         dg.materialize(
-            [_delegating(hopeless_orders, partitioned=False)],
+            [_delegating(no_valid_orders, partitioned=False)],
             resources=storage(tmp_path),
         )
 
@@ -617,7 +618,7 @@ def test_the_refusal_lands_before_the_body_runs(tmp_path: Path):
     """A key is a property of the declaration, so the run fails on the name before it spends anything computing rows with nowhere to go."""
     ran: list[int] = []
 
-    @dy_asset(Orders, name="orders", key_prefix=WAREHOUSE_SCHEMA, quarantine=True)
+    @dd.asset(Orders, name="orders", key_prefix=WAREHOUSE_SCHEMA, quarantine=True)
     def orders() -> pl.DataFrame:
         ran.append(1)
         return mixed_orders()
