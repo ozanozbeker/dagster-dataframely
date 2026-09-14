@@ -3,7 +3,7 @@
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
 Each release below carries the migration, not just the list.
 
-## Unreleased
+## 0.8.0 - 2026-09-14
 
 ### Breaking in 0.8
 
