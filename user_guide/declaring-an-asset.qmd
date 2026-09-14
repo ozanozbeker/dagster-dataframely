@@ -1,0 +1,97 @@
+---
+title: "Declaring an asset"
+---
+
+```{python}
+#| label: setup-declaring-an-asset
+#| code-fold: true
+#| code-summary: "Setup: what every example on this page assumes"
+#| output: false
+import dagster as dg
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+
+
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(nullable=False, min=0.0)
+```
+
+The schema is the only argument you have to pass, and it is positional.
+Everything else either forwards to Dagster under the name Dagster already uses, or resolves through [Settings](settings.qmd).
+
+The decorated function is the part you write, so it is where parity with `@dg.asset` matters most:
+
+```{python}
+#| label: declaring-an-asset-1
+@dd.asset(Orders, quarantine=True, group_name="sales")
+def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
+    context.log.info("%d rows arrived", raw_orders.height)
+    return raw_orders.select("order_id", "amount")
+```
+
+Upstream assets bind by parameter name, just as they do on a plain `@dg.asset`, and `ins=` and `deps=` cover the cases a name cannot express.
+Declare `context` when you want to reach the run itself: the partition key, the log, resources and configuration all hang off it.
+Nothing rewrites your signature, so what you decorate stays a function you can read.
+
+Two things exist as soon as the module imports, before you run anything:
+
+- **The Columns tab**, built from the schema.
+  Dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
+- **A check spec per rule set**, so the catalog lists the checks an asset will report and a failing one has a name before it ever fails.
+
+The asset's description comes from the schema's docstring, which [Naming](naming.qmd) covers.
+
+`@dg.asset` is the mechanism underneath, and the vocabulary.
+Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar the six parameters below, and a test asserts that in both directions.
+`config_schema` is narrowed rather than absent: it takes a mapping, not Dagster's six-member union, so a type checker refuses the five legacy forms.
+Nothing refuses them at run time.
+
+| `@dg.asset` parameter | why it is not here | what to write instead |
+| --- | --- | --- |
+| `check_specs` | the schema decides them, so nothing contests them | nothing |
+| `key` | `key_prefix` and `name` already say it, once | `key_prefix=` plus `name=` |
+| `output_required` | the outcomes that write nothing have to end the step without yielding | nothing |
+| `dagster_type` | ruled out ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and carries no severity dial, so it cannot state the failure policy | the schema, which is what this package checks against |
+| `is_virtual` | a virtual asset has no compute, so there is nothing to decorate | nothing |
+| `io_manager_def` | the forwarded `resource_defs` covers it, keyed rather than positional | `resource_defs={"io_manager": ...}` |
+
+## The schema is a single `dy.Schema`, never a `dy.Collection`
+
+Passing a Collection raises `CollectionNotSupportedError` at decoration time.
+Declare one asset per member instead, each with the member's own schema.
+
+The parts under [Hand-wiring](hand-wiring.qmd) are no route to one either, because `validation_results` is single-schema by signature.
+Assembling a Collection means reimplementing the hardest part of this package rather than composing it.
+
+## What the decorated function returns
+
+Five things are accepted:
+
+```text
+pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
+pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
+None
+```
+
+**What you return decides what happens, not how you annotated it.**
+A `LazyFrame` is filtered by the same call as a `DataFrame` whichever way the signature reads it, and a `dg.MaterializeResult` is unwrapped the same way.
+
+`@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it.
+This decorator cannot, because `Schema.filter` materializes the valid rows and the invalid rows, so the asset always stores a `DataFrame` however the decorated function arrived at one.
+Annotate it anyway and a type checker will hold you to it instead.
+Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker refuses.
+
+Return a result rather than a bare frame as soon as you have something to say about the materialization.
+It is the route this package prefers over the context, and the only one that survives a direct call.
+[Attaching your own metadata](what-a-run-produces.qmd#attaching-your-own-metadata) has both routes.
+
+Return `None` to skip, which [A partition with no data](where-invalid-rows-go.qmd#a-partition-with-no-data) covers.
+`dg.MaterializeResult(value=None)` is refused rather than read as the skip: a returned result exists to put metadata, tags or a data version on a materialization, and a skipped run has none.
+
+Return anything else and the run fails with `dg.DagsterInvariantViolationError` before the column-schema check.
+Dagster calls the decorated function dynamically, so it cannot enforce the return annotation, and without this guard a forgotten `return` surfaced two frames down as `'NoneType' object has no attribute 'collect_schema'`.

@@ -137,7 +137,7 @@ def quarantine_path(
 ) -> UPath:
     """Resolve the file an asset's invalid rows go to when no IO manager places them.
 
-    Everything but the leaf is `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` lands each quarantine beside its table. The leaf carries `_quarantine`, the same suffix the delegating writer puts on the asset key, so sharing a quarantine_dir never means sharing a file. `USER_GUIDE.md` has the layout.
+    Everything but the leaf is `UPathIOManager`'s own path, so a quarantine_dir set to a manager's `base_dir` lands each quarantine beside its table. The leaf carries `_quarantine`, the same suffix the delegating writer puts on the asset key, so sharing a quarantine_dir never means sharing a file. The user guide's *Where invalid rows go* has the layout.
 
     Parameters
     ----------
@@ -316,6 +316,34 @@ def quarantine_spec(
         Two rules rewrite to the same check name, which this spec's Columns tab would also collapse.
     dg.DagsterInvariantViolationError
         A definition and a `partitions_def` were both given. Dagster's own error, not the package's, because two sources of one fact is a wiring mistake, not a data one.
+
+    Examples
+    --------
+    ```python
+    #| echo: false
+    #| output: false
+    import dataframely as dy
+    import polars as pl
+
+    import dagster_dataframely as dd
+    ```
+
+    ```python
+    class Orders(dy.Schema):
+        order_id = dy.String(primary_key=True)
+        amount = dy.Float64(nullable=False, min=0.0)
+
+
+    @dd.asset(Orders, quarantine=True)
+    def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders.select("order_id", "amount")
+
+
+    dd.quarantine_spec(Orders, orders).key
+    ```
+
+    The spec itself, not that key, is what goes in `dg.Definitions(assets=[...])` beside
+    `orders`. The quarantine is then a node something downstream can name as an input.
     """
     validate_namespace(schema)
     if isinstance(asset, dg.AssetsDefinition):

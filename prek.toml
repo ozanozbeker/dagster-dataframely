@@ -90,7 +90,9 @@ id = "ruff-format"
 name = "ruff format"
 entry = "uv run ruff format --force-exclude"
 language = "system"
-types_or = ["python", "pyi", "jupyter", "markdown"]
+# `files` for the same reason rumdl's hook below takes one: prek types a `.qmd` as neither
+# markdown nor python, so the guide's chunks would reach no formatter at all.
+files = '\.(py|pyi|ipynb|md|qmd)$'
 require_serial = true
 
 [[repos.hooks]]
@@ -98,7 +100,10 @@ id = "rumdl"
 name = "rumdl"
 entry = "uv run rumdl check --fix"
 language = "system"
-types = ["markdown"]
+# `files` rather than `types = ["markdown"]`: prek does not type a `.qmd` as markdown, so
+# the guide's pages would be the only prose in the repo nothing lints. The rumdl CLI reads
+# them already, and `flavor = "quarto"` is what makes MD078 fire on an unlabelled chunk.
+files = '\.(md|qmd)$'
 require_serial = true
 
 [[repos.hooks]]

@@ -37,7 +37,7 @@ Both paths call `rule_results` with identical arguments, and `_rule_sets` never 
 
 Most of the proposal's payoff was that a hand-wirer would compose one part instead of seven.
 That is not an open design question.
-The guide's [Hand-wiring](../../USER_GUIDE.md#hand-wiring) section already answers it: "Nothing will be added to `dd.wiring` to make reassembling the decorator easier."
+The guide's [Hand-wiring](https://ozanozbeker.com/dagster-dataframely/user-guide/hand-wiring.html) section already answers it: "Nothing will be added to `dd.wiring` to make reassembling the decorator easier."
 It documents the current threading as deliberate in the same breath, saying `validation_results` stops short of the decorator on purpose, because the decorator resolves the settings once at definition time and hands the same values to both sides.
 
 [ADR-0001](../adr/0001-process-takes-asset-keys.md) is the principle underneath: hand-wiring does not shape the decorator's design.

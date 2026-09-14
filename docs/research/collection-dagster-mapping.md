@@ -90,9 +90,11 @@ class ShopData(dy.Collection):
 
 
 customers = pl.DataFrame({"customer_id": [1, 2], "name": ["a", "b"]})
-orders = pl.DataFrame(
-    {"customer_id": [1, 2], "order_id": [10, 20], "amount": [5.0, -1.0]}
-)  # customer 2's ONLY order is invalid
+orders = pl.DataFrame({
+    "customer_id": [1, 2],
+    "order_id": [10, 20],
+    "amount": [5.0, -1.0],
+})  # customer 2's ONLY order is invalid
 
 res = ShopData.filter({"customers": customers, "orders": orders})
 ```

@@ -15,9 +15,18 @@ Docstrings follow [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.ht
 [Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and asks for ` ```{python} ` executable cells, which it runs at build time and embeds the output of.
 Doctest is not its syntax.
 
-The fences say ` ```python ` for now rather than ` ```{python} `, because ruff's `docstring-code-format` only reaches the plain spelling.
-Adding the braces buys execution and costs that formatting, so do both in one pass once the site is wired up.
-Drop the `# 'value'` comments in the same pass: Quarto prints the real return value, and the comment would then say it twice.
+Quarto executes a fence only when it says ` ```{python} `, and where that spelling costs something the build adds it instead of the author.
+ADR-0009.
+
+A `user_guide/` page carries the braces in source, because nothing is lost: GitHub does not render a `.qmd`, and `ruff.toml` maps the extension to markdown so the formatter reaches its chunks either way.
+
+`README.md` and a docstring stay plain, and a pre-render script braces the build directory's copies.
+The README renders on GitHub and on PyPI, and neither knows the `{python}` info string, so a braced fence there loses its highlighting.
+A docstring is read by ruff, whose `docstring-code-format` reaches the plain spelling only, so a braced fence there is formatted by nothing.
+
+Ruff formats a chunk; it does not lint one, so an unused import or an ambiguous name inside a chunk reaches nobody.
+
+Write no `# 'value'` comment on an example: Quarto prints the real return value, and the comment would then say it twice.
 
 Hovering a fence in Zed renders `&nbsp;` wherever the code is indented.
 That is a pyrefly bug, not something to write around.
@@ -75,12 +84,15 @@ See `docs/agents/domain.md`.
 
 ## Where prose goes
 
-Four homes, and a sentence belongs in exactly one.
+Five homes, and a sentence belongs in exactly one.
 
-- `README.md` is a landing page and a quick start.
+- `README.md` is a landing page and a quick start, and it is also PyPI's long description and the docs site's landing page.
   What the package is, the one example, install, and links out.
-- `USER_GUIDE.md` is how to use it.
+- `user_guide/` is how to use it, one `.qmd` page per topic.
   Every behaviour, every setting, every error, with worked examples.
+  Every code cell executes when the site builds, so an example that stopped being true fails the build.
+- `ARCHITECTURE.md` is how the parts fit, for someone about to change one.
+  It is not published to the site: it addresses a maintainer, not a user.
 - Docstrings and comments are why the code is the way it is.
   A reader can reconstruct usage from the signature and the guide; they cannot reconstruct a measurement, a declined alternative, or why a private upstream API is pinned.
 - `docs/adr/` is a decision that was hard to reverse, and `docs/research/` is the measurement behind one.

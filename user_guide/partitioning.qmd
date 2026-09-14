@@ -1,0 +1,180 @@
+---
+title: "Partitioning"
+---
+
+```{python}
+#| label: setup-partitioning
+#| code-fold: true
+#| code-summary: "Setup: what every example on this page assumes"
+#| output: false
+import dagster as dg
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+
+
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(nullable=False, min=0.0)
+```
+
+`partitions_def` forwards to the underlying `dg.asset` verbatim, so partitioning needed no code here and has no setting of its own.
+The quarantine is written under the same partition key, which is what stops it escaping its asset's partitioning.
+Validation runs per partition on that partition's frame, `dagster/row_count` is that partition's valid count, and a partition whose frame drifts aborts at the column-schema check without touching any other partition's data.
+
+**A root asset reaches its own partition key through a declared `context`.**
+Root, because nothing upstream of it is a Dagster asset, so finding today's file is its own job:
+
+```{python}
+#| label: partitioning-1
+daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
+
+
+@dd.asset(Orders, partitions_def=daily)
+def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    day = context.partition_key  # "2026-01-02"
+    raw = pl.read_parquet(f"raw/orders/{day}.parquet")
+    return raw.select("order_id", "amount")
+```
+
+That is how a partitioned `@dg.asset` does it, and this decorator is no different.
+It is also what keeps the decorated function testable, since `dg.build_asset_context(partition_key=...)` can supply a key and nothing else can.
+
+**Downstream of it, the key stops being your problem.**
+An asset on the same partitions gets that partition's rows bound to the parameter, because the IO manager read the one file:
+
+```{python}
+#| label: partitioning-2
+@dd.asset(Orders, partitions_def=daily)
+def priority_orders(orders: pl.DataFrame) -> pl.DataFrame:
+    # orders is one partition's rows, the same shape unpartitioned code sees
+    return orders.filter(pl.col("amount") > 100)
+```
+
+No `context`, no key, no path.
+This is the body you would write with no partitioning at all, which is the point: partitioning is a property of the asset, not of the code inside it.
+
+**A fan-in over every partition arrives as one frame per partition.**
+An unpartitioned asset that depends on the whole of a partitioned one gets a dict instead, because the IO manager reads every key and assembles the results:
+
+```{python}
+#| label: partitioning-3
+@dd.asset(Orders)
+def rollup(orders: dict[str, pl.DataFrame]) -> pl.DataFrame:
+    # orders == {
+    #     "2026-01-01": pl.DataFrame,   # that day's rows
+    #     "2026-01-02": pl.DataFrame,
+    # }
+    return pl.concat(orders.values())
+```
+
+Annotate the dict, not the frame.
+The obvious annotation, `pl.DataFrame`, fails Dagster's type check after every partition has already been read.
+
+**Swap the element type and the whole fan-in goes lazy:**
+
+```{python}
+#| label: partitioning-4
+@dd.asset(Orders)
+def rollup(orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
+    # orders == {
+    #     "2026-01-01": pl.LazyFrame,   # a scan of that day's file
+    #     "2026-01-02": pl.LazyFrame,
+    # }
+    return pl.concat(orders.values())
+```
+
+Every value is now that partition's scan rather than its rows, so the concat is one plan over every partition and nothing is read until the sink runs.
+That is the difference worth having at a hundred partitions: the eager form holds all of them in memory at once, and this one holds the engine's buffers.
+The keys are the same either way, and so is the validation that follows.
+
+**A `MultiPartitionsDefinition` needs nothing special either.**
+It forwards like any other, so a grid partitions the asset and the quarantine cell for cell:
+
+```{python}
+#| label: partitioning-5
+grid = dg.MultiPartitionsDefinition({
+    "day": dg.DailyPartitionsDefinition(start_date="2026-01-01"),
+    "region": dg.StaticPartitionsDefinition(["eu", "us"]),
+})
+
+
+@dd.asset(Orders, partitions_def=grid)
+def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    cell = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
+    raw = pl.read_parquet(f"raw/orders/{cell['region']}/{cell['day']}.parquet")
+    return raw.select("order_id", "amount")
+
+
+@dd.asset(Orders, partitions_def=grid, quarantine=True)
+def priority_orders(
+    context: dg.AssetExecutionContext, orders: pl.DataFrame
+) -> pl.DataFrame:
+    # orders is one cell's rows: one day, one region
+    return orders.filter(pl.col("amount") > 100)
+```
+
+The root one handles the grid; the one below it does not, exactly as with a single dimension.
+That is worth saying because a grid looks like it should arrive nested, and it never does: an asset on the same grid gets **one** frame, the cell it is running for.
+
+`context.partition_key` is a `dg.MultiPartitionKey`, a `str` subclass rendering as `2026-01-01|eu`.
+Read a dimension off `keys_by_dimension` rather than parsing that string, because the string's order is not yours: both it and the paths below sort by dimension name, so renaming a dimension reorders them.
+
+Under a `UPathIOManager`, that is one file per cell, nested one directory per dimension:
+
+```text
+orders/2026-01-01/eu.parquet
+orders/2026-01-01/us.parquet
+priority_orders/2026-01-01/eu.parquet
+priority_orders_quarantine/2026-01-01/eu.parquet
+```
+
+**A fan-in over a grid is flat, not nested.**
+One entry per cell, keyed by the same rendering:
+
+```{python}
+#| label: partitioning-6
+@dd.asset(Orders)
+def eu_orders(orders: dict[dg.MultiPartitionKey, pl.LazyFrame]) -> pl.LazyFrame:
+    # orders == {
+    #     "2026-01-01|eu": pl.LazyFrame,   # one cell, one scan
+    #     "2026-01-01|us": pl.LazyFrame,
+    #     "2026-01-02|eu": pl.LazyFrame,
+    #     "2026-01-02|us": pl.LazyFrame,
+    # }
+    return pl.concat(
+        frame
+        for key, frame in orders.items()
+        if key.keys_by_dimension["region"] == "eu"
+    )
+```
+
+Every key is a `MultiPartitionKey` at runtime, so grouping by a dimension is a `keys_by_dimension` read rather than a parse of the string.
+Naming the key type in the annotation, as above, is what makes that read type-check as well as run.
+`dict[str, pl.LazyFrame]` is accepted too and leaves you casting.
+
+Collapsing one dimension is a partition mapping and nothing more.
+An asset partitioned by `day` alone, depending on the grid through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`, gets that day's regions and nothing else: two entries rather than four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
+
+## Automation
+
+`automation_condition` and `freshness_policy` forward to `dg.asset` verbatim, like everything else, and they cover the asset.
+
+There is nothing to wire up to the quarantine, and nothing you can wire up.
+The rows are written inside the asset's own step, with no schedule, sensor or condition in between, and the quarantine emits no materialization event.
+So `dg.AutomationCondition.eager()` on a downstream asset has nothing to react to, however you declare it.
+
+**Automate on the check instead.**
+A rule that failed is a failing check with its own history, which is the place Dagster gives you for exactly this:
+
+```{python}
+#| label: partitioning-7
+@dg.asset_check(asset=orders, name="triage_needed")
+def triage_needed() -> dg.AssetCheckResult: ...
+```
+
+Or read the quarantine on a schedule, through the spec `quarantine_spec` gives it.
+What you cannot do is treat it as an event source, and that is a property of it being evidence rather than an asset.

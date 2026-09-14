@@ -9,7 +9,7 @@ Each release below carries the migration, not just the list.
 
 `temp_dir` and `DAGSTER_DATAFRAMELY_TEMP_DIR` are gone.
 A `LazyFrame` return is filtered in the engine, so there is no staging file to place: drop the argument and the variable, and nothing else changes.
-The measurements are in §12 of [`docs/research/lazyframe-end-to-end.md`](docs/research/lazyframe-end-to-end.md).
+The measurements are in §12 of [`docs/research/lazyframe-end-to-end.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/lazyframe-end-to-end.md).
 
 Two functions are renamed, and nothing about either changes but the name.
 A function here is named after what it returns, which [`CLAUDE.md`](CLAUDE.md) now writes down, and these two were the public exceptions.
@@ -65,7 +65,7 @@ A setting with no argument now names the two sources it does resolve through, an
 
 ### Documentation in 0.8
 
-The README is a landing page and a quick start. [`USER_GUIDE.md`](USER_GUIDE.md) is everything else, and this file is the upgrade log.
+The README is a landing page and a quick start. [the user guide](https://ozanozbeker.com/dagster-dataframely/) is everything else, and this file is the upgrade log.
 
 `dataframely/invalid_by_rules` names each rule the way the quarantine's own columns name it, at every granularity, and the guide used to say it names them the way the check list does.
 Those agree only at `rule` granularity, so a reader at `column` or `schema` was being sent to a check name that does not exist.
@@ -75,7 +75,7 @@ Those agree only at `rule` granularity, so a reader at `column` or `schema` was 
 ### Breaking in 0.7
 
 The quarantine moves out of the graph and onto your own IO manager, and this package stops shipping storage.
-Both are ADRs: [0004](docs/adr/0004-the-quarantine-is-a-file-not-an-asset.md) and [0006](docs/adr/0006-the-quarantine-is-written-by-the-assets-own-io-manager.md).
+Both are ADRs: [0004](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/0004-the-quarantine-is-a-file-not-an-asset.md) and [0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/0006-the-quarantine-is-written-by-the-assets-own-io-manager.md).
 
 | 0.6 | 0.7 | note |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Both are ADRs: [0004](docs/adr/0004-the-quarantine-is-a-file-not-an-asset.md) an
 | `dd.errors.QuarantineSettingError` | none | nothing on the quarantine is configurable now |
 | `dd.errors.UnwritableDtypeError` | none | it belonged to the CSV writer |
 | `dd.wiring.quarantine_table_schema` | none | a quarantine spec carries its own Columns tab |
-| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](USER_GUIDE.md#hand-wiring); renamed again in 0.8 |
+| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](https://ozanozbeker.com/dagster-dataframely/user-guide/hand-wiring.html); renamed again in 0.8 |
 | `dy_schema__dtypes` | `dy_schema__columns` | this orphans that check's history |
 | `sample` | `dataframely/valid_sample` | |
 | `stats/<family>` | `dataframely/valid_stats/<family>` | renamed again in 0.8 |

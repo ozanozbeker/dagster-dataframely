@@ -1,3 +1,9 @@
+# A `.qmd` is markdown, and saying so is what lets the formatter reach the guide's code
+# chunks: without it ruff parses the file as Python and dies on the YAML frontmatter. Ruff
+# formats markdown but does not lint it, so an unused import or an ambiguous name inside a
+# chunk still reaches nobody.
+extension = { qmd = "markdown" }
+
 # Ruff configuration file
 # See: https://docs.astral.sh/ruff/
 
@@ -70,5 +76,9 @@ runtime-evaluated-decorators = [
 convention = "numpy"
 
 [format]
+# Markdown formatting is still preview at 0.16.7, and it is the whole reason `extension`
+# above is set. The cost is preview's other formatter changes, which restyled 153 lines
+# across six files when this landed; none of them changed behaviour.
+preview = true
 docstring-code-format = true
 line-ending = "lf"

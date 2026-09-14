@@ -1,0 +1,103 @@
+---
+title: "Errors"
+---
+
+```{python}
+#| label: setup-errors
+#| code-fold: true
+#| code-summary: "Setup: what every example on this page assumes"
+#| output: false
+import dagster as dg
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+
+
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(nullable=False, min=0.0)
+```
+
+Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
+Every message names the schema, the culprit and the fix.
+
+| error | raised | what to do |
+| --- | --- | --- |
+| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member |
+| `ReservedColumnError` | at decoration, and from every public function taking a schema | rename the column that starts with `dy_` |
+| `UnnameableColumnError` | the same | spell the column in `A-Za-z0-9_`, renaming the `alias=` that named it |
+| `CheckNameCollisionError` | the same | rename one of the two rules that rewrite alike |
+| `InvalidSettingError` | on resolve, from whichever source supplied the value | fix the value at the source the message names |
+| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame, or use `context.add_asset_metadata`, or write a plain `@dg.asset` |
+| `MaterializeResultFieldError` | the same | drop `asset_key=` or `check_results=`; the decorator owns both |
+| `ColumnSchemaError` | after the column-schema check fails | fix the producing function, or cast deliberately in the asset body |
+| `ValidationAbortError` | after the filter, with no quarantine declared | fix the rows upstream, add `quarantine=True`, or drop them deliberately |
+| `NothingSurvivedError` | after the filter, with a quarantine declared and nothing left | read the quarantine at the address in the message |
+| `QuarantineKeyCollisionError` | before the body, on every run of a quarantined asset | rename the colliding asset, or use `quarantine_spec` |
+| `QuarantineDirError` | where the rows are handed over, under direct invocation only | set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or run the asset |
+
+`ColumnSchemaError` names every offending column at once, with its expected and actual dtype, and the same list feeds the failing check's `dy_schema__errors` table, so the two cannot disagree.
+
+`ValidationAbortError` and `NothingSurvivedError` both state the damage per rule.
+The counts can sum past the invalid-row count, because one row can break several rules.
+
+## Three ways to get this wrong
+
+**Do not declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.** `orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
+An asset of your own keyed `orders_quarantine` resolves to that same address, so the two writes land on one table or one file and whichever ran last wins.
+Every run of the quarantined asset checks first and fails before its body:
+
+```text
+QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows go to
+'orders_quarantine', which another asset in this code location already materializes.
+```
+
+Rename your asset, or drop `quarantine=True` from `orders`.
+If that asset *is* your quarantine table, `quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
+
+**A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
+Under PEP 563 every annotation reaches Dagster as a string.
+Its check on the `context` parameter compares against the real classes, so it refuses `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
+
+```text
+DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.AssetExecutionContext.
+`context` must be annotated with AssetExecutionContext, AssetCheckExecutionContext, OpExecutionContext, or left blank.
+```
+
+That is Dagster's restriction rather than one this package imposes.
+`@dg.asset` refuses the same annotation with the same message, and both accept the parameter left blank, which is the one option in that message PEP 563 leaves standing:
+
+```{python}
+#| label: errors-1
+@dd.asset(Orders)
+def orders(context) -> pl.DataFrame:
+    context.log.info("run %s", context.run_id)
+    return pl.read_parquet("raw/orders.parquet").select("order_id", "amount")
+```
+
+**A `@dy.rule()` body needs its class parameter.**
+Write one without it and the class still builds and the asset still defines.
+The run then fails when this package reads the rule's expression for the check metadata:
+
+```text
+TypeError: Orders.amount_is_positive() takes 0 positional arguments but 1 was given
+```
+
+`@dy.rule()` is a classmethod-style decorator, so the body takes `cls`:
+
+```{python}
+#| label: errors-2
+class Orders(dy.Schema):
+    status = dy.String(nullable=False)
+    amount = dy.Float64(nullable=False)
+
+    @dy.rule()
+    def paid_orders_have_amount(cls) -> pl.Expr:
+        """Paid orders must carry a positive amount."""
+        return (cls.status.col != "paid") | (cls.amount.col > 0)
+```
+
+The docstring is not decoration: it becomes that check's description in the catalog.
