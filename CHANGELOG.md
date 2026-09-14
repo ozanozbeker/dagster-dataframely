@@ -79,16 +79,16 @@ Both are ADRs: [0004](docs/adr/0004-the-quarantine-is-a-file-not-an-asset.md) an
 
 | 0.6 | 0.7 | note |
 | --- | --- | --- |
-| `dd.dataframely_asset(schema=Orders)` | `dd.asset(Orders)` | the schema is positional |
+| `dd.dataframely_asset(schema=Orders)` | `dd.dy_asset(Orders)` | the schema is positional; renamed again in 0.8 |
 | `quarantine=dg.AssetOut()` | `quarantine=True` | it is a `bool`, and `True` needs no configuration |
 | `dd.DataframelyParquetIOManager` | `dagster_polars.PolarsParquetIOManager` | this package ships no IO manager |
 | `dd.DataframelyCSVIOManager` | none | the CSV codecs went with it; use parquet or a warehouse |
-| the quarantine was a second out | `dd.quarantine_spec(Orders, orders)` | and only if you want it in the graph |
+| the quarantine was a second out | `dd.build_quarantine_spec(Orders, orders)` | and only if you want it in the graph; renamed again in 0.8 |
 | `dd.errors.SchemaShapeError` | `dd.errors.ColumnSchemaError` | "shape" was Polars' word for something else |
 | `dd.errors.QuarantineSettingError` | none | nothing on the quarantine is configurable now |
 | `dd.errors.UnwritableDtypeError` | none | it belonged to the CSV writer |
 | `dd.wiring.quarantine_table_schema` | none | a quarantine spec carries its own Columns tab |
-| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.validation_results(..., quarantine_writer=...)` | see [Hand-wiring](USER_GUIDE.md#hand-wiring) |
+| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](USER_GUIDE.md#hand-wiring); renamed again in 0.8 |
 | `dy_schema__dtypes` | `dy_schema__columns` | this orphans that check's history |
 | `sample` | `dataframely/valid_sample` | |
 | `stats/<family>` | `dataframely/valid_stats/<family>` | renamed again in 0.8 |

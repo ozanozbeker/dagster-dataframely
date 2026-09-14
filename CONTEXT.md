@@ -136,8 +136,8 @@ _Avoid_: pill, chip
 
 ### Configuration
 
-**Setting**: One configurable value, resolved through three sources in order: the `dd.asset` argument, then `DAGSTER_DATAFRAMELY_*`, then the package default.
-`quarantine_dir` skips the first, because it takes no argument.
+**Setting**: One configurable value, resolved through three sources, each overriding the one before: the package default, then `DAGSTER_DATAFRAMELY_*`, then the `dd.asset` argument.
+`quarantine_dir` has only the first two, because it takes no argument.
 Say "the setting's sources", not "the settings chain".
 _Avoid_: knob, option, settings chain
 

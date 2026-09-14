@@ -2,7 +2,7 @@
 
 `USER_GUIDE.md` has each one with what to do about it.
 
-This is the one module in the package with a public name. Every other module is underscore-private so the file tree stays free to change. Eleven error names in the root namespace would be eleven of its twenty-six, and what a user reaches for most would be outnumbered by what they reach for after something went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0. Dataframely keeps its four in `dataframely.exc`.
+This is the one module in the package with a public name. Every other module is underscore-private so the file tree stays free to change. Thirteen error names in the root namespace would be thirteen of its thirty, and what a user reaches for most would be outnumbered by what they reach for after something went wrong. Polars settled the same question the same way and deprecated its root re-exports in 1.0.0. Dataframely keeps its four in `dataframely.exc`.
 
 `errors`, not `exceptions` or `exc`, because every member ends in `Error` and the base is `DagsterDataframelyError`, following Dagster's own `DagsterError`.
 

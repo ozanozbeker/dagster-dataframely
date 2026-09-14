@@ -95,7 +95,7 @@ def test_nothing_public_leaks_past_any_export_list():
 def test_only_errors_and_wiring_have_public_module_names():
     """One responsibility per module and no promise about any of them, so the tree stays free to change.
 
-    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Eleven error names and eleven wiring names would be twenty-two of a namespace of twenty-six, and a user reaches for neither set to get work done. Polars answered errors the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
+    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Thirteen error names and thirteen wiring names would be twenty-six of a namespace of thirty, and a user reaches for neither set to get work done. Polars answered errors the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
 
     Each costs the freedom to rename that one file. `errors` is a leaf holding one class per failure, so it has nothing to split along. `wiring` re-exports rather than defines, so everything behind it stays free to move.
     """

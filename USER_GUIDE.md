@@ -49,7 +49,16 @@ Two things exist as soon as the module imports, before you run anything:
 The asset's description comes from the schema's docstring, which [Naming](#naming) covers.
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.
-Anything `@dg.asset` lets you say about one asset, you can say here under the same name, and a test asserts that in both directions.
+Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar the six parameters below, and a test asserts that in both directions.
+
+| `@dg.asset` parameter | why it is not here | what to write instead |
+| --- | --- | --- |
+| `check_specs` | the schema decides them, so nothing contests them | nothing |
+| `key` | `key_prefix` and `name` already say it, once | `key_prefix=` plus `name=` |
+| `output_required` | the outcomes that write nothing have to end the step without yielding | nothing |
+| `dagster_type` | ruled out ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and carries no severity dial, so it cannot state the failure policy | the schema, which is what this package checks against |
+| `is_virtual` | a virtual asset has no compute, so there is nothing to decorate | nothing |
+| `io_manager_def` | the forwarded `resource_defs` covers it, keyed rather than positional | `resource_defs={"io_manager": ...}` |
 
 ### The schema is a single `dy.Schema`, never a `dy.Collection`
 
@@ -102,7 +111,8 @@ Declaring a quarantine **is** your consent to partial data, so what an invalid r
 | `None`, meaning no source data | skipped | not written | all pass | succeeds |
 
 Six rows, and they are the six ways a run can end.
-Severity is a property of the run's outcome rather than of any one rule, so no two sibling checks in a run can carry different severities.
+A rule check's severity is a property of the run's outcome rather than of any one rule, so every rule check in a run carries the same one.
+The column-schema check keeps its own, `ERROR`, whatever the outcome and whatever severity the rules beside it were graded with.
 
 **Without a quarantine, every row has to be valid.**
 A run with even one failing row writes nothing, so your last-known-good table stays in place.
@@ -710,6 +720,8 @@ flowchart TB
     end
 ```
 
+Six steps in a line: the `LazyFrame` is returned, the column-schema check runs, `Schema.filter` executes the plan on the streaming engine, the valid rows and the invalid rows land in memory, the per-rule checks report, and a `DataFrame` goes to the IO manager.
+
 ### Reads dispatch on the annotation
 
 Annotate an input `pl.LazyFrame` and the IO manager hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded:
@@ -888,7 +900,7 @@ A schema's constraints reach a data consumer as three kinds of text, and each fa
 | --- | --- | --- | --- |
 | Columns tab | the rendered column constraint | the rule name | never the docstring |
 | check name | always `dy_rule__<rule>` | | |
-| check description | the rule's docstring | `<column> <rendered constraint>` | the rule name |
+| check description | the rule's docstring | `<column> <rendered constraint>` | the whole name Dataframely reports, column part included |
 | collapsed check description | each member's rendered constraint | that member's rule name | never the docstring |
 
 The docstring stays out of the Columns tab and out of a collapsed check's description.

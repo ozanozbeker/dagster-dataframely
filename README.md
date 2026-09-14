@@ -35,7 +35,8 @@ The decorated function is an ordinary Dagster asset body.
 Upstream assets bind as parameters, you declare `context` if you want it, and you can return any of five things: a frame, or a `dg.MaterializeResult` carrying one, eager or lazy, or `None`.
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.
-Anything `@dg.asset` lets you say about one asset, you can say here under the same name, and a test asserts that in both directions.
+Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar six parameters the decorator owns or rules out.
+A test asserts that in both directions, and [`USER_GUIDE.md`](USER_GUIDE.md#declaring-an-asset) lists the six.
 
 ## Package philosophy
 
@@ -56,7 +57,7 @@ Narrowing is free, though: `Schema.filter` drops the columns the schema never de
 Leave it off and one failing row stops the write, so your last-known-good table stays in place.
 
 **The strictness belongs to the decorator, not to the package.**
-Every part `dd.asset` is assembled from is exported, so you can take one feature into an asset shaped differently: the Columns tab onto an asset that writes its own storage, or the checks onto a table something else already wrote.
+It is assembled from parts the package also exports under `dd.wiring`, and each one plugs a single feature into an asset the decorator does not fit: the Columns tab onto an asset that writes its own storage, or the checks onto a table something else already wrote.
 
 ## Quick start
 
@@ -75,7 +76,7 @@ Anything addressed by asset key works, because nothing here learns which manager
 > **Pre-1.0.**
 > The public surface is covered by a characterization test rather than held by convention, so it will not move quietly.
 > It can still move: a `0.x` minor release is where a breaking change lands.
-> Pin `dagster-dataframely>=0.8,<0.9` if that matters to you.
+> Pin to one minor if that matters to you: `>=` the version you installed, `<` the next minor.
 > Coming from 0.6 or 0.7, read [`CHANGELOG.md`](CHANGELOG.md) first.
 
 Declare the schema and the asset as above, then tell the code location where to write:
