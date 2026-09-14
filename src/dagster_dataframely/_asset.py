@@ -282,12 +282,18 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 
             if not declares_context:
                 # `functools.wraps` forwards the decorated function's own signature, which Dagster resolves the asset's inputs from. Prepending the context is the whole edit; the rest is the decorated function's parameter list, untouched.
+                # The context takes the first parameter's own kind when that kind is positional-only, because `inspect.Signature` refuses a positional-or-keyword parameter ahead of one. Dagster cannot resolve a positional-only input either way, so this buys its refusal rather than a bare `ValueError` naming no asset.
+                # Unannotated: `inspect` keeps the kind enum private, and the name buys nothing a reader does not already see.
+                leading = (
+                    parameters[0].kind
+                    if parameters
+                    and parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
+                    else inspect.Parameter.POSITIONAL_OR_KEYWORD
+                )
                 compute.__signature__ = inspect.Signature(  # pyrefly: ignore[missing-attribute]
                     [
                         inspect.Parameter(
-                            "context",
-                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                            annotation=dg.AssetExecutionContext,
+                            "context", leading, annotation=dg.AssetExecutionContext
                         ),
                         *parameters,
                     ]
