@@ -68,7 +68,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Project the quarantine's column schema onto its own Columns tab.
 
-    No constraints: these rows are here because they violate them, so a `not null` on a column full of nulls would state something false about every row, and a duplicate key is exactly what ends up here.
+    No constraints: these rows are here because they fail them, so a `not null` on a column full of nulls would state something false about every row, and a duplicate key is exactly what ends up here.
 
     Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
 

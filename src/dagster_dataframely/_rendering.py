@@ -117,7 +117,7 @@ def _column_constraint(column: dy.Column, rule_name: str) -> str | None:  # noqa
             return None
 
 
-def rule_text(schema: type[dy.Schema], rule: DescribedRule) -> str | None:
+def _rule_text(schema: type[dy.Schema], rule: DescribedRule) -> str | None:
     """Render the constraint a rule states, or `None` when it states none.
 
     Every place reads a rule from here, so a bound cannot say one thing in the Columns tab and another in the check list.
@@ -156,7 +156,7 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
             continue
         # The fallback is the rule's own name rather than the `|`-delimited whole: the row already carries the column name. The whole name is what a check description falls back to, and what `dy_rule` reports, so the delimiter is visible there and not here.
         constraints[rule.column].append(
-            rule_text(schema, rule) or rule.rule_name or rule.name
+            _rule_text(schema, rule) or rule.rule_name or rule.name
         )
     return constraints
 
@@ -171,7 +171,7 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
     One entry per schema-level rule, in the schema's own rule order.
     """
     return [
-        rule_text(schema, rule) or rule.name
+        _rule_text(schema, rule) or rule.name
         for rule in described_rules(schema).values()
         if rule.column is None
     ]
@@ -188,7 +188,7 @@ def check_description(schema: type[dy.Schema], rule: DescribedRule) -> str:
     """
     if rule.description:
         return rule.description
-    rendered: str | None = rule_text(schema, rule)
+    rendered: str | None = _rule_text(schema, rule)
     if rendered is None:
         return rule.name
     if rule.column is None:
@@ -208,5 +208,5 @@ def column_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule])
     The constraints, comma-separated.
     """
     return ", ".join(
-        rule_text(schema, rule) or rule.rule_name or rule.name for rule in rules
+        _rule_text(schema, rule) or rule.rule_name or rule.name for rule in rules
     )

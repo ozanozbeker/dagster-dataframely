@@ -22,6 +22,7 @@ from tests.scenario import (
     materializations,
     materialize,
     mixed_orders,
+    records,
 )
 
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
@@ -63,7 +64,7 @@ _DURATIONS: list[dt.timedelta | None] = [
 """The three durations the ticket names, `8d`, `1m 30s` and `2h 5m`, plus the null every column carries."""
 
 
-def shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
+def _shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
     """Build four rows: three with values and one entirely null.
 
     `weight`'s mean and standard deviation run past four decimal places while its minimum is a stored value, so one frame shows both arms of the rounding rule.
@@ -95,7 +96,7 @@ def _orders() -> pl.DataFrame:
 
 @dd.asset(Shipment, name="shipment")
 def _shipment() -> pl.DataFrame:
-    return shipment_frame(_DURATIONS)
+    return _shipment_frame(_DURATIONS)
 
 
 def _metadata(
@@ -110,16 +111,14 @@ def _table(
 ) -> dict[str, dict[str, Any]]:
     """Read one group's table back as a row per column, keyed by column name."""
     value = metadata[f"dataframely/valid_statistics/{group}"]
-    assert isinstance(value, dg.TableMetadataValue)
-    rows = [dict(record.data) for record in value.records]
-    return {str(row["column"]): row for row in rows}
+    return {str(row["column"]): row for row in records(value)}
 
 
 def _groups(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
     return {key for key in metadata if key.startswith("dataframely/valid_statistics/")}
 
 
-def _stat_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
+def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
     """List every column that reached a table, whichever group it landed in."""
     return {
         column
@@ -160,11 +159,11 @@ def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
     """`List` and `Struct` have nothing to say beyond their counts, and a fifth table holding two columns is not worth the row it takes."""
-    stats = _metadata(tmp_path, _shipment, key="shipment")
+    shipped = _metadata(tmp_path, _shipment, key="shipment")
     ordered = _metadata(tmp_path, _orders)
 
-    assert "address" not in _stat_columns(stats)
-    assert "tags" not in _stat_columns(ordered)
+    assert "address" not in _statistics_columns(shipped)
+    assert "tags" not in _statistics_columns(ordered)
     # `Orders` carries no `Bool`, so the fourth table is absent for a second reason.
     assert _groups(ordered) == {
         "dataframely/valid_statistics/numeric",
@@ -277,7 +276,7 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
 
     @dd.asset(Shipment, name="shipment")
     def unfulfilled() -> pl.DataFrame:
-        return shipment_frame([None, None, None, None])
+        return _shipment_frame([None, None, None, None])
 
     fulfilled_in = _table(_metadata(tmp_path, unfulfilled, key="shipment"), "temporal")[
         "fulfilled_in"
@@ -313,14 +312,14 @@ def test_the_string_group_carries_no_value_bearing_statistic(tmp_path: Path):
 def test_the_string_group_covers_every_dtype_it_claims(tmp_path: Path):
     """`String`, `Categorical`, `Enum` and `Binary`: four dtypes whose useful statistics are all lengths and counts, so they read as one table rather than four."""
     ordered = _table(_metadata(tmp_path, _orders), "string")
-    stats = _table(_metadata(tmp_path, _shipment, key="shipment"), "string")
+    shipped = _table(_metadata(tmp_path, _shipment, key="shipment"), "string")
 
     # `status` is an `Enum` and `payload` is `Binary`.
     assert {"order_id", "email", "tracking_id", "status", "payload", "note"} <= set(
         ordered
     )
     assert ordered["payload"]["min_len"] == 2
-    assert stats["region"] == {
+    assert shipped["region"] == {
         "column": "region",
         "count": 4,
         "null_count": 1,
@@ -385,7 +384,7 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
 
 
 def test_the_quarantine_carries_no_statistics(tmp_path: Path):
-    """Nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). The run says three things about the held-back rows: their count, which rules rejected them together, and a sample.
+    """Nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). The run says three things about the held-back rows: their count, which rules they failed together, and a sample.
 
     Nothing is computed, rather than computed and dropped, so a reader pays only for the pass over the table they asked for.
     """
@@ -401,7 +400,7 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
     # The rule columns are the quarantine's own and they are strings, so a pass over the
     # held-back rows instead of the written ones would land them in the string group.
     assert not [
-        column for column in _stat_columns(metadata) if column.startswith("dy_")
+        column for column in _statistics_columns(metadata) if column.startswith("dy_")
     ]
 
 

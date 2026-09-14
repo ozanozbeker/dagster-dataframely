@@ -42,11 +42,11 @@ def _cell(value: object) -> Cell:
 
 def _rounded(value: object) -> Cell:
     """Render a derived statistic, rounding what `_cell` returns."""
-    cell = _cell(value)
-    return round(cell, _PLACES) if isinstance(cell, float) else cell
+    rendered = _cell(value)
+    return round(rendered, _PLACES) if isinstance(rendered, float) else rendered
 
 
-def _record(column: str, stats: Mapping[str, object]) -> dg.TableRecord:
+def _record(column: str, aggregates: Mapping[str, object]) -> dg.TableRecord:
     """Render one column's aggregates as a table row.
 
     The rounding rule lives here, not in the expressions, so it is stated once for every group instead of once per statistic.
@@ -59,7 +59,7 @@ def _record(column: str, stats: Mapping[str, object]) -> dg.TableRecord:
         {"column": column}
         | {
             name: _rounded(value) if name in _DERIVED else _cell(value)
-            for name, value in stats.items()
+            for name, value in aggregates.items()
         }
     )
 
@@ -179,10 +179,10 @@ def _group_table(
     The group's table, one row per column in the frame's own order.
     """
     # One row of structs, one struct per column. `Any` is the type a row of anything comes back as.
-    stats: dict[str, Any] = frame.select(
+    row: dict[str, Any] = frame.select(
         aggregate(name, dtype) for name, dtype in columns.items()
     ).row(0, named=True)
-    return dg.MetadataValue.table([_record(name, stats[name]) for name in columns])
+    return dg.MetadataValue.table([_record(name, row[name]) for name in columns])
 
 
 def statistics_metadata(

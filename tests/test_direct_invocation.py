@@ -221,7 +221,7 @@ def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
 def test_a_called_partitioned_quarantine_lands_under_its_partition(
     quarantine_dir: Path,
 ):
-    """The fallback reads only the partition key off the context, and `build_asset_context(partition_key=...)` supplies it. One file per partition means a backfill of one partition rewrites one file."""
+    """`file_writer` reads only the partition key off the context, and `build_asset_context(partition_key=...)` supplies it. One file per partition means a backfill of one partition rewrites one file."""
 
     @dd.asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
     def orders() -> pl.DataFrame:

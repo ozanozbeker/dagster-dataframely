@@ -199,7 +199,7 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
 
 def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit():
     """`dy.Column.validate_dtype` still answers by comparing dtypes, and still refuses a `Datetime` whose time unit or time zone differs from the column's."""
-    # #17 makes the column-schema check the one blocking check, and this is its sole arbiter: `column_schema_problems` asks it once per column, and one `False` stops the run before anything is filtered or written.
+    # #17 makes the column-schema check the one blocking check, and this is its sole arbiter: `_column_schema_problems` asks it once per column, and one `False` stops the run before anything is filtered or written.
     # Absent from `dy.__all__` and from Dataframely's API reference. The time unit is the part worth pinning: loosened upstream, a `ns` column reaches a table declared `us`; tightened, every `Datetime` asset becomes a `ColumnSchemaError`.
     assert dy.Int64().validate_dtype(pl.Int64)
     assert not dy.Int64().validate_dtype(pl.Int32)
@@ -232,7 +232,7 @@ def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
 
 def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine():
     """`Schema.filter` on a `LazyFrame` still hands back a result carrying `collect_all`, which still forwards `engine=` to Polars and still answers the valid frame and a `FailureInfo`."""
-    # #118 runs the whole split through this one call. It is where a `LazyFrame` executes, and where the engine is named rather than left to `auto`. The test above unpacks the eager form as a plain tuple and never reaches it, because `filter` on a `DataFrame` hands back a result that has no `collect_all` at all.
+    # #118 runs the valid rows and the invalid rows through this one call. It is where a `LazyFrame` executes, and where the engine is named rather than left to `auto`. The test above unpacks the eager form as a plain tuple and never reaches it, because `filter` on a `DataFrame` hands back a result that has no `collect_all` at all.
     # Dataframely documents the forward as "keyword arguments passed directly to `polars.collect_all`", which is the whole of what the engine choice rests on. Lose it and the only test in this suite to fail is `test_the_filter_runs_on_the_streaming_engine`, which monkeypatches `pl.collect_all`, so the failure would read as this package's bug.
     lazy_result = Orders.filter(_MIXED_ORDERS.lazy(), cast=False)
 
@@ -253,7 +253,7 @@ def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine():
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
     """`FailureInfo.details()` still returns the invalid rows plus one column for each rule."""
     # #19 builds the quarantine frame straight off `details()`: original columns untouched, rule columns renamed into the reserved namespace.
-    # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows each rule rejected.
+    # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows that failed each rule.
     # Guide-documented and upstream-tested, but absent from Dataframely's API reference.
     _, failure = Orders.filter(_MIXED_ORDERS)
     details = failure.details()
@@ -378,7 +378,7 @@ def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
 
 def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run():
     """A blocking check carrying a `partitions_def` still stamps its partition, and a failing one still ends the run."""
-    # #31 passes the partitions_def to every spec `check_specs` builds, the column-schema check included. That one is worth proving: it is the only spec this package marks `blocking=True`, and a preview parameter that disarmed the gate would let a mismatched frame reach the table.
+    # #31 passes the partitions_def to every spec `check_specs` builds, the column-schema check included. That one is worth proving: it is the only spec this package marks `blocking=True`, and a preview parameter that disarmed the column-schema check would let a mismatched frame reach the table.
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     key = dg.AssetKey(["orders"])
 

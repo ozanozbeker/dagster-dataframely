@@ -202,7 +202,7 @@ def delegating_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
     manager = step.get_io_manager(handle)
     key = _quarantine_key(context.asset_key)
 
-    def write(frame: pl.DataFrame) -> str:
+    def address(frame: pl.DataFrame) -> str:
         # Copied per call, so two writes cannot see each other's leftovers.
         repointed = copy.copy(original)
         # The one field re-pointed. It is the private attribute behind `OutputContext.asset_key`, which has no setter. A characterization test pins it, as it does the rest of the copy.
@@ -210,7 +210,7 @@ def delegating_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
         manager.handle_output(repointed, frame)
         return key.to_user_string()
 
-    return write
+    return address
 
 
 def file_writer(
@@ -235,7 +235,7 @@ def file_writer(
     """
     path: UPath = quarantine_path(key, quarantine_dir, partition_key)
 
-    def write(frame: pl.DataFrame) -> str:
+    def address(frame: pl.DataFrame) -> str:
         # Created here, not at build time, so a writer nothing calls leaves no empty directory behind.
         path.parent.mkdir(parents=True, exist_ok=True)
         # Through an open handle, not by name: `write_parquet` takes a path only for the local filesystem, and a `UPath` may be anywhere.
@@ -243,7 +243,7 @@ def file_writer(
             frame.write_parquet(file)
         return str(path)
 
-    return write
+    return address
 
 
 def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
@@ -255,14 +255,14 @@ def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
 
     The step is asked for on its own, ahead of the writer. No predicate answers "is this a run", so the question has to be a call that raises. Wrapping the whole of `delegating_writer` in that guard would widen it: any other property raising the same error inside a real run would silently reroute the rows to a file.
 
-    **The route is chosen inside the returned writer, not here.** `delegating_writer` reads its step where it is built, so a caller holding no fallback fails before a write it cannot finish. This one holds `file_writer` in reserve, so it waits for the rows instead (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
+    **The route is chosen inside the returned writer, not here.** `delegating_writer` reads its step where it is built, so a caller holding no `file_writer` fails before a write it cannot finish. This one holds `file_writer` in reserve, so it waits for the rows instead (#115). A call whose every row is valid never asks where invalid ones would go, so it needs no quarantine_dir for rows that do not exist. And a deployment that sets `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` after the module holding the asset imported is read, not ignored, which is what a test pointing the variable at a `tmp_path` does. `validation_results` calls its writer once, so the choice runs at most once either way.
 
     Returns
     -------
     A writer taking the invalid rows and returning where they went, rendered: the quarantine's asset key under `delegating_writer`, the file's path under `file_writer`. It raises `QuarantineDirError` when there is no manager to delegate to and no quarantine_dir to fall back on.
     """
 
-    def write(frame: pl.DataFrame) -> str:
+    def address(frame: pl.DataFrame) -> str:
         try:
             context.get_step_execution_context()
         except DagsterInvalidPropertyError:
@@ -280,7 +280,7 @@ def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
             context.partition_key if context.has_partition_key else None,
         )(frame)
 
-    return write
+    return address
 
 
 def quarantine_spec(

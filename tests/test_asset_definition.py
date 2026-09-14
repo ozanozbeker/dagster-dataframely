@@ -331,7 +331,7 @@ def test_there_is_one_check_per_rule_plus_the_gate():
 
     This also covers "no rule value appears in any check name": a check name is the rule name rewritten and nothing else, so tightening `min` leaves the check in place rather than orphaning its history.
 
-    Ordered, because the check list is what a reader scans: the gate first, then the rules in the schema's own order, which is what `check_specs` and `rule_results` both claim to return.
+    Ordered, because the check list is what a reader scans: the column-schema check first, then the rules in the schema's own order, which is what `check_specs` and `rule_results` both claim to return.
     """
     expected = ["dy_schema__columns"] + [
         f"dy_rule__{rule.replace('|', '__')}" for rule in _RULES

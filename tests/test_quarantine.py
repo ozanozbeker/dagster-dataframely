@@ -356,7 +356,7 @@ _ONE_DAY = dg.StaticPartitionsDefinition([_DAY])
 _PARTITION_EXPR = {"partition_expr": "ordered_at"}
 """What `DbIOManager` needs to delete a partition before rewriting it, and what a user already declares for their own partitioned table. The borrowed context copies definition metadata, so it comes along; nothing here reads it."""
 
-_REJECTING = [
+_WITH_INVALID_ROWS = [
     pytest.param(mixed_orders, 3, False, id="partial"),
     pytest.param(no_valid_orders, 2, True, id="nothing survived"),
 ]
@@ -406,12 +406,12 @@ def _run(
     assert result.success is not aborts
 
 
-@pytest.mark.parametrize(("frame", "rejected", "aborts"), _REJECTING)
+@pytest.mark.parametrize(("frame", "invalid", "aborts"), _WITH_INVALID_ROWS)
 @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
 def test_a_filesystem_manager_puts_the_quarantine_beside_the_table(
     tmp_path: Path,
     frame: Callable[[], pl.DataFrame],
-    rejected: int,
+    invalid: int,
     aborts: bool,
     partitioned: bool,
 ):
@@ -428,15 +428,15 @@ def test_a_filesystem_manager_puts_the_quarantine_beside_the_table(
         else "orders_quarantine.parquet"
     )
 
-    assert pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height == rejected
+    assert pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height == invalid
 
 
-@pytest.mark.parametrize(("frame", "rejected", "aborts"), _REJECTING)
+@pytest.mark.parametrize(("frame", "invalid", "aborts"), _WITH_INVALID_ROWS)
 @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
 def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     tmp_path: Path,
     frame: Callable[[], pl.DataFrame],
-    rejected: int,
+    invalid: int,
     aborts: bool,
     partitioned: bool,
 ):
@@ -453,7 +453,7 @@ def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     written = tables(tmp_path)
 
     assert "orders_quarantine" in written
-    assert written["orders_quarantine"].height == rejected
+    assert written["orders_quarantine"].height == invalid
     assert "dy_rule__amount__min" in written["orders_quarantine"].columns
 
 
@@ -487,8 +487,8 @@ def test_the_step_probe_does_not_widen_to_the_whole_writer(
 
     The quarantine_dir is set and `file_writer` works, so a widened guard would pass by writing there. Only the narrow one leaves the directory untouched and fails the run.
     """
-    fallback = tmp_path / "fallback"
-    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(fallback))
+    quarantine_dir = tmp_path / "quarantine"
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(quarantine_dir))
 
     def raises(_context: dg.AssetExecutionContext) -> QuarantineWriter:
         # Any property but the step probe, raising the error only the step probe expects.
@@ -504,7 +504,7 @@ def test_the_step_probe_does_not_widen_to_the_whole_writer(
     )
 
     assert not result.success
-    assert not fallback.exists()
+    assert not quarantine_dir.exists()
 
 
 def test_the_quarantine_lands_even_though_the_run_dies(tmp_path: Path):

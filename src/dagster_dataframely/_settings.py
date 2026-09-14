@@ -156,7 +156,7 @@ STATISTICS = _Setting[bool](
     accepts=lambda value: type(value) is bool,
     parse=_flag,
 )
-"""Whether a materialization carries the four statistics tables. On by default: a data consumer opens an asset to read its distribution, and the pass is one aggregate per family over a frame already in memory. Whoever pays for that pass can turn it off."""
+"""Whether a materialization carries the four statistics tables. On by default: a data consumer opens an asset to read its distribution, and the pass is one aggregate per dtype group over a frame already in memory. Whoever pays for that pass can turn it off."""
 
 MAX_FAILURE_SAMPLES = _Setting[int](
     name="max_failure_samples",

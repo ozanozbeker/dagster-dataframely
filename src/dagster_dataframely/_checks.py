@@ -186,7 +186,7 @@ def check_specs(
     ]
 
 
-def column_schema_problems(
+def _column_schema_problems(
     schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
 ) -> list[dict[str, str]]:
     """Compare the frame's columns and dtypes against the schema, naming every mismatch.
@@ -219,7 +219,7 @@ def column_schema_result(
     Parameters
     ----------
     problems
-        What `column_schema_problems` found, empty when the frame matched.
+        What `_column_schema_problems` found, empty when the frame matched.
 
     Returns
     -------
@@ -263,20 +263,20 @@ def filtered(
     frame
         The frame to check and filter, eager or lazy. A `LazyFrame` executes here, once.
 
-    Yields
-    ------
-    The column-schema check's failing result, and nothing at all when the frame matches. The passing result is the caller's to yield: `validation_results` answers it on the skip too, where this never runs.
-
     Returns
     -------
     The valid rows and what `Schema.filter` held back.
+
+    Yields
+    ------
+    The column-schema check's failing result, and nothing at all when the frame matches. The passing result is the caller's to yield: `validation_results` answers it on the skip too, where this never runs.
 
     Raises
     ------
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema, reported through the column-schema check before this is raised.
     """
-    problems: list[dict[str, str]] = column_schema_problems(schema, frame)
+    problems: list[dict[str, str]] = _column_schema_problems(schema, frame)
     if problems:
         # The column schema does not match, which is a pipeline defect. Nothing is filtered and nothing is written, so a mismatched frame cannot corrupt a table.
         yield column_schema_result(problems, asset_key=asset_key)
@@ -462,9 +462,9 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
 
     The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. `USER_GUIDE.md` has the arrangement this serves.
 
-    `validation_results` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to rejected rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
+    `validation_results` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to invalid rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
 
-    **Severity is stated, not derived.** `validation_results` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the rejected rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`.
+    **Severity is stated, not derived.** `validation_results` grades it from whether the valid table was written, which is a property of the run's outcome. A caller here has no such outcome, and the precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the invalid rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`.
 
     The valid rows are collected with the invalid ones and discarded. It is the same `collect_all` call `validation_results` makes, so the two arrangements execute alike, and taking only the failure half measured worse: `FailureInfo` collects on `auto`, which keeps the plan's own peak.
 

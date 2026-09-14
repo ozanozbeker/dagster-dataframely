@@ -10,13 +10,13 @@ Nothing here is a fixture. A schema is a class and a frame is a value, so both r
 
 `warehouse` builds a database manager for the few tests that need one. Delegation places a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
 
-`materialize` and the indexers beside it are here because every runtime test module asks a run the same four questions.
+`materialize`, the indexers beside it and `records` are here because every runtime test module asks a run the same questions.
 """
 
 import datetime as dt
 from decimal import Decimal
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import dagster as dg
 import dataframely as dy
@@ -176,6 +176,15 @@ def check_evaluations(
     return {e.check_name: e for e in result.get_asset_check_evaluations()}
 
 
+def records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
+    """Read a table metadata value back as a row per record.
+
+    The `isinstance` is the narrowing a type checker needs off `MetadataValue`, and it is also the assertion: a key that stopped being a table fails here rather than on whichever field the test reads next.
+    """
+    assert isinstance(value, dg.TableMetadataValue)
+    return [dict(record.data) for record in value.records]
+
+
 class Orders(dy.Schema):
     """Customer orders, one row per order line.
 
@@ -329,7 +338,7 @@ def cooccurring_orders() -> pl.DataFrame:
 
 
 def no_valid_orders() -> pl.DataFrame:
-    """Every row violates `amount|min`, so nothing survives the filter."""
+    """Every row fails `amount|min`, so nothing survives the filter."""
     return _frame(
         [
             _row("ORD-1", "a@example.com", "-1.00", 1, "new"),

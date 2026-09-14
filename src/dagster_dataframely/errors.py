@@ -179,7 +179,7 @@ class ColumnSchemaError(DagsterDataframelyError):
         Parameters
         ----------
         problems
-            One mapping of `column`, `expected` and `actual` per offending column, as `column_schema_problems` returns. The failing check tabulates the same list, so the two cannot disagree.
+            One mapping of `column`, `expected` and `actual` per offending column, as `_column_schema_problems` returns. The failing check tabulates the same list, so the two cannot disagree.
         """
         culprits: str = ", ".join(
             f"'{problem['column']}' (expected {problem['expected']}, got {problem['actual']})"

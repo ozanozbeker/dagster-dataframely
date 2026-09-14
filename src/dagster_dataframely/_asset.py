@@ -149,12 +149,6 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
         Partitioning for the asset. Validation runs per partition, and the quarantine is written under the same partition key.
     op_tags
         Tags on the underlying op, for run launcher and executor routing.
-    group_name
-        Asset group.
-    automation_condition
-        Declarative automation condition for the asset.
-    freshness_policy
-        Freshness policy for the asset.
     backfill_policy
         How Dagster backfills this asset's partitions.
     retry_policy
@@ -238,7 +232,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
         parameters = list(inspect.signature(fn).parameters.values())
         declares_context: bool = is_context_provided(parameters)
 
-        def reported(
+        def asset_yields(
             returned: DecoratedReturn, writer: QuarantineWriter | None
         ) -> AssetYield:
             """Validate what the decorated function handed back and report it.
@@ -278,7 +272,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
                     if declares_context
                     else fn(*args, **kwargs)
                 )
-                yield from reported(returned, writer)
+                yield from asset_yields(returned, writer)
 
             if not declares_context:
                 # `functools.wraps` forwards the decorated function's own signature, which Dagster resolves the asset's inputs from. Prepending the context is the whole edit; the rest is the decorated function's parameter list, untouched.
@@ -302,7 +296,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 
             @functools.wraps(fn)
             def compute(*args: object, **kwargs: object) -> AssetYield:
-                yield from reported(fn(*args, **kwargs), None)
+                yield from asset_yields(fn(*args, **kwargs), None)
 
         return dg.asset(
             name=asset_name,

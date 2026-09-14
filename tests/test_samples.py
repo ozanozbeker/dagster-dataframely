@@ -1,6 +1,6 @@
 """The two row samples, asserted through the metadata a run emits.
 
-Both put real rows in the event log, so both are asserted where that lands, not at the function that renders them. The check's metadata holds the rows a rule rejected. The valid out's materialization holds the rows that survived.
+Both put real rows in the event log, so both are asserted where that lands, not at the function that renders them. The check's metadata holds the rows that failed a rule. The valid out's materialization holds the rows that survived.
 
 Both are opt-out, so almost every asset in this file declares nothing about them. The tests that do declare something cover the off switch, the part of an opt-out that has to work.
 """
@@ -23,6 +23,7 @@ from tests.scenario import (
     materializations,
     materialize,
     mixed_orders,
+    records,
 )
 
 _FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
@@ -45,17 +46,12 @@ def _many_orders(rows: int) -> pl.DataFrame:
     )
 
 
-def _invalid_orders(rejects: int) -> pl.DataFrame:
-    """One surviving row and `rejects` rows that `amount|min` alone rejects."""
-    amounts = [Decimal("10.00")] + [Decimal("-1.00")] * rejects
-    return _many_orders(rejects + 1).with_columns(
+def _invalid_orders(invalid: int) -> pl.DataFrame:
+    """One surviving row and `invalid` rows that fail `amount|min` alone."""
+    amounts = [Decimal("10.00")] + [Decimal("-1.00")] * invalid
+    return _many_orders(invalid + 1).with_columns(
         amount=pl.Series(amounts, dtype=pl.Decimal(10, 2))
     )
-
-
-def _records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
-    assert isinstance(value, dg.TableMetadataValue)
-    return [dict(record.data) for record in value.records]
 
 
 # --- the valid rows' sample ---
@@ -67,7 +63,7 @@ def _clean() -> pl.DataFrame:
 def test_a_materialization_carries_a_sample_of_the_rows_it_wrote(tmp_path: Path):
     """The key is short and unprefixed like `dataframely/valid_statistics/*`: every key on a materialization is meant for a reader."""
     metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
-    sampled = _records(metadata["dataframely/valid_sample"])
+    sampled = records(metadata["dataframely/valid_sample"])
 
     assert [row["order_id"] for row in sampled] == ["ORD-1", "ORD-2", "ORD-3"]
     assert [row["email"] for row in sampled] == clean_orders()["email"].to_list()
@@ -82,7 +78,7 @@ def test_the_row_sample_is_bounded(tmp_path: Path):
 
     metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
 
-    assert len(_records(metadata["dataframely/valid_sample"])) == _DEFAULT
+    assert len(records(metadata["dataframely/valid_sample"])) == _DEFAULT
 
 
 def test_the_row_sample_is_the_head_rather_than_any_other_draw(tmp_path: Path):
@@ -96,7 +92,7 @@ def test_the_row_sample_is_the_head_rather_than_any_other_draw(tmp_path: Path):
         return _many_orders(_DEFAULT * 2)
 
     metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
-    sampled = _records(metadata["dataframely/valid_sample"])
+    sampled = records(metadata["dataframely/valid_sample"])
 
     assert [row["line_no"] for row in sampled] == list(range(1, _DEFAULT + 1))
 
@@ -105,7 +101,7 @@ def test_the_row_sample_shows_every_column_the_row_holds(tmp_path: Path):
     metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
 
     assert [
-        list(record) for record in _records(metadata["dataframely/valid_sample"])
+        list(record) for record in records(metadata["dataframely/valid_sample"])
     ] == [list(Orders.columns())] * 3
 
 
@@ -150,7 +146,7 @@ def test_the_environment_tier_sets_the_house_row_sample(
 
     metadata = materializations(materialize(tmp_path, housed))[_GOOD_KEY].metadata
 
-    assert len(_records(metadata["dataframely/valid_sample"])) == 1
+    assert len(records(metadata["dataframely/valid_sample"])) == 1
 
 
 def test_a_cell_no_table_record_can_hold_is_rendered_as_the_value_it_is(tmp_path: Path):
@@ -159,7 +155,7 @@ def test_a_cell_no_table_record_can_hold_is_rendered_as_the_value_it_is(tmp_path
     A `Decimal` becomes a string, not the float the statistics tables use. These are rows somebody stored, so `10.00` has to stay `10.00`.
     """
     metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
-    first = _records(metadata["dataframely/valid_sample"])[0]
+    first = records(metadata["dataframely/valid_sample"])[0]
 
     assert first["amount"] == "10.00"
     assert first["ordered_at"] == str(dt.datetime(2026, 8, 1, 12, 0))  # noqa: DTZ001 - the schema declares no time zone
@@ -180,8 +176,8 @@ def test_both_samples_land_on_the_one_materialization_under_their_own_keys(
 
     metadata = materializations(materialize(tmp_path, quarantined))[_GOOD_KEY].metadata
 
-    assert len(_records(metadata["dataframely/valid_sample"])) == 3
-    assert len(_records(metadata["dataframely/invalid_sample"])) == 3
+    assert len(records(metadata["dataframely/valid_sample"])) == 3
+    assert len(records(metadata["dataframely/invalid_sample"])) == 3
 
 
 def test_the_invalid_sample_is_bounded_by_the_same_setting(tmp_path: Path):
@@ -193,8 +189,8 @@ def test_the_invalid_sample_is_bounded_by_the_same_setting(tmp_path: Path):
 
     metadata = materializations(materialize(tmp_path, bounded))[_GOOD_KEY].metadata
 
-    assert len(_records(metadata["dataframely/valid_sample"])) == 1
-    assert len(_records(metadata["dataframely/invalid_sample"])) == 1
+    assert len(records(metadata["dataframely/valid_sample"])) == 1
+    assert len(records(metadata["dataframely/invalid_sample"])) == 1
 
 
 def test_an_invalid_sample_carries_the_rule_columns(tmp_path: Path):
@@ -205,7 +201,7 @@ def test_an_invalid_sample_carries_the_rule_columns(tmp_path: Path):
         return mixed_orders()
 
     metadata = materializations(materialize(tmp_path, quarantined))[_GOOD_KEY].metadata
-    (first, *_) = _records(metadata["dataframely/invalid_sample"])
+    (first, *_) = records(metadata["dataframely/invalid_sample"])
 
     assert list(first)[: len(Orders.columns())] == list(Orders.columns())
     assert any(name.startswith("dy_rule__") for name in first)
@@ -221,7 +217,7 @@ def test_a_failing_check_carries_the_rows_that_failed_it(tmp_path: Path):
     """The question a failing check raises and the counts cannot answer: not that `amount|min` failed once, but which row failed it."""
     result = materialize(tmp_path, _quarantined)
     metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
-    sampled = _records(metadata["dy_failed_sample"])
+    sampled = records(metadata["dy_failed_sample"])
 
     assert metadata["dy_failed_count"].value == 1
     assert [row["order_id"] for row in sampled] == ["ORD-4"]
@@ -233,7 +229,7 @@ def test_a_sampled_row_holds_the_columns_of_the_data_and_no_rule_columns(
 ):
     """The rule columns are the quarantine's own, not a sample's: the check already says which rule this is."""
     result = materialize(tmp_path, _quarantined)
-    sampled = _records(
+    sampled = records(
         check_evaluations(result)["dy_rule__amount__min"].metadata["dy_failed_sample"]
     )
 
@@ -251,14 +247,14 @@ def test_a_passing_check_carries_no_sample(tmp_path: Path):
 
 def test_the_failure_sample_is_bounded(tmp_path: Path):
     @dd.asset(Orders, name="orders", quarantine=True)
-    def many_rejects() -> pl.DataFrame:
+    def many_invalid() -> pl.DataFrame:
         return _invalid_orders(_DEFAULT * 2)
 
-    result = materialize(tmp_path, many_rejects)
+    result = materialize(tmp_path, many_invalid)
     metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
 
     assert metadata["dy_failed_count"].value == _DEFAULT * 2
-    assert len(_records(metadata["dy_failed_sample"])) == _DEFAULT
+    assert len(records(metadata["dy_failed_sample"])) == _DEFAULT
 
 
 # The bound is this package's own: `dy.Config.set_max_failure_examples` governs only the
@@ -311,7 +307,7 @@ def test_an_aborting_run_still_samples_what_failed(tmp_path: Path):
         return mixed_orders()
 
     result = materialize(tmp_path, aborting, raise_on_error=False)
-    sampled = _records(
+    sampled = records(
         check_evaluations(result)["dy_rule__amount__min"].metadata["dy_failed_sample"]
     )
 
@@ -328,7 +324,7 @@ def _by_column() -> pl.DataFrame:
 def test_a_collapsed_check_says_which_rule_each_sampled_row_failed(tmp_path: Path):
     """A rule set stands for several rules, so a row in its sample must name the one that put it there. `dy_rule` is the key a rule check already carries it under, and the reserved namespace keeps it clear of any schema's columns."""
     result = materialize(tmp_path, _by_column)
-    sampled = _records(
+    sampled = records(
         check_evaluations(result)["dy_col__amount"].metadata["dy_failed_sample"]
     )
 
@@ -337,9 +333,9 @@ def test_a_collapsed_check_says_which_rule_each_sampled_row_failed(tmp_path: Pat
 
 
 def test_a_collapsed_check_samples_every_rule_something_failed(tmp_path: Path):
-    """Bounded per rule, not per check, so the rule that rejected one row stays visible beside the rule that rejected a thousand."""
+    """Bounded per rule, not per check, so the rule one row failed stays visible beside the rule a thousand rows failed."""
     result = materialize(tmp_path, _by_column)
-    sampled = _records(
+    sampled = records(
         check_evaluations(result)["dy_schema__rules"].metadata["dy_failed_sample"]
     )
 

@@ -398,7 +398,7 @@ def test_an_upstream_and_a_quarantine_leave_the_graph_alone(tmp_path: Path):
     assert len(result.get_step_success_events()) == 2
 
 
-def test_a_quarantined_run_stays_green_with_every_check_at_warn(tmp_path: Path):
+def test_a_quarantined_run_succeeds_with_every_check_at_warn(tmp_path: Path):
     """Declaring the quarantine consents to partial data, so an invalid row is a warning, not a failure."""
     evaluations = check_evaluations(materialize(tmp_path, _quarantined))
     failed = {name for name, e in evaluations.items() if not e.passed}
@@ -468,14 +468,14 @@ def test_a_rule_column_says_which_rule_each_row_failed(tmp_path: Path):
     quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
         "order_id"
     )
-    rejected_by_min = quarantine.filter(pl.col("dy_rule__amount__min") == "invalid")
+    invalid_by_min = quarantine.filter(pl.col("dy_rule__amount__min") == "invalid")
 
     assert quarantine["dy_rule__amount__min"].to_list() == [
         "invalid",
         "valid",
         "valid",
     ]
-    assert rejected_by_min["order_id"].to_list() == ["ORD-4"]
+    assert invalid_by_min["order_id"].to_list() == ["ORD-4"]
 
 
 def test_the_materialization_tabulates_the_rules_that_failed_together(tmp_path: Path):
@@ -605,7 +605,7 @@ def _skipping_with_quarantine() -> pl.DataFrame | None:
 @pytest.mark.parametrize(
     "asset", [_skipping, _skipping_with_quarantine], ids=["bare", "quarantined"]
 )
-def test_a_skipped_run_stays_green_and_materializes_nothing(
+def test_a_skipped_run_succeeds_and_materializes_nothing(
     tmp_path: Path, asset: dg.AssetsDefinition
 ):
     """Failing the run would say the pipeline is broken, and writing zero rows would say an empty report arrived. Neither is true, so the partition stays unmaterialized and the step still succeeds."""
@@ -1075,7 +1075,7 @@ class TestOutcomeSelection:
         assert written == []
 
     def test_a_skip_still_answers_every_check(self):
-        """A check spec is a non-optional op output, so a step that answers none of them fails with `did not return an output for non-optional output`. `test_a_skipped_run_stays_green_and_materializes_nothing` asserts the same against a real run."""
+        """A check spec is a non-optional op output, so a step that answers none of them fails with `did not return an output for non-optional output`. `test_a_skipped_run_succeeds_and_materializes_nothing` asserts the same against a real run."""
         skipped, _, _ = self._drained(None, quarantine=False)
         clean, _, _ = self._drained(clean_orders(), quarantine=False)
 
@@ -1084,7 +1084,7 @@ class TestOutcomeSelection:
         }
 
     def test_a_skips_checks_pass_because_the_rules_ran_over_an_empty_frame(self):
-        """The pass is computed, not fabricated. Every rule evaluates over zero rows and none is violated, so the result reads the same as a clean run."""
+        """The pass is computed, not fabricated. Every rule evaluates over zero rows and none fails, so the result reads the same as a clean run."""
         yielded, _, _ = self._drained(None, quarantine=False)
 
         assert all(c.passed for c in self._checks(yielded))
