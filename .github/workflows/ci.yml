@@ -30,6 +30,29 @@ jobs:
       - run: uv sync --locked
       - run: uv run --no-sync pytest
 
+  # Everything `prek.toml` holds: ruff, pyrefly, rumdl, gitleaks, zizmor, actionlint,
+  # typos, `uv lock --check`, and the two source bans the package states in prose. A local
+  # commit hook is the only other thing that runs them, so without this job a fork's pull
+  # request, or one `--no-verify`, lands unchecked.
+  #
+  # Its own job rather than a step on `test`. Installing the hook environments is slow and
+  # has nothing to do with the test matrix, and a red lint should not hide a red test.
+  lint:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      # `--all-files`, because a hook run against a diff proves nothing about the rest of
+      # the tree. The commit-msg hook has no commit to read here and skips itself.
+      - run: uv run --no-sync prek run --all-files --show-diff-on-failure
+
   # The drift tripwire: `tests/test_upstream_characterization.py` against unpinned releases.
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
