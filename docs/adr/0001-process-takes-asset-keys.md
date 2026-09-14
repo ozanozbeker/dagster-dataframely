@@ -1,6 +1,6 @@
 # 1. `process` takes asset keys, not the execution context
 
-Accepted, 2026-08-12. Superseded in part by [ADR-0002](0002-the-decorator-resolves-its-keys-at-definition-time.md), which is marked below at the two paragraphs it replaces. The decision itself stands.
+Accepted, 2026-08-12. Superseded in part by [ADR-0002](0002-the-decorator-resolves-its-keys-at-definition-time.md) and by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md), each marked below at the paragraphs it replaces. The function is `validation_results` since 0.8. The decision itself stands: it takes what it needs as arguments and reads nothing off the execution context.
 
 ## Context
 
@@ -17,6 +17,8 @@ An output name is not always its asset key. An out that declares `key_prefix` ha
 `process` takes `valid_key: dg.AssetKey` and `quarantine_key: dg.AssetKey | None`. The context parameter and both output-name parameters are gone.
 
 The decorator binds the context once in its wrapper and resolves both keys through `asset_key_for_output`. Hand-wiring resolves its own, and the README shows that form rather than a hand-built key.
+
+> **Superseded by ADR-0006.** The second parameter is `quarantine_writer: QuarantineWriter | None`. The quarantine is no longer addressed by a key this function knows: a writer takes the invalid rows and hands back an address, so `validation_results` learns nothing about where they went. That is this decision one step further on, not a reversal of it.
 
 Behind it sits a principle that decided several of the smaller questions: **hand-wiring does not shape the decorator's design.** Hand-wiring is the advanced path, taken by someone who has already stepped outside what the decorator offers. Where the two pull in different directions, the decorator wins.
 

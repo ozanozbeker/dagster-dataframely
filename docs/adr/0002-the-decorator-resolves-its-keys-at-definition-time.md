@@ -1,6 +1,6 @@
 # 2. The decorator resolves its keys at definition time and yields every check standalone
 
-Accepted, 2026-08-12.
+Accepted, 2026-08-12. Superseded in part by [ADR-0004](0004-the-quarantine-is-a-file-not-an-asset.md), which is marked below at the paragraphs it replaces: there is no quarantine out, so there is no second key. The decision itself stands, and direct invocation still rests on it.
 
 Supersedes part of [ADR-0001](0001-process-takes-asset-keys.md).
 
@@ -32,6 +32,8 @@ One thing was never broken: a decorated function may declare `context`, bare or 
 **The wrapper reads nothing off the execution context.** Both asset keys resolve once, when the definition is built. The valid key is the one the decorator built the out with. The quarantine key is read off the finished `AssetsDefinition`. That is Dagster's own answer rather than a second derivation of it: a quarantine that declared its own `key_prefix` has a key only Dagster builds.
 
 `AssetsDefinition.keys_by_output_name` spells that directly and carries no `@public`. `AssetsDefinition.keys` is `@public` and answers the same question at the cost of a set subtraction. That works because there are at most two outs: removing the valid key leaves exactly the quarantine. The public accessor wins, and `_asset.py` says why where it is read.
+
+> **Superseded by ADR-0004.** There is one out and one key. Nothing reads `AssetsDefinition.keys`, and `_asset.py` builds the valid key from `key_prefix` and the asset's name before it decorates anything. What stands is the half this ADR exists for: the key is decided where the asset is declared, not looked up from a running step, which is what makes a decorated asset callable.
 
 **`process` yields every check result standalone**, at every exit. Nothing is bundled onto a materialization. Every result this package builds already carries an explicit `asset_key`, so a standalone yield is fully addressed.
 

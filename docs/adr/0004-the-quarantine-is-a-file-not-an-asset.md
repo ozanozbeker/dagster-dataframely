@@ -1,7 +1,7 @@
 # 4. The quarantine is a file, not an asset
 
 Accepted, 2026-09-02. Supersedes [ADR-0003](0003-the-quarantines-only-parent-is-the-valid-asset.md).
-Amended by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md): the asset's own IO manager places the quarantine, so the root stops being the mechanism and survives only as the fallback for direct invocation. Everything else here stands.
+Amended by [ADR-0006](0006-the-quarantine-is-written-by-the-assets-own-io-manager.md): the asset's own IO manager places the quarantine, so the root stops being the mechanism and survives only as the fallback for direct invocation. What the declaration is, and when an unset directory raises, go with it, and both are marked below. The rest stands: the quarantine is not an asset, graph presence is the user's declaration, the rows are written on every outcome that has them, and this package ships no IO manager.
 
 ## Context
 
@@ -12,6 +12,8 @@ The rows still matter. A run that rejects rows has to leave them somewhere a per
 ## Decision
 
 **Invalid rows are written to a parquet file by the package itself.** The decorator builds one `dg.asset`, and `quarantine` is a declaration on it, `bool | str | Path`, default `False`. `True` takes the root from `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` and fails at definition time when it is unset. A string or path is a root for that asset alone.
+
+> **Superseded by ADR-0006.** `quarantine` is a `bool`, default `False`. There is no per-asset root: a string or path would be the override ADR-0006 defers, since a directory means nothing to a warehouse. `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` is read where the rows are handed over rather than where the asset is declared, so an unset directory raises `QuarantineDirError` there, and only under direct invocation. A run delegates to the asset's own IO manager and never reads it.
 
 The path under the root mirrors `UPathIOManager`, with one forced difference in the leaf:
 
