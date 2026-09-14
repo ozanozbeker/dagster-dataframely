@@ -1,0 +1,123 @@
+---
+title: "Testing an asset"
+---
+
+```{python}
+#| label: setup-testing-an-asset
+#| code-fold: true
+#| code-summary: "Setup: what every example on this page assumes"
+#| output: false
+import dagster as dg
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+
+
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(nullable=False, min=0.0)
+
+
+from pathlib import Path
+
+daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
+
+Path("raw/orders").mkdir(parents=True, exist_ok=True)
+pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]}).write_parquet(
+    "raw/orders/2026-01-02.parquet"
+)
+```
+
+To test an asset, call it.
+Direct invocation is Dagster's documented unit-testing path, and here it costs you nothing: no run, no IO manager, no instance.
+A call hands back the same materializations and check results a run yields, as ordinary Python objects, and the validated frame comes off `value`:
+
+```{python}
+#| label: testing-an-asset-1
+import pytest
+
+
+@pytest.fixture
+def quarantine_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(tmp_path))
+    return tmp_path
+
+
+@dd.asset(Orders, quarantine=True)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+
+
+def test_orders_quarantines_the_negative_amount(quarantine_dir):
+    raw_orders = pl.DataFrame({"order_id": ["a", "b", "c"], "amount": [1.0, 2.0, -3.0]})
+
+    events = list(orders(dg.build_asset_context(), raw_orders))
+    tables = {
+        event.asset_key: event.value
+        for event in events
+        if isinstance(event, dg.MaterializeResult)
+    }
+    checks = {
+        event.check_name: event.passed
+        for event in events
+        if isinstance(event, dg.AssetCheckResult)
+    }
+
+    assert tables[dg.AssetKey(["orders"])].height == 2
+    assert not checks["dy_rule__amount__min"]
+    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 1
+```
+
+Two things about that call are worth reading twice.
+
+**The quarantine is written, not yielded.**
+There is one materialization, for the table, so the invalid rows are read off disk rather than off an event.
+That is the same asymmetry a run has, where the rows go through the IO manager and never become an event either.
+
+**A quarantined asset takes a context**, because `quarantine=True` added the parameter.
+It comes first and the frames follow, exactly as Dagster orders them.
+The `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` above is what a call needs in place of the IO manager it does not have, and only for the rows it holds back.
+
+An asset without a quarantine needs neither:
+
+```{python}
+#| label: testing-an-asset-2
+@dd.asset(Orders)
+def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders.select("order_id", "amount")
+
+
+clean = pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
+events = list(plain_orders(clean))
+```
+
+Every check the asset declares comes back, standalone and fully addressed, so a call and a run report the same names against the same keys.
+The keys are resolved where you declared the asset rather than looked up from a running step, which is what makes them knowable outside a run (ADR-0002).
+
+If the decorated function declares a `context` of its own, build one with `dg.build_asset_context()`.
+A partitioned root asset takes one and nothing else, so its whole call is a context carrying the key.
+`daily` below is the `dg.DailyPartitionsDefinition` from [Partitioning](partitioning.qmd), and the setup cell above declares it:
+
+```{python}
+#| label: testing-an-asset-3
+@dd.asset(Orders, partitions_def=daily)
+def daily_orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    return pl.read_parquet(f"raw/orders/{context.partition_key}.parquet")
+
+
+events = list(daily_orders(dg.build_asset_context(partition_key="2026-01-02")))
+```
+
+An asset that aborts raises out of the call, so `pytest.raises(dd.errors.ValidationAbortError)` is how you test the policy itself, and `dd.errors.ColumnSchemaError` is how you test a drifting frame.
+
+**A decorated function that attaches metadata through the context is the one thing you cannot test this way.** `context.add_asset_metadata` raises under a direct call:
+
+```text
+AttributeError: 'DirectAssetExecutionContext' object has no attribute '_step_execution_context'
+```
+
+A plain `@dg.asset` raises the same thing, so this is Dagster's gap rather than something this package introduces.
+A returned `dg.MaterializeResult` has no such gap: its metadata, tags and data version all come back on the object the call yields, which is one more reason to prefer it.

@@ -98,7 +98,10 @@ id = "rumdl"
 name = "rumdl"
 entry = "uv run rumdl check --fix"
 language = "system"
-types = ["markdown"]
+# `files` rather than `types = ["markdown"]`: prek does not type a `.qmd` as markdown, so
+# the guide's pages would be the only prose in the repo nothing lints. The rumdl CLI reads
+# them already, and `flavor = "quarto"` is what makes MD078 fire on an unlabelled chunk.
+files = '\.(md|qmd)$'
 require_serial = true
 
 [[repos.hooks]]

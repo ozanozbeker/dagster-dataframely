@@ -101,7 +101,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 
     Five returns are accepted: a frame or a `dg.MaterializeResult` carrying one, eager or lazy, or `None` to skip. What the function returns decides what happens; the annotation is not enforced, because `Schema.filter` materializes the valid rows either way.
 
-    `USER_GUIDE.md` has the failure policy, the quarantine, partitioning, settings and testing.
+    The user guide has the failure policy, the quarantine, partitioning, settings and testing.
 
     Every parameter is declared with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `check_specs` is absent because this decorator owns it.
 
@@ -178,6 +178,37 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
         Two rules rewrite to the same check name.
     InvalidSettingError
         A setting resolved to a value outside its allowed values, from any source.
+
+    Examples
+    --------
+    ```{python}
+    #| echo: false
+    #| output: false
+    import dagster as dg
+    import dataframely as dy
+    import polars as pl
+
+    import dagster_dataframely as dd
+    ```
+
+    One declaration is the schema, the checks, the filter and the quarantine:
+
+    ```{python}
+    class Orders(dy.Schema):
+        order_id = dy.String(primary_key=True)
+        amount = dy.Float64(nullable=False, min=0.0)
+
+
+    @dd.asset(Orders, quarantine=True)
+    def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders.select("order_id", "amount")
+
+
+    [spec.name for spec in orders.check_specs]
+    ```
+
+    Every one of those exists before the asset has run, so the catalog lists a failing
+    check by name before it can fail.
     """
     # Only a `Collection` is refused here. Anything else keeps failing however it already fails.
     if isinstance(schema, type) and issubclass(schema, dy.Collection):

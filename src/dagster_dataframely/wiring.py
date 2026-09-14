@@ -1,6 +1,6 @@
 """The parts the decorator assembles, for a `@dg.asset` you wire yourself.
 
-`USER_GUIDE.md` has what each part gives up against the decorator, and three worked arrangements.
+The user guide's *Hand-wiring* has what each part gives up against the decorator, and three worked arrangements.
 
 A namespace, not an implementation. Every name is defined in a private module and re-exported here, so the file tree can change while the import path stays put. `__init__.py` does the same for the same reason.
 

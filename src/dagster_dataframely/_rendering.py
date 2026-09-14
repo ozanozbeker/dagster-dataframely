@@ -1,6 +1,6 @@
 """One renderer for the Columns tab, the check names and the check descriptions, and the fallback each follows.
 
-`USER_GUIDE.md` has the four fallback orders as a table.
+The user guide's *Naming* has the four fallback orders as a table.
 
 The docstring stays out of the Columns tab and out of a collapsed check's description. Two sibling rules must not read in different voices because one author wrote a docstring and the other did not; from the UI that is a change of register with no visible cause. The rule name is the constant in both places, and the docstring reaches only the check description.
 

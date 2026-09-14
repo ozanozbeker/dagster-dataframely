@@ -1,6 +1,6 @@
 """The statistics a materialization carries: four tables, one per dtype group.
 
-`USER_GUIDE.md` has the columns each group reports, and why the string group carries no value-bearing statistic.
+The user guide's *What a run produces* has the columns each group reports, and why the string group carries no value-bearing statistic.
 
 Nothing here goes through `describe()`. It stringifies with per-source-dtype formatting and cannot be cast back: a `Date` mean renders as a datetime, a `Duration` mean as a clock time, and `min` mixes numbers, bare strings and dates in one column. Everything here is computed with typed Polars expressions and stringified once, at the display step.
 

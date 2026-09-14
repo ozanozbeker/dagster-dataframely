@@ -1,6 +1,6 @@
 """What a schema-backed asset runs after its decorated function: the column-schema check, `Schema.filter`, then one of six outcomes.
 
-`USER_GUIDE.md` has the six and what each one writes.
+The user guide's *The failure policy* has the six and what each one writes.
 
 The return type decides nothing past the column-schema check. `Schema.filter` takes a plan, so one call serves both return types on the streaming engine. A `DataFrame` costs a free `.lazy()`. A `LazyFrame` executes once, in that call, with its intermediates streamed and only its output held.
 
@@ -164,7 +164,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring needs everything the deco
 
     Two calls and six outcomes. The skip makes neither. Otherwise the column-schema check runs first, off `collect_schema()`, then `Schema.filter` separates the valid rows from the invalid rows, with `cast=False`, in one `collect_all` on the streaming engine. It is the only validation call: `validate()` carries per-rule detail as a string, and this package needs structured counts.
 
-    The asset's declaration decides which of the other five a run reaches, never an argument's value. `quarantine_writer` is the whole policy. `USER_GUIDE.md` has the six as a table and as a flowchart.
+    The asset's declaration decides which of the other five a run reaches, never an argument's value. `quarantine_writer` is the whole policy. The user guide has the six as a table under *The failure policy*, and as a flowchart under *Hand-wiring*.
 
     **This writes the quarantine and never learns where it went.** The writer takes the invalid rows and hands back an address: no directory, no file path, no IO manager, no context (ADR-0001).
 

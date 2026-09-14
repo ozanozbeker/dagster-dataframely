@@ -36,7 +36,7 @@ Upstream assets bind as parameters, you declare `context` if you want it, and yo
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.
 Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar six parameters the decorator owns or rules out.
-A test asserts that in both directions, and [`USER_GUIDE.md`](USER_GUIDE.md#declaring-an-asset) lists the six.
+A test asserts that in both directions, and [the user guide](https://ozanozbeker.github.io/dagster-dataframely/user-guide/declaring-an-asset.html) lists the six.
 
 ## Package philosophy
 
@@ -77,12 +77,18 @@ Anything addressed by asset key works, because nothing here learns which manager
 > The public surface is covered by a characterization test rather than held by convention, so it will not move quietly.
 > It can still move: a `0.x` minor release is where a breaking change lands.
 > Pin to one minor if that matters to you: `>=` the version you installed, `<` the next minor.
-> Coming from 0.6 or 0.7, read [`CHANGELOG.md`](CHANGELOG.md) first.
+> Coming from 0.6 or 0.7, read [the changelog](https://ozanozbeker.github.io/dagster-dataframely/changelog.html) first.
 
 Declare the schema and the asset as above, then tell the code location where to write:
 
 ```python
 from dagster_polars import PolarsParquetIOManager
+
+
+@dg.asset
+def raw_orders() -> pl.DataFrame:
+    return pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
+
 
 defs = dg.Definitions(
     assets=[raw_orders, orders],
@@ -113,13 +119,4 @@ The checks then fail at `WARN` and the run succeeds, so downstream proceeds on t
 
 ## Documentation
 
-- [`USER_GUIDE.md`](USER_GUIDE.md) is everything this package does: the failure policy, the quarantine, partitioning, `LazyFrame`s, settings, testing, the errors, and hand-wiring.
-- [`CONTEXT.md`](CONTEXT.md) is the glossary, and the rule that a word Dagster, Dataframely or Polars already owns wins.
-- [`docs/adr/`](docs/adr/) holds the decisions behind the behaviour.
-- [`docs/research/`](docs/research/) holds the measurements behind them.
-- [`CHANGELOG.md`](CHANGELOG.md) is the upgrade log.
-
-## License
-
-Apache 2.0.
-See [`LICENSE`](LICENSE).
+[**https://ozanozbeker.github.io/dagster-dataframely**](https://ozanozbeker.github.io/dagster-dataframely/) is the guide, the API reference and the upgrade log.

@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.urls]
-Changelog = "https://github.com/ozanozbeker/dagster-dataframely/releases"
+Changelog = "https://ozanozbeker.github.io/dagster-dataframely/changelog.html"
 Homepage = "https://github.com/ozanozbeker/dagster-dataframely"
 Issues = "https://github.com/ozanozbeker/dagster-dataframely/issues"
 Repository = "https://github.com/ozanozbeker/dagster-dataframely"
@@ -55,6 +55,10 @@ dev = [
   "ruff>=0.16.5",
   "rumdl>=0.2.62",
 ]
+# Its own group, not `dev`. `uv sync --locked` for the test and lint jobs then skips
+# griffe, Pillow, nbclient and ipykernel, and a contributor running pytest installs none
+# of them. `great-docs` brings its own kernel, so nothing here names `ipykernel`.
+docs = ["great-docs>=0.17"]
 
 [build-system]
 requires = ["uv_build>=0.12.00,<0.13.0"]

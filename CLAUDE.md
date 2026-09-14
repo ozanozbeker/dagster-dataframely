@@ -75,12 +75,15 @@ See `docs/agents/domain.md`.
 
 ## Where prose goes
 
-Four homes, and a sentence belongs in exactly one.
+Five homes, and a sentence belongs in exactly one.
 
-- `README.md` is a landing page and a quick start.
+- `README.md` is a landing page and a quick start, and it is also PyPI's long description and the docs site's landing page.
   What the package is, the one example, install, and links out.
-- `USER_GUIDE.md` is how to use it.
+- `user_guide/` is how to use it, one `.qmd` page per topic.
   Every behaviour, every setting, every error, with worked examples.
+  Every code cell executes when the site builds, so an example that stopped being true fails the build.
+- `ARCHITECTURE.md` is how the parts fit, for someone about to change one.
+  It is not published to the site: it addresses a maintainer, not a user.
 - Docstrings and comments are why the code is the way it is.
   A reader can reconstruct usage from the signature and the guide; they cannot reconstruct a measurement, a declined alternative, or why a private upstream API is pinned.
 - `docs/adr/` is a decision that was hard to reverse, and `docs/research/` is the measurement behind one.

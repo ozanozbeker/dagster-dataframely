@@ -1,0 +1,102 @@
+---
+title: "The failure policy"
+---
+
+```{python}
+#| label: setup-the-failure-policy
+#| code-fold: true
+#| code-summary: "Setup: what every example on this page assumes"
+#| output: false
+import dagster as dg
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+
+
+class Orders(dy.Schema):
+    """Customer orders, one row per order line."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(nullable=False, min=0.0)
+```
+
+There is no lenient mode and no strict flag, and that is deliberate.
+Declaring a quarantine **is** your consent to partial data, so what an invalid row costs is visible in the definition and cannot disagree with what the asset declares.
+
+| what was returned | the table | the quarantine | checks | run |
+| --- | --- | --- | --- | --- |
+| columns or dtypes that are not the schema's | not written | not written | the column-schema check fails, blocking | fails, `ColumnSchemaError` |
+| every row valid | written | not written | all pass | succeeds |
+| some rows failed, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
+| some rows failed, quarantine declared | the valid rows | the invalid rows | fail at `WARN` | succeeds |
+| every row failed, quarantine declared | skipped | every row | fail at `ERROR` | fails, `NothingSurvivedError` |
+| `None`, meaning no source data | skipped | not written | all pass | succeeds |
+
+Six rows, and they are the six ways a run can end.
+A rule check's severity is a property of the run's outcome rather than of any one rule, so every rule check in a run carries the same one.
+The column-schema check keeps its own, `ERROR`, whatever the outcome and whatever severity the rules beside it were graded with.
+
+**Without a quarantine, every row has to be valid.**
+A run with even one failing row writes nothing, so your last-known-good table stays in place.
+Writing the valid rows and dropping the rest is the failure this package exists to make visible, so you cannot get there by configuration.
+If you want to drop rows, drop them yourself, in your own asset body, where the drop is a line you wrote:
+
+```{python}
+#| label: the-failure-policy-1
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    valid, _ = Orders.filter(raw_orders)
+    return valid
+```
+
+**A quarantine is consent to partial data, not to no data.**
+A run where nothing survived writes every row to the quarantine and skips the table rather than materializing it empty.
+An empty table replacing a last-known-good snapshot is the one silent failure a declared quarantine could otherwise introduce.
+
+**Every row that failed goes to the quarantine, aborts included.**
+The rows are written before the run picks its outcome, so a run that dies with `NothingSurvivedError` still leaves them where you can open them.
+That is what the quarantine is for: the run that fails is the one you most want the evidence from.
+
+## The package never casts
+
+The column-schema check compares your frame's dtypes against the schema's and aborts on a mismatch, and the filter runs with `cast=False`.
+A dtype that disagrees is a pipeline defect, and coercing it quietly is how a wrong number reaches a table nobody re-reads.
+A `Float64` arriving where the schema declares `Int64` is the shape of it: `1.9` becomes `1`, every rule still passes, and the row sits in the table looking fine.
+
+The check is explicit rather than a `try`/`except` around the filter.
+`Schema.filter` takes a plan, so a mismatch would appear only at `collect_all`, after the plan had run, as whatever Polars raises for the first bad column.
+The column-schema check runs first, executes nothing, and names every offending column at once.
+
+**Extra columns are not a mismatch, and neither is column order.**
+The check reads the schema's columns, so one the schema never declared is never compared, and `Schema.filter` drops it.
+What comes back is the schema's columns, in the schema's order, however they arrived:
+
+```{python}
+#| label: the-failure-policy-2
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    # `net` is working state, and `raw_orders` carries columns `Orders` never declared.
+    # Both are dropped. What materializes is `order_id` then `amount`.
+    return raw_orders.with_columns(net=pl.col("amount") * 0.8)
+```
+
+So a transform that produces a superset needs no `select` on the way out, and no cast either.
+Narrowing to the declared table is the one job of `Schema.cast` you are already getting.
+
+**Casting is yours to write, in the asset body, where you can see it:**
+
+```{python}
+#| label: the-failure-policy-3
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return Orders.cast(raw_orders)
+```
+
+That is the intended home for it rather than a workaround, and it should be uncommon.
+An asset needs it when its source reads a dtype differently from the schema, which is mostly a warehouse read.
+DuckDB returns `DECIMAL` where the schema declares `Float64`, so an asset reading from `DuckDBPolarsIOManager` fails the column-schema check on its first run unless it casts.
+If you find yourself writing it in every asset, check whether the frames disagree on dtype at all, because narrowing alone never needs it ([#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88)).
+
+The one cast the package makes is on columns it generated itself.
+The quarantine's rule columns go from `Enum` to `String`, because a raw `Enum` panics the Delta writer with a Rust `unreachable!()`.

@@ -460,7 +460,7 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
 ) -> Iterator[dg.AssetCheckResult]:
     """Answer every check `check_specs` declared, for an asset that reports and writes nothing.
 
-    The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. `USER_GUIDE.md` has the arrangement this serves.
+    The counterpart to `check_specs`. One declares, the other evaluates, and neither knows anything about storage. The user guide's *Hand-wiring* has the arrangement this serves.
 
     `validation_results` minus the writing and the failure policy. This never raises `ValidationAbortError` or `NothingSurvivedError`, because both answer one question, what happens to invalid rows, and a caller that writes nothing has no rows to route and no table to withhold. It yields no materialization either.
 

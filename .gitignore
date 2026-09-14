@@ -240,3 +240,12 @@ Temporary Items
 .apdisk
 Icon
 $RECYCLE.BIN/
+
+# Great Docs build output. `_quarto.yml` is regenerated inside these on every build, so
+# nothing under them is a source file. `great-docs.yml` is the committed configuration.
+great-docs/
+great-docs-*/
+.great-docs/
+.great-docs-build/
+.great-docs-cache/
+_freeze/
