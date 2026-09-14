@@ -60,6 +60,9 @@ An alias holding Dataframely's own `|` delimiter used to surface as `KeyError` o
 `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` is read where the invalid rows are written rather than where the asset is declared.
 A deployment that sets it after the module imported is now read, and a call holding nothing back needs no directory at all.
 
+`InvalidSettingError` no longer sends you to a `quarantine_dir=` argument that does not exist.
+A setting with no argument now names the two sources it does resolve through, and says outright that there is no third.
+
 ### Documentation in 0.8
 
 The README is a landing page and a quick start. [`USER_GUIDE.md`](USER_GUIDE.md) is everything else, and this file is the upgrade log.

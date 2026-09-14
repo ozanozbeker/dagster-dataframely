@@ -39,6 +39,10 @@ class _Setting[T]:
         Whether a value from any source is one the setting holds. The argument and the package default arrive as values a type checker has already narrowed, and this still runs over them: `statistics="false"` is a non-empty string that would otherwise turn the pass on, and `True` is an `int` that would resolve a count to one row.
     parse
         How the environment variable's word becomes a value. The word itself unless the setting holds something other than a string. A word that spells nothing comes back as it is, so `accepts` refuses it and the error quotes what was written.
+    takes_argument
+        Whether `dd.asset` declares a parameter for this setting. Only `quarantine_dir` does not, and the error has to say so rather than name an argument that raises `TypeError`.
+
+        `resolve` keeps its argument branch either way, and for such a setting nothing can reach it: the decorator calls `QUARANTINE_DIR.resolve(None)` for the refusal alone, and the writer calls it the same way. A branch that cannot run needs no second wording, so the phrase it would build is left as it is rather than made to agree with a chain nobody will see beside it.
     """
 
     name: str
@@ -46,6 +50,7 @@ class _Setting[T]:
     allowed: Sequence[str] | str
     accepts: Callable[[object], bool]
     parse: Callable[[str], object] = str
+    takes_argument: bool = True
 
     @property
     def env_var(self) -> str:
@@ -87,6 +92,7 @@ class _Setting[T]:
                 self.allowed,
                 source=source,
                 env_var=self.env_var,
+                takes_argument=self.takes_argument,
             )
         return cast("T", value)
 
@@ -175,5 +181,6 @@ QUARANTINE_DIR = _Setting[str | None](
     default=None,
     allowed="filesystem paths",
     accepts=_path,
+    takes_argument=False,
 )
 """Where a quarantine goes when no IO manager places it, which is direct invocation. The one setting with two sources: `dd.asset` takes no argument for it, because a directory is meaningless to a warehouse and ADR-0006 defers the override until somebody asks for one. Unset, a call with invalid rows to write raises rather than choosing a directory on the operator's behalf. It is also the one setting whose package default is `None`, which means no directory rather than the absence of a setting, and the one whose resolved value the decorator drops: the rows decide whether a directory is needed at all, so the one a call writes under is read where the rows are written. The decorator resolves it anyway, for the refusal alone, so a malformed variable still fails where the asset is declared (#115)."""

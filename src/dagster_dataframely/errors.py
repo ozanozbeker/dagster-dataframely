@@ -38,13 +38,15 @@ class InvalidSettingError(DagsterDataframelyError):
     Raised on resolve, from whichever source supplied the value, so a typo fails where it was written instead of misconfiguring everything downstream.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the six culprits the message names, taken as data like every other error here
         self,
         setting: str,
         value: str,
         allowed: Sequence[str] | str,
+        *,
         source: str,
         env_var: str,
+        takes_argument: bool = True,
     ) -> None:
         """Name the setting, what it got, where that came from, and every source it could have come from.
 
@@ -54,14 +56,21 @@ class InvalidSettingError(DagsterDataframelyError):
             Everything the setting accepts. A closed set arrives as its members, in the order the docs list them, and is quoted here. A setting over a range arrives as the phrase that describes it, because every value it accepts cannot be printed.
         source
             Where this value came from, worded as a phrase.
+        takes_argument
+            Whether `dd.asset` has a parameter for this setting. `quarantine_dir` has none, and the chain has to say so: a message naming an argument that raises `TypeError` sends a user to fix the one thing they cannot.
         """
         rendered: str = (
             allowed
             if isinstance(allowed, str)
             else ", ".join(f"'{allowed_value}'" for allowed_value in allowed)
         )
+        chain: str = (
+            f"It resolves in three, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+            if takes_argument
+            else f"It resolves in two, each overriding the one before: the package default, then the environment variable {env_var}. There is no `{setting}=` argument."
+        )
         super().__init__(
-            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {rendered}. It resolves in three, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {rendered}. {chain}"
         )
 
 

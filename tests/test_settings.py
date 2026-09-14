@@ -297,6 +297,27 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
     assert "argument" in message
 
 
+def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`dd.asset` declares no `quarantine_dir=` parameter, so the chain has two sources rather than three.
+
+    Naming a third would send a user to fix the one thing they cannot: the argument the message told them to pass raises `TypeError`.
+    """
+    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "")
+
+    with pytest.raises(InvalidSettingError) as raised:
+        QUARANTINE_DIR.resolve(None)
+    message = str(raised.value)
+
+    assert (
+        "It resolves in two, each overriding the one before: the package default,"
+        in message
+    )
+    assert f"then the environment variable {_QUARANTINE_DIR_ENV}." in message
+    assert "There is no `quarantine_dir=` argument." in message
+
+
 # There is no fourth source and no `set_default_*()`. Dagster loads code locations lazily,
 # so "has the default been set yet" would depend on an import order the user does not
 # control, and the same asset would derive different checks depending on which module
