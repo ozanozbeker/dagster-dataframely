@@ -322,7 +322,6 @@ def quarantine_spec(
     ```{python}
     #| echo: false
     #| output: false
-    import dagster as dg
     import dataframely as dy
     import polars as pl
 
@@ -343,8 +342,8 @@ def quarantine_spec(
     dd.quarantine_spec(Orders, orders).key
     ```
 
-    Hand that to `dg.Definitions(assets=[...])` beside `orders` and the quarantine becomes
-    a node something downstream can name as an input.
+    The spec itself, not that key, is what goes in `dg.Definitions(assets=[...])` beside
+    `orders`. The quarantine is then a node something downstream can name as an input.
     """
     validate_namespace(schema)
     if isinstance(asset, dg.AssetsDefinition):

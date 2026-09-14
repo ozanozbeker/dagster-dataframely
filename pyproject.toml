@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.urls]
-Changelog = "https://ozanozbeker.github.io/dagster-dataframely/changelog.html"
+Changelog = "https://ozanozbeker.com/dagster-dataframely/changelog.html"
 Homepage = "https://github.com/ozanozbeker/dagster-dataframely"
 Issues = "https://github.com/ozanozbeker/dagster-dataframely/issues"
 Repository = "https://github.com/ozanozbeker/dagster-dataframely"

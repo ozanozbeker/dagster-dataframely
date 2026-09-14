@@ -184,7 +184,6 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
     ```{python}
     #| echo: false
     #| output: false
-    import dagster as dg
     import dataframely as dy
     import polars as pl
 

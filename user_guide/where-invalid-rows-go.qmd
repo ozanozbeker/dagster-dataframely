@@ -74,11 +74,12 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 The first is a `UPathIOManager` and the second is a `DbIOManager`, which are the two base classes Dagster ships.
 Between them they cover nearly every first-party manager.
 
-The rows carry their original columns, then one `String` rule column per rule reading `valid`, `invalid` or `unknown`, named exactly as that rule's asset check.
+The rows carry their original columns, then one `String` rule column per rule reading `valid`, `invalid` or `unknown`, named for the rule rather than for the check reporting it.
+At the default `rule` granularity those are the same string; at `column` or `schema` the checks are named after the column or the schema, so follow a rule to a quarantine column rather than to a check.
 Check metadata samples are bounded, so without these columns the per-row attribution exists nowhere at volume.
 
 The valid table's materialization carries the quarantine address the rows went to, how many there were, and which sets of rules they broke together.
-See [Materializing an asset](what-a-run-produces.qmd).
+See [What a run produces](what-a-run-produces.qmd).
 
 **A partitioned asset on a database manager needs `partition_expr`.** `DbIOManager` raises without it, and you already declare it for your own partitioned table.
 It reaches the quarantine automatically, on the definition metadata the write carries.

@@ -7,25 +7,22 @@
 parser: numpy
 dynamic: true
 
-site_url: https://ozanozbeker.github.io/dagster-dataframely/
+site_url: https://ozanozbeker.com/dagster-dataframely/
 
 authors:
   - name: Ozan Ozbeker
     role: Maintainer
     email: github@ozanozbeker.com
 
-# The README's fences stay plain ` ```python ` so GitHub and PyPI keep syntax highlighting,
-# which neither gives a `{python}` info string. This script braces them in the build
-# directory's generated `index.qmd`, so the landing page executes what the repository
-# shows static. ADR-0009.
+# Braces the landing page's fences in the build directory, so `README.md` can stay plain
+# markdown for GitHub and PyPI. ADR-0009.
 pre_render: scripts/brace-readme-fences.py
 
-# Execute every page on every build, rather than Quarto's `auto`, which re-renders only
-# when a page's own source changed. The examples are checked against the package, not
-# against themselves: a rename in `src/` breaks a cell on a page whose `.qmd` nobody
-# touched, and `auto` would serve the cached output and let it through. The gate is only a
-# gate when it runs.
-freeze: false
+# No `freeze:` key, deliberately. Quarto re-executes every page by default, which is what
+# the gate needs: the examples are checked against the package, not against themselves, so a
+# rename in `src/` has to re-run a `.qmd` nobody touched. Setting `freeze: false` would be
+# inert anyway, because great-docs maps it to None and then omits `execute.freeze`. What
+# keeps it honest is `_freeze/` staying out of git and out of the CI cache.
 
 # Two tracks. The guide is the path a reader walks once, in the order the sections were
 # already written to be met in; the reference is what they come back to look up. Splitting
@@ -47,11 +44,6 @@ user_guide:
       - errors.qmd
       - hand-wiring.qmd
 
-# By module, not by Python kind. The generated default groups the public surface into
-# Classes, Exceptions, Functions, Constants and Type Aliases, which splits `dd.wiring`
-# across four headings and buries the two names most readers want. This ordering is the one
-# `wiring.py`'s own docstring states: the decorator is the happy path, hand-wiring is
-# supported but not recommended, and the errors are looked up rather than read.
 # By module, not by Python kind. The generated default groups the public surface into
 # Classes, Exceptions, Functions, Constants and Type Aliases, which splits `dd.wiring`
 # across four headings and buries the two names most readers want. This ordering is the one

@@ -15,9 +15,14 @@ Docstrings follow [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.ht
 [Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and asks for ` ```{python} ` executable cells, which it runs at build time and embeds the output of.
 Doctest is not its syntax.
 
-The fences say ` ```python ` for now rather than ` ```{python} `, because ruff's `docstring-code-format` only reaches the plain spelling.
-Adding the braces buys execution and costs that formatting, so do both in one pass once the site is wired up.
-Drop the `# 'value'` comments in the same pass: Quarto prints the real return value, and the comment would then say it twice.
+The fences say ` ```{python} `, and a docstring `Examples` block executes when the site builds.
+That was the trade: braces buy execution and give up ruff's `docstring-code-format`, which only reaches the plain spelling.
+So an `Examples` block is the one body of Python in this repo no formatter reads, and it is on you to keep it formatted.
+Write no `# 'value'` comment: Quarto prints the real return value, and the comment would say it twice.
+
+`README.md` is the exception and keeps plain ` ```python `, because GitHub and PyPI do not know the `{python}` info string and render it unhighlighted.
+A pre-render script braces the build directory's copy instead.
+ADR-0009.
 
 Hovering a fence in Zed renders `&nbsp;` wherever the code is indented.
 That is a pyrefly bug, not something to write around.

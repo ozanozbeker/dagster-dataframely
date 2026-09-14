@@ -8,7 +8,7 @@ With the quarantine gone from the graph (ADR-0004), the decorator has three jobs
 
 ## Decision
 
-`@dy_asset(Schema, quarantine=False, **dg.asset kwargs)` calls `dg.asset(check_specs=..., metadata=..., ...)` on the wrapped body. Every `dg.asset` argument it does not own or rule out is forwarded; `USER_GUIDE.md` tables the six it withholds and why. There is no stacked form.
+`@dy_asset(Schema, quarantine=False, **dg.asset kwargs)` calls `dg.asset(check_specs=..., metadata=..., ...)` on the wrapped body. Every `dg.asset` argument it does not own or rule out is forwarded; the guide's *Declaring an asset* tables the six it withholds and why. There is no stacked form.
 
 ## Why not stacked
 

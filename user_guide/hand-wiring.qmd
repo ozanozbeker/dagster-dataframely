@@ -82,7 +82,7 @@ flowchart TD
 ```
 
 The branch count makes the feature look bigger than it is.
-[The failure policy is the asset's declaration](the-failure-policy.qmd) has the same six as a table, with what each one writes.
+[The failure policy](the-failure-policy.qmd) has the same six as a table, with what each one writes.
 
 **The quarantine.** `validation_results` takes a `QuarantineWriter`: a callable handed the invalid rows that returns the quarantine address, as a string, because the answer can be a database table.
 
@@ -229,7 +229,9 @@ COLUMN_SCHEMA = dg.TableSchema(
     ],
 )
 def orders():
-    frame = orders_frame()
+    # Eager, because `Schema.filter` hands back a `LazyFrame` for a lazy frame and every
+    # count below is a `len()`. The decorator does this collect for you.
+    frame = orders_frame().collect()
 
     drift = {
         name: (column.dtype, frame.schema.get(name))

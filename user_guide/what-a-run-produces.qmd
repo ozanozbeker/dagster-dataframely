@@ -44,7 +44,8 @@ It spells each rule the way the quarantine's own columns spell it, at every gran
 The check list reads the same only at `rule` granularity, since `column` and `schema` name a check after the column or the schema instead.
 At either of those, follow a rule to the quarantine rather than to a check.
 
-Every value is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
+Every value that holds rows is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
+The two counts and the quarantine address are scalars, which is what they are.
 
 ## The statistics tables
 
@@ -161,10 +162,12 @@ Every asset check is an output, and this package always declares at least the co
 DagsterInvariantViolationError: Attempted to add metadata without providing output_name, but multiple outputs exist. Please provide an output_name to the invocation of `context.add_output_metadata`.
 ```
 
-Naming the output does work, but the output name is the asset's name and not its key, so under a `key_prefix` you would be hardcoding a string the catalog never shows you.
+Naming the output does work, and the name is `result` whatever the asset is called: a single-output asset has one, and Dagster names it the same way under every `key_prefix`.
+That is a Dagster internal spelling rather than anything this package chose, so hardcoding it ties your asset body to a name the catalog never shows you.
 Reach for `add_asset_metadata` instead.
 
-> [!NOTE]
-> `add_asset_metadata`, `set_data_version` and `add_output_metadata` are the whole of what this package has checked against Dagster's context, and no more will be checked.
-> Nothing is guaranteed about the rest of the context, now or in a future Dagster.
-> If you find another method that works and is worth teaching, [open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues).
+::: {.callout-note}
+`add_asset_metadata`, `set_data_version` and `add_output_metadata` are the whole of what this package has checked against Dagster's context, and no more will be checked.
+Nothing is guaranteed about the rest of the context, now or in a future Dagster.
+If you find another method that works and is worth teaching, [open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues).
+:::

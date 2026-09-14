@@ -3,27 +3,29 @@
 # the build log (T201). A file-level exception rather than one in `ruff.toml`, so it stays
 # attached to the one file that earns it.
 # ruff: noqa: INP001, T201
-"""Make the landing page's Python fences executable, without touching `README.md`.
+"""Brace the generated landing page's Python fences, leaving `README.md` alone. ADR-0009.
 
-Quarto decides whether a fence runs by its info string: ` ```{python} ` executes and embeds
-its output, ` ```python ` renders static. `README.md` is also PyPI's long description and
-GitHub's front page, and neither of those knows `{python}` as a language, so bracing the
-source would cost syntax highlighting on the two surfaces most readers actually use.
+Quarto's pre-render hook, run with the build directory as the working directory, so the
+copy Great Docs generated from `README.md` is already there and the file on disk is never
+touched.
 
-Great Docs generates `index.qmd` from `README.md` before Quarto renders, and runs this as
-Quarto's `project: pre-render:` hook, with the build directory as the working directory. So
-the copy is already there to rewrite and the file on disk is never touched. ADR-0009.
-
-Every Python fence is rewritten, because the README has no example that should not run. A
-block that has to stay static would need an exception here, and the honest question then is
-whether it belongs in the README at all.
+The count is checked against `README.md` rather than against zero. A guard that only fires
+when *every* fence was missed cannot see the likelier failure, one fence gaining an
+attribute the pattern does not match, which would ship that block static on a green build.
+Checking the total also makes a second pass a no-op instead of an error, which is what
+`quarto preview` does on every file change.
 """
 
 import pathlib
 import re
-import sys
 
-FENCE = re.compile(r"^(\s*)```python\s*$", re.MULTILINE)
+# `[ \t]` rather than `\s`, which in MULTILINE mode backtracks across the newline that ends
+# the fence line and swallows a following blank line.
+PLAIN = re.compile(r"^([ \t]*)```python[ \t]*\r?$", re.MULTILINE)
+BRACED = re.compile(r"^[ \t]*```\{python\}[ \t]*\r?$", re.MULTILINE)
+
+INDEX = pathlib.Path("index.qmd")
+README = pathlib.Path("../README.md")
 
 
 def main() -> int:
@@ -31,23 +33,21 @@ def main() -> int:
 
     Returns
     -------
-    A process exit code: non-zero when the landing page rewrote to no executable cell,
-    which means Great Docs changed how it generates one and the site would otherwise
-    ship the blocks unproven.
+    A process exit code. Non-zero leaves Quarto's render failed, and means the landing page
+    ended with fewer executable cells than `README.md` has Python fences: either Great Docs
+    changed how it generates one, or a fence is spelled in a way `PLAIN` does not match.
     """
-    index = pathlib.Path("index.qmd")
-    if not index.exists():
-        print(f"{__file__}: no index.qmd in {pathlib.Path.cwd()}", file=sys.stderr)
+    text = INDEX.read_text(encoding="utf-8")
+    expected = len(PLAIN.findall(README.read_text(encoding="utf-8")))
+    braced, count = PLAIN.subn(r"\1```{python}", text)
+
+    total = len(BRACED.findall(braced))
+    if total != expected:
+        print(f"{__file__}: {total} executable cells, {expected} in README.md")
         return 1
 
-    text = index.read_text()
-    braced, count = FENCE.subn(r"\1```{python}", text)
-    if count == 0:
-        print(f"{__file__}: no ```python fence in index.qmd", file=sys.stderr)
-        return 1
-
-    index.write_text(braced)
-    print(f"{__file__}: braced {count} fences in index.qmd")
+    INDEX.write_text(braced, encoding="utf-8", newline="")
+    print(f"{__file__}: braced {count} of {expected} fences in {INDEX}")
     return 0
 
 

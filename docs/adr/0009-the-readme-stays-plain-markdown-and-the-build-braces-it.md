@@ -39,10 +39,15 @@ That is what this file is for.
 Every Python fence in the README executes, because the README has no example that should not run.
 A block that must stay static would need the script to learn an exception, and the honest move then is to ask whether it belongs in the README at all.
 
-**One more thing depends on an undocumented key.**
-`pre_render` appears in the template `great-docs config` generates and in the repository's own feature list, but not in the published configuration reference.
-Great Docs is 0.17.0.
-If the key is renamed, the site build fails loudly at render rather than quietly shipping static blocks, because the braces are the only thing making those cells run.
+**The gate proves less for the README than for the guide.**
+Its three blocks declare a schema, decorate two assets and construct a `dg.Definitions`; none runs a materialization.
+So this catches an import break or a decorator signature change, and says nothing about what a run emits.
+
+**Losing the key degrades silently, so the script checks its own work.**
+`pre_render` appears in the template `great-docs config` generates and in the repository's own feature list, but not in the published configuration reference, and Great Docs is 0.17.0.
+It writes `project: pre-render` into the generated `_quarto.yml` only when the list is non-empty, so a renamed key, or `pre-render:` typed for `pre_render:`, omits the hook with no warning: every cell renders static and the build stays green.
+Nothing in Quarto or Great Docs can catch that, so the script counts the Python fences in `README.md` and fails unless the landing page ends with that many executable cells.
+The same count catches the likelier failure, one fence gaining an attribute the pattern does not match, which a check against zero could not see.
 
 **`rumdl` stays quiet on the README.**
 A braced fence in a `.md` file trips MD040, since rumdl reads `{python}` as a missing language there rather than as a chunk.

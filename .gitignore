@@ -241,11 +241,10 @@ Temporary Items
 Icon
 $RECYCLE.BIN/
 
-# Great Docs build output. `_quarto.yml` is regenerated inside these on every build, so
-# nothing under them is a source file. `great-docs.yml` is the committed configuration.
+# Great Docs build output. `_quarto.yml` is regenerated inside `great-docs/` on every
+# build, so nothing under it is a source file; `great-docs.yml` is the committed
+# configuration. `_freeze/` is Quarto's execution cache, and committing it would let a page
+# ship cached output after the code under it changed.
 great-docs/
-great-docs-*/
-.great-docs/
-.great-docs-build/
-.great-docs-cache/
+_great_docs_build/
 _freeze/

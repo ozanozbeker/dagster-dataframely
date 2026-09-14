@@ -65,7 +65,7 @@ A setting with no argument now names the two sources it does resolve through, an
 
 ### Documentation in 0.8
 
-The README is a landing page and a quick start. [the user guide](https://ozanozbeker.github.io/dagster-dataframely/) is everything else, and this file is the upgrade log.
+The README is a landing page and a quick start. [the user guide](https://ozanozbeker.com/dagster-dataframely/) is everything else, and this file is the upgrade log.
 
 `dataframely/invalid_by_rules` names each rule the way the quarantine's own columns name it, at every granularity, and the guide used to say it names them the way the check list does.
 Those agree only at `rule` granularity, so a reader at `column` or `schema` was being sent to a check name that does not exist.
@@ -88,7 +88,7 @@ Both are ADRs: [0004](https://github.com/ozanozbeker/dagster-dataframely/blob/ma
 | `dd.errors.QuarantineSettingError` | none | nothing on the quarantine is configurable now |
 | `dd.errors.UnwritableDtypeError` | none | it belonged to the CSV writer |
 | `dd.wiring.quarantine_table_schema` | none | a quarantine spec carries its own Columns tab |
-| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](https://ozanozbeker.github.io/dagster-dataframely/user-guide/hand-wiring.html); renamed again in 0.8 |
+| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](https://ozanozbeker.com/dagster-dataframely/user-guide/hand-wiring.html); renamed again in 0.8 |
 | `dy_schema__dtypes` | `dy_schema__columns` | this orphans that check's history |
 | `sample` | `dataframely/valid_sample` | |
 | `stats/<family>` | `dataframely/valid_stats/<family>` | renamed again in 0.8 |

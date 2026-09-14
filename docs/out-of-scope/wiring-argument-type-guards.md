@@ -59,7 +59,7 @@ One function cannot hold both verdicts without a parameter deciding which, and i
 ### Hand-wiring composing one part is not a goal
 
 A guard here is ergonomics for someone assembling `wiring` parts by hand.
-[ADR-0001](../adr/0001-process-takes-asset-keys.md) settles that hand-wiring does not shape this package's design, and [the guide's hand-wiring page](https://ozanozbeker.github.io/dagster-dataframely/user-guide/hand-wiring.html) says "Nothing will be added to `dd.wiring` to make reassembling the decorator easier".
+[ADR-0001](../adr/0001-process-takes-asset-keys.md) settles that hand-wiring does not shape this package's design, and [the guide's hand-wiring page](https://ozanozbeker.com/dagster-dataframely/user-guide/hand-wiring.html) says "Nothing will be added to `dd.wiring` to make reassembling the decorator easier".
 [Rule sets fixed at definition time](rule-sets-fixed-at-definition-time.md) rejected a larger proposal on the same ground.
 
 ## What this package does refuse

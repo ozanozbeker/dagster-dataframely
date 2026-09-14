@@ -74,10 +74,11 @@ Nothing migrates them, so choose it before the asset ships rather than after.
 Each materialization carries `skimr`-style statistics for what it wrote.
 [The statistics tables](what-a-run-produces.qmd#the-statistics-tables) has the columns.
 
-> [!IMPORTANT]
-> Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
-> The event log is shared across a deployment, it is exportable, and nothing here is redacted.
-> If a column holds an email address, a name or an account number, that value lands in the log and stays there.
+::: {.callout-important}
+Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
+The event log is shared across a deployment, it is exportable, and nothing here is redacted.
+If a column holds an email address, a name or an account number, that value lands in the log and stays there.
+:::
 
 | setting | what it writes | where |
 | --- | --- | --- |

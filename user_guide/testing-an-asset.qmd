@@ -71,6 +71,21 @@ def test_orders_quarantines_the_negative_amount(quarantine_dir):
     assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 1
 ```
 
+```{python}
+#| label: testing-an-asset-4
+#| echo: false
+#| output: false
+# A cell cannot run a pytest test, so the three assertions above would otherwise ship
+# unchecked on the one page that teaches testing. Call the body directly: only the fixture
+# carries a decorator, and what it supplies is a directory and an environment variable.
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.environ["DAGSTER_DATAFRAMELY_QUARANTINE_DIR"] = tmp
+    test_orders_quarantines_the_negative_amount(Path(tmp))
+```
+
 Two things about that call are worth reading twice.
 
 **The quarantine is written, not yielded.**
