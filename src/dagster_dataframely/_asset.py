@@ -178,6 +178,8 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
         `schema` is a `dy.Collection`.
     ReservedColumnError
         A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     InvalidSettingError

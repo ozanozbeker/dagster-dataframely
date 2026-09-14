@@ -56,6 +56,7 @@ _ERRORS = {
     "QuarantineDirError",
     "QuarantineKeyCollisionError",
     "ReservedColumnError",
+    "UnnameableColumnError",
     "ColumnSchemaError",
     "ValidationAbortError",
 }

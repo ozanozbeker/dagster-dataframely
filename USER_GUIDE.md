@@ -934,8 +934,11 @@ A rule name reaches a check name by rewriting `|` to `__`, so `amount|min` becom
 **`dataframely/`** covers every key on a materialization, which has no such limit.
 It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
 
-A schema with a column of its own inside `dy_` raises `ReservedColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
-Every public function that takes a schema raises them, so the decorator refuses one where it is declared and a hand-wired asset refuses one wherever it first hands the schema over (ADR-0008).
+A schema with a column of its own inside `dy_` raises `ReservedColumnError`, a column spelled in anything but `A-Za-z0-9_` raises `UnnameableColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
+Every public function that takes a schema raises all three, so the decorator refuses such a schema where it is declared and a hand-wired asset refuses one wherever it first hands the schema over (ADR-0008).
+
+An unnameable column is almost always a `dy.Column(alias=...)`, which Dataframely offers for a name that is not a Python identifier.
+An alias holding a `|` is the one worth naming twice: that is Dataframely's own rule delimiter, so before this error it surfaced as a `KeyError` on a column the schema never declared.
 
 **`<name>_quarantine`** is the third, and it is unlike the other two.
 It is the asset key a quarantine is written under, and asset keys are yours as much as they are this package's, so it is the one reservation somebody else can take first.
@@ -953,6 +956,7 @@ Every message names the schema, the culprit and the fix.
 | --- | --- | --- |
 | `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member |
 | `ReservedColumnError` | at decoration, and from every public function taking a schema | rename the column that starts with `dy_` |
+| `UnnameableColumnError` | the same | spell the column in `A-Za-z0-9_`, renaming the `alias=` that named it |
 | `CheckNameCollisionError` | the same | rename one of the two rules that rewrite alike |
 | `InvalidSettingError` | on resolve, from whichever source supplied the value | fix the value at the source the message names |
 | `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame, or use `context.add_asset_metadata`, or write a plain `@dg.asset` |

@@ -23,6 +23,7 @@ __all__ = [
     "QuarantineDirError",
     "QuarantineKeyCollisionError",
     "ReservedColumnError",
+    "UnnameableColumnError",
     "ValidationAbortError",
 ]
 
@@ -78,6 +79,25 @@ class ReservedColumnError(DagsterDataframelyError):
         )
         super().__init__(
             f"Column{plural} {culprits} of {schema_name} {verb} the reserved 'dy_' namespace. Rename {pronoun}. This package generates every check name and quarantine column under it."
+        )
+
+
+class UnnameableColumnError(DagsterDataframelyError):
+    """A user column's name cannot become an asset-check name.
+
+    Raised at definition time, for the same reason `ReservedColumnError` is: the name is a property of the schema that no annotation expresses (ADR-0008). Dataframely's `alias=` exists to let a column carry a name that is not a Python identifier, and Dagster validates every check name against `^[A-Za-z0-9_]+$`, so the two features meet here.
+
+    Left to Dagster, the refusal quotes a string this package built and names neither the column nor the alias behind it. A `|` in the name misses Dagster entirely: it is Dataframely's own delimiter, so `described_rules` reads part of the column as a rule name and the failure is a `KeyError` on a column nobody wrote.
+    """
+
+    def __init__(self, schema_name: str, columns: list[str]) -> None:
+        """Name the offending columns only, never the whole schema."""
+        culprits: str = ", ".join(f"'{column}'" for column in columns)
+        plural, verb, pronoun = (
+            ("", "is", "it") if len(columns) == 1 else ("s", "are", "them")
+        )
+        super().__init__(
+            f"Column{plural} {culprits} of {schema_name} {verb} not spelled in 'A-Za-z0-9_', which is every character Dagster allows in a name. Rename {pronoun}, or the `alias=` that named {pronoun}. This package builds an asset-check name per rule out of the column that owns it, and Dagster refuses the result."
         )
 
 

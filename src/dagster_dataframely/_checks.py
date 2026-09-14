@@ -162,6 +162,8 @@ def check_specs(
         A setting resolved to a value outside its allowed values.
     ReservedColumnError
         A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     """
@@ -491,6 +493,8 @@ def check_results(  # noqa: PLR0913 - the specs' settings reach the results, pin
         A setting resolved to a value outside its allowed values.
     ReservedColumnError
         A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     ColumnSchemaError

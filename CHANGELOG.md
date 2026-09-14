@@ -51,6 +51,10 @@ Declaring `quarantine=True` beside such an asset used to lose the invalid rows i
 
 `ReservedColumnError` and `CheckNameCollisionError` now come from every public function that takes a schema, not only from `check_specs` (ADR-0008).
 
+`UnnameableColumnError` joins them, for a column spelled in anything but `A-Za-z0-9_`.
+A column comes by such a name through `dy.Column(alias=...)`, which Dataframely offers for a name that is not a Python identifier, so the fix is to rename the alias.
+An alias holding Dataframely's own `|` delimiter used to surface as `KeyError` on a column nobody declared.
+
 ### Fixed in 0.8
 
 `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` is read where the invalid rows are written rather than where the asset is declared.

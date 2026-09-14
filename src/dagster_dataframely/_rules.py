@@ -12,6 +12,7 @@ Measured on dagster 1.13.20, dataframely 3.0.0, polars 1.44.1. Building the reco
 """
 
 import inspect
+import re
 from dataclasses import dataclass
 
 import dataframely as dy
@@ -23,7 +24,16 @@ import polars as pl
 from dataframely._rule import Rule, RuleFactory
 
 from dagster_dataframely._naming import RESERVED_NAMESPACE, check_name
-from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnError
+from dagster_dataframely.errors import (
+    CheckNameCollisionError,
+    ReservedColumnError,
+    UnnameableColumnError,
+)
+
+DAGSTER_NAME = re.compile(r"[A-Za-z0-9_]+")
+"""Every character Dagster allows in a name, which is what a check spec's op output becomes.
+
+Restated rather than imported: upstream spells it inline in the message it raises, with no name to reach for. `check_name` quotes the same regex in its docstring, and `test_upstream_characterization.py` pins it against a real refusal."""
 
 
 @dataclass(frozen=True)
@@ -98,12 +108,14 @@ def described_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
 
 
 def validate_namespace(schema: type[dy.Schema]) -> None:
-    """Raise the two errors Dagster would otherwise report opaquely, or not at all.
+    """Raise the three errors Dagster would otherwise report opaquely, or not at all.
 
     Raises
     ------
     ReservedColumnError
         A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same asset-check name.
     """
@@ -112,6 +124,15 @@ def validate_namespace(schema: type[dy.Schema]) -> None:
     ]
     if reserved:
         raise ReservedColumnError(schema.__name__, reserved)
+
+    # Ahead of the walk below, because a column carrying Dataframely's own `|` breaks the
+    # parse that walk reads: `described_rules` would hand back a `column` naming a column
+    # the schema does not have, and the first renderer to index by it dies on a `KeyError`.
+    unnameable: list[str] = [
+        column for column in schema.columns() if not DAGSTER_NAME.fullmatch(column)
+    ]
+    if unnameable:
+        raise UnnameableColumnError(schema.__name__, unnameable)
 
     seen: dict[str, str] = {}
     for rule in described_rules(schema).values():

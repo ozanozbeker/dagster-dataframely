@@ -39,6 +39,8 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     ------
     ReservedColumnError
         A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     """
@@ -104,6 +106,8 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
 
     One entry, the Columns tab. A mapping rather than the bare value because the decorator merges it over the user's `metadata`.
 
+    Every refusal is `table_schema`'s, which is this function's whole body.
+
     Returns
     -------
     A mapping to hand to `dg.asset(metadata=...)`.
@@ -111,7 +115,9 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     Raises
     ------
     ReservedColumnError
-        A user column sits inside the reserved namespace. Raised through `table_schema`, which is this function's whole body.
+        A user column sits inside the reserved namespace.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name.
     """

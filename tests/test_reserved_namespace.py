@@ -13,7 +13,11 @@ import polars as pl
 import pytest
 
 import dagster_dataframely as dd
-from dagster_dataframely.errors import CheckNameCollisionError, ReservedColumnError
+from dagster_dataframely.errors import (
+    CheckNameCollisionError,
+    ReservedColumnError,
+    UnnameableColumnError,
+)
 from tests.scenario import Orders, clean_orders
 
 
@@ -32,6 +36,18 @@ class Colliding(dy.Schema):
     @dy.rule()
     def order_id__nullability(cls) -> pl.Expr:
         return cls.order_id.col.is_not_null()
+
+
+class Unnameable(dy.Schema):
+    """A schema whose column carries an alias Dagster cannot spell."""
+
+    total = dy.Int64(min=1, alias="Order Total")
+
+
+class Delimited(dy.Schema):
+    """A schema whose column carries Dataframely's own rule delimiter."""
+
+    total = dy.Int64(min=1, alias="a|b")
 
 
 _KEY = dg.AssetKey(["orders"])
@@ -87,3 +103,30 @@ def test_a_public_function_refuses_two_rules_that_rewrite_to_one_check_name(
     assert "order_id__nullability" in message
     assert "order_id|nullability" in message
     assert "dy_rule__order_id__nullability" in message
+
+
+@pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
+def test_a_public_function_refuses_a_column_dagster_cannot_name(
+    taker: Callable[[type[dy.Schema]], object],
+) -> None:
+    with pytest.raises(UnnameableColumnError) as raised:
+        taker(Unnameable)
+
+    message = str(raised.value)
+
+    assert "Column 'Order Total' of Unnameable is not spelled" in message
+    assert "A-Za-z0-9_" in message
+    # The alias is what named it, so the fix is named too.
+    assert "`alias=`" in message
+
+
+@pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
+def test_a_public_function_refuses_a_column_carrying_the_rule_delimiter(
+    taker: Callable[[type[dy.Schema]], object],
+) -> None:
+    """`|` is Dataframely's own delimiter, so `described_rules` reads `a|b|min` as column `a` and rule `b|min`.
+
+    Before the guard the first renderer to index by that column raised `KeyError: 'a'`, naming a column the schema does not have. Dagster never saw it, so this is the one unnameable column its own refusal would not have caught.
+    """
+    with pytest.raises(UnnameableColumnError):
+        taker(Delimited)

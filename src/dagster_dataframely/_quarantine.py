@@ -311,6 +311,8 @@ def quarantine_spec(
     ------
     ReservedColumnError
         A user column sits inside the reserved namespace. Without the guard the rule columns of this spec's Columns tab collide with it, silently, at definition time.
+    UnnameableColumnError
+        A user column is spelled in characters Dagster refuses in a name.
     CheckNameCollisionError
         Two rules rewrite to the same check name, which this spec's Columns tab would also collapse.
     dg.DagsterInvariantViolationError

@@ -19,6 +19,7 @@ from dagster_dataframely.errors import (
     DagsterDataframelyError,
     InvalidSettingError,
     ReservedColumnError,
+    UnnameableColumnError,
 )
 from tests.scenario import Orders
 
@@ -825,9 +826,9 @@ def test_a_quarantine_needs_no_resource_declared():
 
 
 # --- definition-time errors ---
-# The singular message and the collision are asserted against every schema-taking
-# function, `dd.asset` included, in `test_reserved_namespace.py`. Only the plural form
-# is here, because nothing there declares a schema with two reserved columns.
+# The singular messages and the collision are asserted against every schema-taking
+# function, `dd.asset` included, in `test_reserved_namespace.py`. Only the plural forms
+# are here, because nothing there declares a schema with two offending columns.
 def test_the_reserved_column_error_reads_as_plural_for_several_columns():
     """The message is all a user sees of this error, so it agrees in number."""
 
@@ -845,6 +846,25 @@ def test_the_reserved_column_error_reads_as_plural_for_several_columns():
         raised.value
     )
     assert "Rename them." in str(raised.value)
+
+
+def test_the_unnameable_column_error_reads_as_plural_for_several_columns():
+    """The message is all a user sees of this error, so it agrees in number, and so does the `alias=` it sends the user back to."""
+
+    class Unnameable(dy.Schema):
+        total = dy.Int64(alias="Order Total")
+        net = dy.Int64(alias="Net/Total")
+
+    with pytest.raises(UnnameableColumnError) as raised:
+
+        @dd.asset(Unnameable)
+        def unnameable() -> pl.DataFrame:
+            return pl.DataFrame()
+
+    assert "Columns 'Order Total', 'Net/Total' of Unnameable are not spelled" in str(
+        raised.value
+    )
+    assert "Rename them, or the `alias=` that named them." in str(raised.value)
 
 
 def test_a_collection_is_refused_at_the_boundary():
