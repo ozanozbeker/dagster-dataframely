@@ -67,6 +67,9 @@ A setting with no argument now names the two sources it does resolve through, an
 
 The README is a landing page and a quick start. [`USER_GUIDE.md`](USER_GUIDE.md) is everything else, and this file is the upgrade log.
 
+`dataframely/invalid_by_rules` names each rule the way the quarantine's own columns name it, at every granularity, and the guide used to say it names them the way the check list does.
+Those agree only at `rule` granularity, so a reader at `column` or `schema` was being sent to a check name that does not exist.
+
 ## 0.7.0 - 2026-09-02
 
 ### Breaking in 0.7

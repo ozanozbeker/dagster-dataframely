@@ -154,7 +154,7 @@ def column_constraints(schema: type[dy.Schema]) -> dict[str, list[str]]:
     for rule in described_rules(schema).values():
         if rule.column is None or rule.rule_name in _NO_CONSTRAINT:
             continue
-        # The fallback is the rule's own name: the row already carries the column name, and this package shows Dataframely's `|` nowhere else.
+        # The fallback is the rule's own name rather than the `|`-delimited whole: the row already carries the column name. The whole name is what a check description falls back to, and what `dy_rule` reports, so the delimiter is visible there and not here.
         constraints[rule.column].append(
             rule_text(schema, rule) or rule.rule_name or rule.name
         )

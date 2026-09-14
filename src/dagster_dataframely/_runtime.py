@@ -125,7 +125,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
 
     One broken upstream field tripping three rules then reads as one row, not three unrelated counts.
 
-    Rules carry their asset-check names, not Dataframely's. Both places this table sends a reader spell them that way: the check list and the quarantine's columns. The original name lives on `dy_rule` in each check's metadata.
+    Rules carry the names the quarantine's own columns carry, not Dataframely's, so this table joins the rows it is about. The check list spells them the same way only at `rule` granularity; `column` and `schema` collapse several rules into one check named after the column or the schema, so a reader at either follows a rule to the quarantine rather than to a check. The Dataframely name lives on `dy_rule` in each check's metadata.
 
     Rows sort biggest group first, ties by name. `cooccurrence_counts()` groups without `maintain_order`, so its order is arbitrary and two runs of the same data would diff. Biggest first is also the reading order: the table answers which upstream field trips the most rows at once.
 

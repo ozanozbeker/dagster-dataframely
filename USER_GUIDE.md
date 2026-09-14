@@ -307,7 +307,7 @@ What the run leaves behind is the part this package is for, and it lands in two 
 
 ### The table's materialization
 
-Everything this package writes there sits under `dataframely/`, so it sorts in one block apart from Dagster's own keys and your IO manager's.
+The row count goes under Dagster's own `dagster/row_count`, and everything else this package writes sits under `dataframely/`, so it sorts in one block apart from Dagster's keys and your IO manager's.
 
 | key | what it holds |
 | --- | --- |
@@ -321,7 +321,9 @@ Everything this package writes there sits under `dataframely/`, so it sorts in o
 
 The last four are absent on a clean run, where there is nothing to say.
 `dataframely/invalid_by_rules` is what stops one broken upstream field that trips three rules reading as three unrelated counts.
-It names rules by their asset-check names, because that is how both places it sends you read them: the check list, and the quarantine's own columns.
+It spells each rule the way the quarantine's own columns spell it, at every granularity, so the table and the rows it counts line up.
+The check list reads the same only at `rule` granularity, since `column` and `schema` name a check after the column or the schema instead.
+At either of those, follow a rule to the quarantine rather than to a check.
 
 Every value is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
 
