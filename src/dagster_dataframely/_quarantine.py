@@ -192,12 +192,11 @@ def delegating_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
         There is no step, which is direct invocation. `quarantine_writer` catches this and uses `file_writer` instead.
     """
     step = context.get_step_execution_context()
-    # The asset's own output, never a check's: a check spec is an op output too, so the step has one more output per declared check.
-    (output_name,) = [
-        name
-        for name, key in context.assets_def.keys_by_output_name.items()
-        if key == context.asset_key
-    ]
+    # One output, unfiltered: `keys_by_output_name` omits the check outputs a check spec
+    # adds to the step, which `test_keys_by_output_name_still_omits_the_check_outputs` pins.
+    # The unpack is the guard, so an asset owning two outputs fails here rather than writing
+    # the quarantine through whichever manager it reached first.
+    (output_name,) = context.assets_def.keys_by_output_name
     handle = StepOutputHandle(step.step.key, output_name)
     original: dg.OutputContext = step.get_output_context(handle)
     manager = step.get_io_manager(handle)
