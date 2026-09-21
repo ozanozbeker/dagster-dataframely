@@ -44,6 +44,8 @@ Two things exist as soon as the module imports, before you run anything:
   Dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
 - **A check spec per rule set**, so the catalog lists the checks an asset will report and a failing one has a name before it ever fails.
 
+![A clean run's Checks tab at the default granularity: one check per rule, each with its own history. The selected one is described by its rendered constraint, and carries the rule's name and expression as metadata.](../assets/images/check-list.png)
+
 The asset's description comes from the schema's docstring, which [Naming](naming.qmd) covers.
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.

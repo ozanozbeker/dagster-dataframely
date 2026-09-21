@@ -103,6 +103,8 @@ defs = dg.Definitions(
 )
 ```
 
+![The quarantine's node in the lineage view. Its one edge comes from the valid asset rather than from the table both read, and it is drawn dashed because nothing ever materializes it.](../assets/images/quarantine-lineage.png)
+
 That returns a `dg.AssetSpec` keyed `orders_quarantine`, depending on `orders`, with its own Columns tab.
 It has no compute, because the decorator already wrote the rows.
 The spec's key resolves through the same IO manager the write used, so a downstream asset can name it as an input and read it back with no routing at all.

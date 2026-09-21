@@ -71,3 +71,10 @@ testpaths = ["tests"]
 
 [tool.uv]
 required-version = ">=0.12,<0.13"
+
+# `demo/` is a member rather than its own project, so one lockfile covers both and the demo
+# always runs the working tree rather than a published wheel. A screenshot then shows the
+# code in front of you. `uv sync` at the root installs this package alone, so the webserver
+# the demo depends on stays out of the environment CI tests in.
+[tool.uv.workspace]
+members = ["demo"]

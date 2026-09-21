@@ -37,6 +37,10 @@ Six rows, and they are the six ways a run can end.
 A rule check's severity is a property of the run's outcome rather than of any one rule, so every rule check in a run carries the same one.
 The column-schema check keeps its own, `ERROR`, whatever the outcome and whatever severity the rules beside it were graded with.
 
+![The same rows failing the same rules, with no quarantine declared. The failing checks are graded `ERROR` rather than the `WARN` a declared quarantine would give them, which is the difference between the third and fourth rows of the table.](../assets/images/severity-error.png)
+
+![The run's own failure. `ValidationAbortError` states the damage per rule, and the counts sum past the invalid-row count because one row can break several.](../assets/images/error-validation-abort.png)
+
 **Without a quarantine, every row has to be valid.**
 A run with even one failing row writes nothing, so your last-known-good table stays in place.
 Writing the valid rows and dropping the rest is the failure this package exists to make visible, so you cannot get there by configuration.

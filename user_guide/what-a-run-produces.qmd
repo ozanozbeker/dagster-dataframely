@@ -44,8 +44,12 @@ It spells each rule the way the quarantine's own columns spell it, at every gran
 The check list reads the same only at `rule` granularity, since `column` and `schema` name a check after the column or the schema instead.
 At either of those, follow a rule to the quarantine rather than to a check.
 
+![The same run with rows held back. The third row of `dataframely/invalid_by_rules` is one order that broke three rules at once, counted once rather than three times.](../assets/images/invalid-by-rules.png)
+
 Every value that holds rows is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
 The two counts and the quarantine address are scalars, which is what they are.
+
+![A clean run's materialization: the row count, one statistics table per dtype group present, the row sample, and the IO manager's own keys below them.](../assets/images/materialization-metadata.png)
 
 ## The statistics tables
 
@@ -130,6 +134,8 @@ Naming the culprit beats dropping it silently, which would leave your check resu
 A returned `dagster/row_count` loses to the count this package made, and so does anything under `dataframely/`.
 This package generates those keys, so a collision is a mistake rather than an override.
 Everything else you attach is yours, and it is carried through untouched.
+
+![An asset whose returned result set `source`, `extract/rows` and `extract/window`, and also returned `dagster/row_count` as 999. The three are carried through; the count reads 12, which is what was written.](../assets/images/returned-result-metadata.png)
 
 ### The context route
 

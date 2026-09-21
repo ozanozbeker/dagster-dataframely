@@ -24,3 +24,6 @@ code-blocks = false
 reflow = true
 reflow-mode = "sentence-per-line"
 severity = "info"
+
+[MD093]
+code = false

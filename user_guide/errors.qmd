@@ -41,6 +41,8 @@ Every message names the schema, the culprit and the fix.
 
 `ColumnSchemaError` names every offending column at once, with its expected and actual dtype, and the same list feeds the failing check's `dy_schema__errors` table, so the two cannot disagree.
 
+![A run log where `quantity` arrived `Int64`. The failing `dy_schema__columns` check carries `dy_schema__errors` with the expected and actual dtype, and the step failure below it repeats the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
+
 `ValidationAbortError` and `NothingSurvivedError` both state the damage per rule.
 The counts can sum past the invalid-row count, because one row can break several rules.
 

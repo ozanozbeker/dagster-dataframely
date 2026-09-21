@@ -120,6 +120,8 @@ def priority_orders(
 The root one handles the grid; the one below it does not, exactly as with a single dimension.
 That is worth saying because a grid looks like it should arrive nested, and it never does: an asset on the same grid gets **one** frame, the cell it is running for.
 
+![A day-by-region grid with one cell selected. Validation ran per partition, so the row count and the statistics on the right belong to that cell alone.](../assets/images/partitions-grid.png)
+
 `context.partition_key` is a `dg.MultiPartitionKey`, a `str` subclass rendering as `2026-01-01|eu`.
 Read a dimension off `keys_by_dimension` rather than parsing that string, because the string's order is not yours: both it and the paths below sort by dimension name, so renaming a dimension reorders them.
 

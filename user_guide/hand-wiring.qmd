@@ -161,6 +161,8 @@ def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
     )
 ```
 
+![The checks reporting from their own node, against a table the IO manager had already written. They carry the `WARN` this call was given, and the rows that failed them are in that table rather than in a quarantine.](../assets/images/split-checks.png)
+
 This is the arrangement to reach for when the write must not depend on the verdict: the asset returns its frame, lazy or eager, the IO manager writes whatever it returned, and the checks run afterwards against what was written.
 What you give up is the guarantee the decorator exists for.
 The table is written before anything is validated, so the invalid rows reach storage and a failing check is what tells you.

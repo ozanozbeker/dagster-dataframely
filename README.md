@@ -26,10 +26,21 @@ That is the whole integration.
 From that one declaration you get:
 
 - **The catalog's Columns tab**, filled in before the asset has ever run: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and every remaining constraint listed beside it.
+
+  ![The catalog's Columns tab, filled from the schema: each column's dtype and description, `tracking_id` marked unique, the composite primary key stated once at table level, and the column tags `amount` declared through `metadata=`.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/columns-tab.png)
+
 - **One asset check per Dataframely rule**, each with its own pass/fail history.
+
+  ![A clean run's Checks tab at the default granularity: one check per rule, each with its own history. The selected one is described by its rendered constraint, and carries the rule's name and expression as metadata.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/check-list.png)
+
 - **A blocking column-schema check** that compares the frame's columns and dtypes against the schema, before a single row is filtered.
+
+  ![A run log where `quantity` arrived `Int64`. The failing `dy_schema__columns` check carries `dy_schema__errors` with the expected and actual dtype, and the step failure below it repeats the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
+
 - **Somewhere for the rows that do not fit**, if you want it.
   Add `quarantine=True` and the rows that fail validation are written beside the table rather than failing the run, as long as something survives.
+
+  ![The lineage view. The table materialized with 17 of its 24 checks passing, and its quarantine sits beside it as a node of its own, drawn dashed because nothing ever materializes it: the rejected rows were written inside the table's own step.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-lineage.png)
 
 The decorated function is an ordinary Dagster asset body.
 Upstream assets bind as parameters, you declare `context` if you want it, and you can return any of five things: a frame, or a `dg.MaterializeResult` carrying one, eager or lazy, or `None`.
@@ -115,6 +126,8 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 The invalid rows go through the same IO manager, under the asset's own key with `_quarantine` on the end, carrying one column per rule saying why.
 The checks then fail at `WARN` and the run succeeds, so downstream proceeds on the data that is fine.
+
+![The Checks tab for a quarantined asset. Seven of the twenty-four checks failed at `WARN`, and the selected one carries the rendered constraint, the rule's expression, and the two rows it rejected.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-checks.png)
 
 ## Documentation
 

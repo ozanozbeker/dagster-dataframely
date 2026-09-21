@@ -248,3 +248,11 @@ $RECYCLE.BIN/
 great-docs/
 _great_docs_build/
 _freeze/
+
+# The demo's tables, and what a killed `dg dev` leaves behind. `dg dev` builds its instance
+# under the cwd and removes it on exit, so nothing sets DAGSTER_HOME.
+demo/storage/
+demo/.tmp_dagster_home_*/
+
+# dg writes a per-checkout telemetry id here; it is local state, not source.
+demo/.dg/telemetry.yaml

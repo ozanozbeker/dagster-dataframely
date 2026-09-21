@@ -1,20 +1,13 @@
-# A build script Quarto runs, not package code: `scripts/` is deliberately not a package
-# (INP001), and what this writes to stdout is its interface, because Quarto shows it in
-# the build log (T201). A file-level exception rather than one in `ruff.toml`, so it stays
-# attached to the one file that earns it.
 # ruff: noqa: INP001, T201
 """Brace the generated pages' Python fences, leaving every source file plain. ADR-0009.
 
-Quarto's pre-render hook, run with the build directory as the working directory, so the
-pages Great Docs generated are already there and nothing on disk outside it is touched.
+Quarto's pre-render hook, run with the build directory as the working directory, so the pages Great Docs generated are already there and nothing on disk outside it is touched.
 
-Two surfaces, one reason. `README.md` is also PyPI's long description and GitHub's front
-page. A docstring is read by ruff, whose `docstring-code-format` reaches the plain spelling
-only. Both keep plain fences and get braces here instead.
+Two surfaces, one reason. `README.md` is also PyPI's long description and GitHub's front page.
+A docstring is read by ruff, whose `docstring-code-format` reaches the plain spelling only.
+Both keep plain fences and get braces here instead.
 
-Only the reference pages' `Examples` sections are rewritten, never the whole page: Great
-Docs emits the function signature as its own ` ```python ` block, and executing a signature
-would fail the build.
+Only the reference pages' `Examples` sections are rewritten, never the whole page: Great Docs emits the function signature as its own ` ```python ` block, and executing a signature would fail the build.
 """
 
 import pathlib
@@ -46,9 +39,7 @@ def landing_page() -> int:
 
     Returns
     -------
-    The count missing against `README.md`. Checking the total rather than checking for zero
-    is what catches the likelier failure, one fence gaining an attribute the pattern does
-    not match, and what makes a second pass a no-op instead of an error.
+    The count missing against `README.md`. Checking the total rather than checking for zero is what catches the likelier failure, one fence gaining an attribute the pattern does not match, and what makes a second pass a no-op instead of an error.
     """
     braced, count = PLAIN.subn(r"\1```{python}", read(INDEX))
     expected = len(PLAIN.findall(read(README)))
@@ -66,8 +57,7 @@ def reference_pages() -> int:
 
     Returns
     -------
-    The count of plain fences still sitting under an `Examples` heading, which means the
-    pattern did not match one and that example would ship static.
+    The count of plain fences still sitting under an `Examples` heading, which means the pattern did not match one and that example would ship static.
     """
     missed = 0
     for page in sorted(REFERENCE.glob("*.qmd")):
