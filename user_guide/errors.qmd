@@ -48,7 +48,8 @@ The counts can sum past the invalid-row count, because one row can break several
 
 ## Three ways to get this wrong
 
-**Do not declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.** `orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
+**Do not declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.**
+`orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
 An asset of your own keyed `orders_quarantine` resolves to that same address, so the two writes land on one table or one file and whichever ran last wins.
 Every run of the quarantined asset checks first and fails before its body:
 

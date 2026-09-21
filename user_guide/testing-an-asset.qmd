@@ -128,7 +128,8 @@ events = list(daily_orders(dg.build_asset_context(partition_key="2026-01-02")))
 
 An asset that aborts raises out of the call, so `pytest.raises(dd.errors.ValidationAbortError)` is how you test the policy itself, and `dd.errors.ColumnSchemaError` is how you test a drifting frame.
 
-**A decorated function that attaches metadata through the context is the one thing you cannot test this way.** `context.add_asset_metadata` raises under a direct call:
+**A decorated function that attaches metadata through the context is the one thing you cannot test this way.**
+`context.add_asset_metadata` raises under a direct call:
 
 ```text
 AttributeError: 'DirectAssetExecutionContext' object has no attribute '_step_execution_context'

@@ -7,8 +7,6 @@ Every claim is tagged **[RAN]** (executed and read off the result) or **[READ]**
 The durable half of this document is [`tests/test_partitions.py`](../../tests/test_partitions.py): every claim below is covered there, including the two that are Dagster's behaviour rather than this package's, so a release that changes either one fails a test rather than leaving this page quietly wrong.
 Scratch scripts lived in `/tmp/dd25/`.
 
----
-
 ## Answer
 
 Partitioning works, and it needed no code.
@@ -29,8 +27,6 @@ Two smaller findings: a single-run backfill policy cannot reach storage through 
 | `dagster/row_count` is the partition's good count | holds **[RAN]** |
 | a drifting partition aborts at the gate before any row check reports | holds **[RAN]** |
 | per-partition check evaluations are *observed, not designed around* | observed, and they are not per-partition at all **[RAN]** |
-
----
 
 ## 1. What works, and why it needed no code
 
@@ -64,8 +60,6 @@ def orders() -> pl.DataFrame:
     day = dg.AssetExecutionContext.get().partition_key
     return read_day(day)
 ```
-
----
 
 ## 2. Finding: check evaluations name no partition
 
@@ -101,11 +95,10 @@ Three consequences, in the order a user will hit them:
 2. **`WARN` is per run, not per partition.**
    The quarantine still lands, per partition, with full per-row attribution, so the data is never lost.
    Only the check surface is coarse.
-3. **Attribution is possible, by hand.** `target_materialization_data` *is* scoped to the step's partition, deliberately, so that a concurrent run of another partition cannot become the target **[READ]**.
+3. **Attribution is possible, by hand.**
+   `target_materialization_data` *is* scoped to the step's partition, deliberately, so that a concurrent run of another partition cannot become the target **[READ]**.
    A history row therefore points at exactly one materialization, and that materialization knows its partition key **[RAN]**.
    Getting from a red check to a partition means resolving that storage id yourself.
-
----
 
 ## 3. Finding: a time-window partition orphans the planned check row
 
@@ -138,8 +131,6 @@ That is what a per-partition check view reads off.
 None of this is the package's doing: a stock `@dg.asset` with a `check_spec` and a daily partitions definition reproduces it exactly **[RAN]**.
 The insert branch also fires a `DeprecationWarning` from `datetime.utcfromtimestamp` inside Dagster's SQL event log, which is a second reason to watch this path.
 
----
-
 ## 4. Finding: a single-run backfill cannot reach storage
 
 `backfill_policy` forwards like every other `multi_asset` parameter, but `dg.BackfillPolicy.single_run()` never gets as far as a write **[RAN]**:
@@ -153,8 +144,6 @@ backfill with a multi-run backfill policy.
 
 `UPathIOManager` resolves one path per output and refuses a range.
 The refusal is upstream's, it names the fix, and it arrives on the first run rather than after a wrong write, so the door leaves it alone: an asset cannot know which IO manager it will be bound to, which is the same line `_ParquetIOManager` already draws for unwritable dtypes.
-
----
 
 ## 5. If the behaviour turns out to be wrong: what the fix looks like
 
@@ -190,8 +179,6 @@ The spec's own instruction is to observe rather than design around, so this is w
 > Both are in `tests/test_upstream_characterization.py`, beside the warning itself.
 > Scratch scripts lived in `/tmp/dd31/`.
 
----
-
 ## 6. The two decisions banked from #18
 
 **The fan-in shape stays documented, not exported.** **[RAN]** An unpartitioned asset depending on every partition of a partitioned one receives one frame per partition, because the base manager calls `load_from_path` once per key and assembles the results:
@@ -225,10 +212,9 @@ Both shapes are covered in `tests/test_parquet_io_manager.py`, so the decision c
 > The `type`-statement characterization test went with them, because nothing in the package holds an annotation-shaped alias anymore.
 > It comes back with whatever alias needs it.
 
-**The IO manager carries a partitioned round-trip test.** `load_from_path` and `dump_to_path` mention no partitions and need to mention none, so the layout is inherited rather than written.
+**The IO manager carries a partitioned round-trip test.**
+`load_from_path` and `dump_to_path` mention no partitions and need to mention none, so the layout is inherited rather than written.
 That is exactly what makes it worth a test: nothing in this repo would notice if the base class stopped resolving the partition path.
-
----
 
 ## 7. Candidate follow-ups
 
@@ -245,7 +231,8 @@ Recorded, not fixed here.
 3. **Document the single-run backfill refusal in the README.**
    Belongs to [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26), beside the sentence about the IO managers being the supported path.
    *Tracked as [#33](https://github.com/ozanozbeker/dagster-dataframely/issues/33), which outlived #26; the README's Partitioning section is now its home.*
-4. **Document how a partitioned transform reaches its partition key.** `dg.AssetExecutionContext.get()` is the answer, the door's docstring does not say so, and it is the first thing a partitioned user needs.
+4. **Document how a partitioned transform reaches its partition key.**
+   `dg.AssetExecutionContext.get()` is the answer, the door's docstring does not say so, and it is the first thing a partitioned user needs.
    Also [#26](https://github.com/ozanozbeker/dagster-dataframely/issues/26).
    *Done in [#34](https://github.com/ozanozbeker/dagster-dataframely/issues/34): the README's Partitioning section and the door's `partitions_def` docstring.*
 5. **Export a partitions type alias for the fan-in shape.**

@@ -64,7 +64,8 @@ A dtype that disagrees aborts the run rather than being coerced, because coercin
 There is no lenient mode to turn on.
 Narrowing is free, though: `Schema.filter` drops the columns the schema never declared and returns the rest in the schema's order, so dtypes are the only thing ever yours to fix.
 
-**Consent to partial data is a declaration, not a setting.** `quarantine=True` is the only dial, and no environment variable reaches it.
+**Consent to partial data is a declaration, not a setting.**
+`quarantine=True` is the only dial, and no environment variable reaches it.
 Leave it off and one failing row stops the write, so your last-known-good table stays in place.
 
 **The strictness belongs to the decorator, not to the package.**
@@ -80,7 +81,8 @@ You will need Python 3.12 or newer.
 
 `dagster`, `dataframely` and `polars` are the dependencies, plus `universal-pathlib`, which already arrives with `dagster`.
 
-This package ships no IO manager, so bring one. [`dagster-polars`](https://docs.dagster.io/integrations/libraries/polars) writes Polars frames to a filesystem or object store, and [`dagster-duckdb-polars`](https://docs.dagster.io/integrations/libraries/duckdb) writes them to a warehouse.
+This package ships no IO manager, so bring one.
+[`dagster-polars`](https://docs.dagster.io/integrations/libraries/polars) writes Polars frames to a filesystem or object store, and [`dagster-duckdb-polars`](https://docs.dagster.io/integrations/libraries/duckdb) writes them to a warehouse.
 Anything addressed by asset key works, because nothing here learns which manager you bound.
 
 > **Pre-1.0.**

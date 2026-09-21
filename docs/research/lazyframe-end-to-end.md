@@ -8,8 +8,6 @@ Measurements marked **[RAN]** come from a throwaway workbench that races five wr
 It is kept off main, as a primary source, on the [`prototype/issue-27-lazyframe`](https://github.com/ozanozbeker/dagster-dataframely/tree/prototype/issue-27-lazyframe) branch.
 One M-series laptop, one run each, so treat a 10% difference as noise and a 10x difference as real.
 
----
-
 ## Answer
 
 **Storage can stay lazy.
@@ -20,7 +18,8 @@ The measurements say the strategy barely matters, and two things upstream of it 
 
 The recommendation is to stop chasing streaming end to end and build the shape that actually banks the available win:
 
-1. **Ship lazy reads now, on their own.** `load_from_path` returning a scan is independent of every finding below, costs about ten lines, and gives downstream assets predicate and projection pushdown into the file.
+1. **Ship lazy reads now, on their own.**
+   `load_from_path` returning a scan is independent of every finding below, costs about ten lines, and gives downstream assets predicate and projection pushdown into the file.
 2. **Ship annotation-driven temp landing for writes.**
    A `pl.LazyFrame` return streams the transform's plan to a local parquet, then the manager reads it back eagerly for checks, statistics and the final write.
    A `pl.DataFrame` return keeps today's path, because a frame the user already materialized has nothing left to stream.
@@ -38,8 +37,6 @@ For a straight scan-and-project transform it is zero, which is why the annotatio
 | `collect_all` eliminates the shared subplan (banked finding 3) | true only without a `primary_key`; with one it costs 10x **[RAN]** |
 | a lazy path streams to the final destination | it cannot: four separate reporting duties collect **[READ]** |
 | per-rule counts are the open question | counts are solvable; `FailureInfo` being eager is not **[READ]** |
-
----
 
 ## 1. The strategy race
 
@@ -68,8 +65,6 @@ Three readings:
   At 1.06s it beats every lazy candidate.
   The case for changing it is memory, not time, and it is worth 316 MB against `temp_land`, not the order of magnitude the ticket implied.
 
----
-
 ## 2. The primary key is the dominant variable
 
 `collect_all` costs 10.68s with a `primary_key` rule and 1.05s without, with nothing else in the run changed. **[RAN]**
@@ -92,8 +87,6 @@ This revises banked finding 3 rather than contradicting it.
 The practical consequence is that the ticket's question cannot be answered per-package.
 It is answered per-schema, by the user, and almost every useful schema in this package's audience has a primary key.
 
----
-
 ## 3. The reporting contract forces materialization
 
 This package does not promise to write a file.
@@ -112,8 +105,6 @@ The `statistics` knob already exists, so a user can turn this off, but it is on 
 
 Two duties are cheap and are not the problem.
 `dagster/row_count` comes off the parquet footer for free, and `sample_rows` is a bounded `head`.
-
----
 
 ## 4. The state machine cannot choose an exit lazily
 
@@ -135,8 +126,6 @@ That breaks the invariant `NothingSurvivedError` is built on, stated in the same
 Recovering the invariant means sinking to a temp path and promoting on success.
 That is `temp_land` plus a rename, which is how the recommendation in §8 arrives at temp landing from a second, independent direction.
 
----
-
 ## 5. Lazy reads stand alone
 
 The read half needs nothing from the write half, measured against a written parquet: `scan_parquet` 0.02 ms, `collect_schema` 0.13 ms, footer row count 1.02 ms, `head(3).collect()` 1.51 ms. **[RAN]**
@@ -157,8 +146,6 @@ Credentials stay one mechanism, fsspec's, rather than the second one polars' obj
 And the miss in §6 fixes itself: the open raises `FileNotFoundError` where `UPathIOManager` can still catch it, so no `exists()` check and no extra stat call.
 What laziness buys on this route is decoding and materialization, not I/O: the same bytes today's eager read already fetches, and only the rows and columns a query keeps.
 
----
-
 ## 6. The missing-file wart, reproduced and worked around
 
 `UPathIOManager._load_partition_from_path` implements `allow_missing_partitions` by catching `FileNotFoundError` raised by `load_from_path` (`upath_io_manager.py:355`). **[READ]**
@@ -173,8 +160,6 @@ The workaround is one line and it is confirmed: guard `load_from_path` with an `
 The cost is one stat call per partition, which is the same call `UPathIOManager` already makes to build the path.
 
 **Superseded by the §5 finding.** [#52](https://github.com/ozanozbeker/dagster-dataframely/issues/52) shipped without the guard, because a scan built on the open handle never reaches the case: the open is what raises, on the lazy path and the eager one alike.
-
----
 
 ## 7. The memory guard, considered and declined
 
@@ -191,7 +176,8 @@ Recorded because the investigation produced facts worth not re-deriving:
   A Rust allocation failure aborts the process.
   In Kubernetes, OOMKilled is `SIGKILL`: no exception, no traceback, no custom error.
   Any guard has to be pre-flight, and pre-flight only.
-- **Host memory is the wrong number in a container.** `psutil.virtual_memory()` and `/proc/meminfo` report the node, not the pod's cgroup limit.
+- **Host memory is the wrong number in a container.**
+  `psutil.virtual_memory()` and `/proc/meminfo` report the node, not the pod's cgroup limit.
   A pod capped at 4 GB on a 64 GB node reads 64 GB and gets OOMKilled anyway.
   The correct read is `/sys/fs/cgroup/memory.max` (cgroup v2) or `memory/memory.limit_in_bytes` (v1).
   `psutil` is not currently a dependency.
@@ -204,14 +190,13 @@ Recorded because the investigation produced facts worth not re-deriving:
 
 If this is ever revisited, the last two bullets are the design.
 
----
-
 ## 8. What to build
 
 Two changes, independent, in this order.
 
 **A.
-Lazy reads.** `load_from_path` returns `pl.scan_parquet` when the input annotation is `pl.LazyFrame`, built on the handle it already opens, which is what makes the §6 guard unnecessary.
+Lazy reads.**
+`load_from_path` returns `pl.scan_parquet` when the input annotation is `pl.LazyFrame`, built on the handle it already opens, which is what makes the §6 guard unnecessary.
 Export `LazyFramePartitions` alongside `DataFramePartitions`, which shipped and was then dropped again; see the note above.
 No validation implications, no interaction with anything below.
 
@@ -230,8 +215,6 @@ This is banked finding 6's annotation-driven dispatch, which survives intact.
 What does not survive is streaming to the final destination, and the IO manager docstrings currently imply #27 will deliver one.
 Both need their `LazyFrame` paragraph rewritten to say what actually ships.
 
----
-
 ## 9. Candidate follow-ups
 
 Recorded, not fixed here.
@@ -245,8 +228,6 @@ Recorded, not fixed here.
 3. **Reconsider `p50` and `n_unique` in the statistics pass.**
    They are the two global aggregates in an otherwise streamable profile.
    Whether they earn their cost is a separate question from #27 and worth asking on its own.
-
----
 
 ## 10. Addendum, after #53 and #54 shipped
 
@@ -275,8 +256,6 @@ It also lands the data on local disk twice, once for the validation landing and 
 The good half never becoming a frame is worth less than those passes cost, so the schema-backed path keeps materializing and its asymmetry with the plain path stands.
 Decided 2026-08-11.
 
----
-
 ## 11. Promoting the staged file, considered and declined
 
 Raised while implementing [#77](https://github.com/ozanozbeker/dagster-dataframely/issues/77), from the observation that a schema-backed lazy transform never reaches the IO manager's sink-and-promote path that §10 says shipped for plain assets.
@@ -294,7 +273,8 @@ plain @dg.asset      sink_parquet(temp) | <promote: rename>
 **Declined.**
 The saving is one write, not the write and the read it looks like, and it is paid for with an architecture boundary.
 
-**The read-back is structural and cannot go.** `Schema.filter` collects internally, `statistics_metadata` runs its aggregates over a frame, and `sample_rows` reads rows off one.
+**The read-back is structural and cannot go.**
+`Schema.filter` collects internally, `statistics_metadata` runs its aggregates over a frame, and `sample_rows` reads rows off one.
 So the frame is resident on a clean run whatever happens to the file, and promoting removes only the second write.
 2 writes and 1 read becomes 1 write and 1 read.
 
@@ -305,7 +285,8 @@ A filtering transform's output is the small end of that, which is where the savi
 
 Three more blockers, none fatal on its own, which together leave a one-write saving behind a boundary crossing and a format special case:
 
-- **It crosses the line the package draws.** `process` would hand the IO manager a path rather than a frame, against `_metadata.py`'s "the asset body owns what the data is, the IO manager owns where and how it was written".
+- **It crosses the line the package draws.**
+  `process` would hand the IO manager a path rather than a frame, against `_metadata.py`'s "the asset body owns what the data is, the IO manager owns where and how it was written".
 - **Parquet to parquet only.**
   The CSV manager cannot take a promoted parquet, and neither could a Delta one.
   A special case on one format, not a path.
@@ -316,8 +297,6 @@ Not investigated, and the first thing to settle if this is ever revisited: wheth
 If it does not, the staged file is not interchangeable with the valid out even on a clean run, and the idea fails before any of the above matters.
 
 Decided 2026-08-12.
-
----
 
 ## 12. Addendum, after #118: the split moves into the engine
 
@@ -503,8 +482,6 @@ print(
 
 Decided 2026-09-02.
 
----
-
 ## 13. Addendum, after #80: skipping the valid half costs more than it saves
 
 Verified against the installed `dagster 1.13.20`, `dataframely 3.0.0`, `polars 1.44.1`, on 2026-09-11.
@@ -544,8 +521,6 @@ The columns were widened until the halves cost something, which is the only reas
   A caller that only reports checks is exactly the case it was imagined for, and collecting the failure half through dataframely's own accessor is the slowest of the three options here.
 
 Decided 2026-09-11.
-
----
 
 ## Uncertainty ledger
 

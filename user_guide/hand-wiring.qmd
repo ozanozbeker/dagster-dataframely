@@ -43,7 +43,8 @@ They sit in their own namespace rather than the root because the decorator is th
 Four features.
 Each leads with the part you reach for, then names the pieces that part calls and why they are exported at all.
 
-**The Columns tab.** `schema_metadata(schema)` is the definition metadata a schema-backed asset declares.
+**The Columns tab.**
+`schema_metadata(schema)` is the definition metadata a schema-backed asset declares.
 Put it on any `@dg.asset` and the Columns tab fills from the schema: dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
 It is a one-entry mapping so the decorator can merge it over your own `metadata`.
 `table_schema(schema)` is the bare `dg.TableSchema` inside it, for a metadata dict you build yourself, under `dagster/column_schema`.
@@ -55,12 +56,14 @@ That is a display rendering and touches no data.
 `unique` is read from the column's own flag and never derived from `primary_key`.
 Dataframely keeps the two independent: a key member gets a composite uniqueness rule and `column.unique` stays `False`, so deriving would claim a per-column uniqueness that nothing enforces.
 
-**The checks.** `check_specs(schema, asset=key)` declares every check the schema implies, the column-schema check included.
+**The checks.**
+`check_specs(schema, asset=key)` declares every check the schema implies, the column-schema check included.
 `check_results(schema, frame, asset_key=key, severity=...)` answers them, for an asset that writes nothing.
 One declares, the other answers, and neither knows anything about storage.
 Pass the same `check_granularity` and `schema_rules` to both or to neither, because a result answers a spec by name.
 
-**Validation and the write.** `validation_results(schema, frame, valid_key=key, quarantine_writer=...)` is the decorator's whole runtime: the column-schema check, `Schema.filter`, the quarantine write, then the materialization and every check result, yielded as an `AssetYield`.
+**Validation and the write.**
+`validation_results(schema, frame, valid_key=key, quarantine_writer=...)` is the decorator's whole runtime: the column-schema check, `Schema.filter`, the quarantine write, then the materialization and every check result, yielded as an `AssetYield`.
 The quarantine is written, never yielded.
 Six outcomes, and you make one choice.
 `quarantine_writer` is the whole of the failure policy, and the data decides everything after it.
@@ -84,7 +87,8 @@ flowchart TD
 The branch count makes the feature look bigger than it is.
 [The failure policy](the-failure-policy.qmd) has the same six as a table, with what each one writes.
 
-**The quarantine.** `validation_results` takes a `QuarantineWriter`: a callable handed the invalid rows that returns the quarantine address, as a string, because the answer can be a database table.
+**The quarantine.**
+`validation_results` takes a `QuarantineWriter`: a callable handed the invalid rows that returns the quarantine address, as a string, because the answer can be a database table.
 
 `delegating_writer(context)` is what the decorator builds in a run.
 It hands the rows to the IO manager the asset is already bound to, under the key `<name>_quarantine`, so they land wherever that manager puts things.
@@ -174,7 +178,8 @@ A caller that writes nothing has no rows to route and no table to withhold, so i
 
 Two things it asks of you that `validation_results` works out for itself:
 
-- **`severity`.** `validation_results` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
+- **`severity`.**
+  `validation_results` grades it from whether the valid table was written, and this arrangement has no such outcome to read.
   So you say which: `WARN` for a report beside a table that was written anyway, `ERROR` to grade the failure with the ones that stop a run.
   Every rule check in the step carries it.
   The precedent cuts both ways: the table was written, which `validation_results` calls `WARN`, but the invalid rows went into it rather than to a quarantine, which is worse than the case `validation_results` calls `ERROR`.

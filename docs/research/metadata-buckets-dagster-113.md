@@ -12,8 +12,6 @@ Evidence sources, in descending order of trust:
    This settles *data flow* (which bucket feeds which component) but not *pixels*.
 4. Docs, only where 1–3 are silent.
 
----
-
 ## Verdict table
 
 | # | Claim | Verdict |
@@ -27,8 +25,6 @@ Evidence sources, in descending order of trust:
 **Highest-value finding: claim 2.**
 The archive's central architectural justification for `DataframelyPolarsParquetIOManager` ("subclassing the IO manager is the only way to win the materialization bucket") is false.
 `context.add_asset_metadata()` in the asset body wins.
-
----
 
 ## Claim 1: three metadata buckets
 
@@ -70,8 +66,6 @@ The Catalog Overview page merges definition and materialization metadata in *two
   Array order determines the winner: observation > materialization > definition.
 
 Only the **output-type** bucket is genuinely isolated: it is read only by `DagsterTypeSummary`.
-
----
 
 ## Claim 2: IO manager wins collisions in the materialization bucket
 
@@ -164,8 +158,6 @@ Related, and also useful: an IO manager can read the *definition* bucket at writ
 `OutputContext.metadata` is deprecated in favour of `definition_metadata` (removal in 2.0).
 This is a second route for smuggling a schema to an IO manager without the archive's `dagster_type=` mechanism, and the 1.13.16 changelog explicitly calls it out under Documentation: *"Clarified the distinction between definition-time and runtime metadata, and documented how to access asset definition metadata from a custom I/O manager."*
 
----
-
 ## Claim 3: which accordion is fed by which bucket
 
 Testing the mapping from each bucket to the UI surface that renders it.
@@ -227,7 +219,8 @@ Two corrections to the archive:
 1. **It is not materialization-only.**
    It merges definition and event metadata (`AssetEventMetadataEntriesTable.tsx:148`), tagging each row with a source icon (`'materialization'` / `'observation'` / `'asset'`) and a "Loaded … / Materialized …" tooltip.
    On a key collision the event row wins.
-2. **`dagster/column_schema` is explicitly excluded from it.** `AssetEventMetadataEntriesTable.tsx:328-352`:
+2. **`dagster/column_schema` is explicitly excluded from it.**
+   `AssetEventMetadataEntriesTable.tsx:328-352`:
 
    ```ts
    if (
@@ -258,8 +251,6 @@ Run `dagster dev` against a project containing one asset with a distinguishable 
    Confirm only numeric entries plot.
 4. **Column-name casing**: see claim 4.
    Emit a definition schema and a materialization schema that both contain a column named `CustomerID` and confirm whether the Columns section displays `customerid`.
-
----
 
 ## Claim 4: Catalog Columns completeness by bucket
 
@@ -315,8 +306,6 @@ Four departures from the archive:
 Column-level rendering itself (`metadata/TableSchema.tsx:113-142`) matches the archive: name + tag chips, `TypeTag`, `non-nullable` when `!constraints.nullable`, `unique` when `constraints.unique`, then each `constraints.other` string as an `ArbitraryConstraintTag` (**truncated at 30 characters** with a tooltip, `MAX_CONSTRAINT_TAG_CHARS = 30`).
 That matters, since `@dy.rule()` expressions and `check: <expr>` strings will routinely exceed 30 chars.
 
----
-
 ## Claim 5: `dy.DataFrame[Schema]` cannot be an output annotation
 
 Testing whether dataframely's generic alias can serve as a Dagster output annotation.
@@ -350,8 +339,6 @@ The archive's third sub-point also holds: a bare `-> dy.DataFrame` *is* accepted
 All three legs of the claim stand.
 Note this is a property of `typing._GenericAlias`, not of dagster's version.
 Nothing in 1.13 relaxes `check.is_callable`/`check.class_param` here.
-
----
 
 ## Survey: what is new or newly relevant in 1.13 for publishing a schema
 
@@ -456,8 +443,6 @@ The relevant 1.13-era items are:
   It is worth an upstream issue either way, and worth avoiding by **not** writing `dagster/column_schema` to both the definition and materialization buckets on the same asset.
 - Whether `dagster-polars`' IO managers emit `dagster/column_schema` at all on the current release (`dagster-polars` is not installed; the archive asserts "every dagster-polars one does").
   Given claim 2's correction the answer matters less than it did, but it still determines whether a collision exists to lose.
-
----
 
 ## Reproduction scripts
 

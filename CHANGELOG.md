@@ -19,7 +19,8 @@ A function here is named after what it returns, which [`CLAUDE.md`](CLAUDE.md) n
 | `dd.build_quarantine_spec` | `dd.quarantine_spec` |
 | `dd.wiring.process` | `dd.wiring.validation_results` |
 
-**The decorator is `dd.asset`.** `dy_asset` put a user-typed name inside `dy_`, which otherwise names only what this package generates into Dagster: the check names, the rule columns and the check metadata keys.
+**The decorator is `dd.asset`.**
+`dy_asset` put a user-typed name inside `dy_`, which otherwise names only what this package generates into Dagster: the check names, the rule columns and the check metadata keys.
 Dagster owns the word `asset`, and Dataframely settles the same question the same way, shadowing 28 Polars names under its own alias.
 
 | 0.7 | 0.8 |

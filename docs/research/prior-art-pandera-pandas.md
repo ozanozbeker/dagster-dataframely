@@ -159,11 +159,13 @@ Four years of published, wrong documentation for the single most decision-releva
 
 Two of these are load-bearing for this project.
 
-**#23714 is still live in master.** `typing_type=pd.DataFrame` is hardcoded at [`__init__.py:152`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L152), unconditionally, even when the schema is a `pandera.polars.DataFrameSchema`.
+**#23714 is still live in master.**
+`typing_type=pd.DataFrame` is hardcoded at [`__init__.py:152`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L152), unconditionally, even when the schema is a `pandera.polars.DataFrameSchema`.
 **[source]** `typing_type` is exactly the field `dagster-polars` routes on.
 Prior art shipped polars support in July 2024 (#23299) and got the one field that matters to a polars IO manager wrong, for two years.
 
-**#32510 is the lenient-path question, and it is unanswerable on this substrate.** `TypeCheck` has a boolean `success` and nothing else.
+**#32510 is the lenient-path question, and it is unanswerable on this substrate.**
+`TypeCheck` has a boolean `success` and nothing else.
 There is no `WARN`.
 The maintainer response pattern is also worth noting: on #23000, `danielgafni` (the `dagster-polars` author) states plainly, "I am not maintaining `dagster-pandera`."
 
@@ -190,7 +192,8 @@ Three facts follow directly:
    It does not depend on `dagster-pandas` at all.
    Validation and storage were deliberately kept apart.
    This is the packaging precedent that most resembles what this project is considering.
-2. **`pandas` is a mandatory dependency even for polars users.** `import pandas as pd` sits unguarded at [`__init__.py:6`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L6) and pandas is a hard requirement in `pyproject.toml`.
+2. **`pandas` is a mandatory dependency even for polars users.**
+   `import pandas as pd` sits unguarded at [`__init__.py:6`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L6) and pandas is a hard requirement in `pyproject.toml`.
    Polars support was bolted onto a pandas-shaped package; the module-level `VALID_*_CLASSES` tuple-switching at [`__init__.py:60-79`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L60-L79) is the scar tissue.
 3. **The dependency floor on the validation library is unbounded above and has already hard-broken once.**
    Dagster `1.11.0` / libraries `0.27.0` shipped: "[dagster-pandera] Adds support for version 0.24.0 of the `pandera` library to `dagster-pandera`, dropping support for pandera 0.23.1 and below." (`CHANGES.md:1399`) **[source]** No compatibility window, no shim.
@@ -279,7 +282,7 @@ On 2020-07-22 the package carried a deprecation warning (`a530254f3`, "update da
 
 These were probed against the installed `dagster 1.13.16`, not read off docs.
 
-#### 1. Type-check failure means nothing is persisted **[executed]**
+#### 1. Type-check failure means nothing is persisted [executed]
 
 `_type_check_and_store_output` calls `_type_check_output` *before* `_store_output` (`dagster/_core/execution/plan/execute_step.py:576-578`), and a failing check raises at line 427.
 Running an asset whose `DagsterType` returns `TypeCheck(success=False, metadata={"num_failures": 3})` against an instrumented IO manager:
@@ -296,7 +299,7 @@ materialization events: 0
 No materialization event exists.
 The `TypeCheck.metadata` is carried on the raised `DagsterTypeCheckDidNotPass` and into `StepOutputData.type_check_data`, but there is no materialization for it to hang off.
 
-#### 2. Asset checks can do what the type check cannot **[executed]**
+#### 2. Asset checks can do what the type check cannot [executed]
 
 The same shape as an asset check with `AssetCheckSeverity.WARN`:
 
@@ -309,7 +312,7 @@ check: warn_check passed: False severity: AssetCheckSeverity.WARN meta: {'num_fa
 Data persisted, asset materialized, failure recorded with severity and structured metadata, run green.
 This is precisely what issue #32510 asks `dagster-pandera` for and cannot get.
 
-#### 3. Deriving the `DagsterType` name from the schema creates a collision hazard **[executed]**
+#### 3. Deriving the `DagsterType` name from the schema creates a collision hazard [executed]
 
 `pandera_schema_to_dagster_type` names the type after the schema (`Config.title` → `Config.name` → class name), verified by `test_name_extraction` **[source]**.
 Dagster enforces global uniqueness of `DagsterType` *names* by object identity (`dagster/_core/types/dagster_type.py:1046-1059`).
@@ -324,7 +327,7 @@ The factory is therefore not idempotent, and callers must hoist the result to a 
 Nothing in the API or the docs says so.
 The anonymous fallback is worse: a module-global counter, `f"DagsterPanderaDataframe{i}"` for `i` in `itertools.count(1)` ([`__init__.py:156-157`](https://github.com/dagster-io/dagster/blob/master/python_modules/libraries/dagster-pandera/dagster_pandera/__init__.py#L156-L157)), which makes the type's UI-visible name depend on module import order.
 
-#### 4. Dagster's own current guidance has already left this substrate **[source]**
+#### 4. Dagster's own current guidance has already left this substrate [source]
 
 The first-party guide at <https://docs.dagster.io/guides/test/data-contracts> uses neither factory.
 Its snippet ([`docs_snippets/.../data-contracts/assets.py`](https://github.com/dagster-io/dagster/blob/master/examples/docs_snippets/docs_snippets/guides/build/assets/data-assets/quality-testing/data-contracts/assets.py)) does three things:
@@ -353,12 +356,14 @@ Ordered roughly by how much each one constrains the design.
 2. **Structured `TableSchema` over a markdown blob.**
    The move from `dagster-pandas`'s 2020-era markdown description to `dagster-pandera`'s 2022 `TableSchema` is the clearest directional signal in the survey.
    Dataframely's column metadata (dtype, nullability, primary key, per-column rules) maps onto `TableColumn` / `TableColumnConstraints` at least as cleanly as pandera's does.
-3. **Lazy/collect-all validation as the default.** `schema.validate(df, lazy=True)` so the user sees every violation, not the first.
+3. **Lazy/collect-all validation as the default.**
+   `schema.validate(df, lazy=True)` so the user sees every violation, not the first.
    Dataframely's `filter()` already collects everything into `FailureInfo`; do not throw that away by failing fast.
 4. **`create_table_schema_metadata_from_dataframe` as a shape, not the code.**
    A small, boring, standalone "dataframe → `TableSchema`" helper is the single piece of prior art that Dagster's own modern docs still use.
    There is likely an analogous `dataframely.Schema → TableSchema` pure function worth exposing publicly and testing independently of any Dagster wiring.
-5. **A tiny public surface.** `dagster-pandera` exports one symbol and is 325 lines; `dagster-pandas` exports eighteen across 1,800 lines.
+5. **A tiny public surface.**
+   `dagster-pandera` exports one symbol and is 325 lines; `dagster-pandas` exports eighteen across 1,800 lines.
    The small one is the one that got polars support, a docs page, and is still (barely) maintained.
    This corroborates the map's rejection of the archive's three-layer surface from an entirely independent direction.
 
@@ -372,7 +377,8 @@ Ordered roughly by how much each one constrains the design.
    Issue #32510 is a user asking for exactly the lenient path, on a package that architecturally cannot provide one, unanswered since October 2025.
    `AssetCheckSeverity.WARN` plus `blocking=` is the dial that exists; a `DagsterType` has no dial at all.
    Failure policy must be a first-class design parameter, not a consequence of the attachment mechanism.
-3. **Do not put the schema anywhere but `dagster/column_schema` on the asset.** `dagster-pandera`'s `DagsterType.metadata["schema"]` is visible in the type detail view and inert everywhere else: it does not feed `build_column_schema_change_checks`, column lineage, or the asset catalog.
+3. **Do not put the schema anywhere but `dagster/column_schema` on the asset.**
+   `dagster-pandera`'s `DagsterType.metadata["schema"]` is visible in the type detail view and inert everywhere else: it does not feed `build_column_schema_change_checks`, column lineage, or the asset catalog.
    Use `TableMetadataSet` / the canonical namespaced key.
 4. **Do not hardcode `typing_type`.**
    This is the exact bug in [#23714](https://github.com/dagster-io/dagster/issues/23714), open since August 2024 and live in master today, with users patching the private `_typing_type` in the wild.
@@ -382,12 +388,15 @@ Ordered roughly by how much each one constrains the design.
    Verified: two factory calls for the same schema in one job raise `DagsterInvalidDefinitionError`.
    Any factory returning a named `DagsterType` must be documented as returning a module-level singleton, or must not be a factory.
    And never use a module-global counter for anonymous names: it makes UI-visible identifiers depend on import order.
-6. **Do not let the docstring outrun the implementation.** `dagster-pandera` has promised `num_failures` and `failure_sample` metadata on the docs site since 2022 and never once produced it.
+6. **Do not let the docstring outrun the implementation.**
+   `dagster-pandera` has promised `num_failures` and `failure_sample` metadata on the docs site since 2022 and never once produced it.
    The map already has a ticket-shaped concern about README rot; this is what the failure mode looks like in a shipped, first-party package.
    If the spec's README claims a metadata key exists, something must execute that claim.
-7. **Do not regex-scrape another library's error strings to recover structure.** `_extract_operand` reconstructs a check's operand from its rendered error message.
+7. **Do not regex-scrape another library's error strings to recover structure.**
+   `_extract_operand` reconstructs a check's operand from its rendered error message.
    Dataframely rules are Polars expressions; reach for the structured form or accept `str(rule)` honestly, but do not build a fragile middle path.
-8. **Do not bolt a second dataframe library onto a package shaped for the first.** `dagster-pandera` requires `pandas` even for polars-only users, and switches on module-level tuples of valid classes.
+8. **Do not bolt a second dataframe library onto a package shaped for the first.**
+   `dagster-pandera` requires `pandas` even for polars-only users, and switches on module-level tuples of valid classes.
    This project has one dataframe library; keep it that way, and let the map's "dagster-polars is a hard dependency" decision stand rather than reintroducing optional-backend branching.
 9. **Do not read either package's docs as a spec.**
    Verified false in one case (`num_failures` / `failure_sample`) and stale in several others.

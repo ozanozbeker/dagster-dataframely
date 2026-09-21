@@ -49,11 +49,11 @@ dev = [
   "dagster-duckdb-polars>=0.27.12",
   "dagster-polars>=0.27.12",
   "duckdb>=1.1",
-  "prek>=0.5.1",
-  "pyrefly>=1.2.0",
+  "prek>=0.5.3",
+  "pyrefly>=1.3.1",
   "pytest>=9.1.1",
-  "ruff>=0.16.5",
-  "rumdl>=0.2.62",
+  "ruff>=0.16.8",
+  "rumdl>=0.2.75",
 ]
 # Its own group, not `dev`. `uv sync --locked` for the test and lint jobs then skips
 # griffe, Pillow, nbclient and ipykernel, and a contributor running pytest installs none

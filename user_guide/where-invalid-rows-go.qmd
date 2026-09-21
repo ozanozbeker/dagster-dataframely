@@ -79,7 +79,8 @@ Check metadata samples are bounded, so without these columns the per-row attribu
 The valid table's materialization carries the quarantine address the rows went to, how many there were, and which sets of rules they broke together.
 See [What a run produces](what-a-run-produces.qmd).
 
-**A partitioned asset on a database manager needs `partition_expr`.** `DbIOManager` raises without it, and you already declare it for your own partitioned table.
+**A partitioned asset on a database manager needs `partition_expr`.**
+`DbIOManager` raises without it, and you already declare it for your own partitioned table.
 It reaches the quarantine automatically, on the definition metadata the write carries.
 
 **`quarantine=True` adds a `context` parameter to the asset**, whether or not your function declared one.

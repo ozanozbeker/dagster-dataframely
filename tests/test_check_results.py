@@ -112,7 +112,7 @@ def test_the_results_answer_exactly_the_specs_at_every_granularity(
 def test_schema_rules_reach_the_results_too():
     """The second grouping setting. Only `column` granularity reads it, so it needs its own case."""
     settings = {"check_granularity": "column", "schema_rules": "per_rule"}
-    specs = check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type]
+    specs = check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type, open-unpacking]
     results = _results(mixed_orders(), **settings)
 
     assert [result.check_name for result in results] == [spec.name for spec in specs]
