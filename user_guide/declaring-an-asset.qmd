@@ -32,6 +32,27 @@ Upstream assets bind by parameter name, just as they do on a plain `@dg.asset`, 
 Declare `context` when you want to reach the run itself: the partition key, the log, resources and configuration all hang off it.
 Nothing rewrites your signature, so what you decorate stays a function you can read.
 
+This package does its work at two moments: when the module imports, and when the asset runs.
+
+<!-- rumdl-disable-next-line MD078 -->
+```{mermaid}
+%%| label: declaring-an-asset-diagram
+flowchart TB
+    subgraph load["when the module imports"]
+        D["@dd.asset(Orders)"] --> T["Columns tab"]
+        D --> C["a check spec per rule set"]
+    end
+    subgraph run["when the asset runs"]
+        direction TB
+        F["decorated function returns a frame"] --> CS["column-schema check"]
+        CS --> FL["Schema.filter"]
+        FL --> V["valid rows, to the asset's IO manager"]
+        FL --> I["invalid rows, to the quarantine"]
+        FL --> R["a result per check"]
+    end
+    load --> run
+```
+
 Two things exist as soon as the module imports, before you run anything:
 
 - **The Columns tab**, built from the schema.
@@ -41,6 +62,10 @@ Two things exist as soon as the module imports, before you run anything:
 ![A clean run's Checks tab at the default granularity: one check per rule, each with its own history. The selected one is described by its rendered constraint, and carries the rule's name and expression as metadata.](../assets/images/check-list.png)
 
 The asset's description comes from the schema's docstring, which [Naming](naming.qmd) covers.
+
+A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
+The asset's IO manager writes the valid rows, the writer writes the invalid rows to the quarantine, and each check reports a result.
+Not every run writes both tables: [The failure policy](the-failure-policy.qmd) has the six outcomes and what each one writes.
 
 `@dg.asset` is the mechanism underneath, and the vocabulary.
 Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar the six parameters below, and a test asserts that in both directions.

@@ -30,6 +30,10 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
+# Every lower bound in this file is the version `uv.lock` resolves, because nothing tests
+# an older version. `universal-pathlib` and `duckdb` are the exceptions and keep older
+# lower bounds: another dependency already installs each one, and this repo declares
+# them only because it imports them directly.
 dependencies = [
   "dagster>=1.13.24",
   "dataframely>=3.1.2",

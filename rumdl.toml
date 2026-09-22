@@ -14,6 +14,10 @@ exclude = [
   "docs/adr/",
 ]
 respect-gitignore = true
+# `quarto` turns on MD078, which requires a label on every executable chunk. MD078
+# recognizes a `#|` label line but not the `%%|` line a mermaid cell uses, so each guide
+# diagram suppresses MD078 on its own fence. Turning the rule off would also remove the
+# check from every Python chunk.
 flavor = "quarto"
 line-length = 120
 

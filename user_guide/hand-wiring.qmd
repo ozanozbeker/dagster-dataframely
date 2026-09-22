@@ -63,7 +63,9 @@ The quarantine is written, never yielded.
 Six outcomes, and you make one choice.
 `quarantine_writer` is the whole of the failure policy, and the data decides everything after it.
 
-```mermaid
+<!-- rumdl-disable-next-line MD078 -->
+```{mermaid}
+%%| label: hand-wiring-outcomes
 flowchart TD
     F["frame handed to validation_results"] --> N{"None?"}
     N -- yes --> SKIP["nothing written<br/>every check passes<br/>run succeeds"]
@@ -124,6 +126,34 @@ def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
 
 That is the Columns tab, one check per rule, the row filter, and the invalid rows written beside the table.
 `context.asset_key` is the whole of the key resolution, because a single-output asset has exactly one key to resolve.
+
+When the frame matches the schema, a run of that asset makes these calls:
+
+<!-- rumdl-disable-next-line MD078 -->
+```{mermaid}
+%%| label: hand-wiring-sequence
+sequenceDiagram
+    participant A as orders
+    participant V as validation_results
+    participant W as delegating_writer
+    participant D as Dagster
+    A->>V: Orders, frame, valid_key, quarantine_writer
+    V->>V: column-schema check
+    V->>V: Schema.filter
+    opt some rows failed
+        V->>W: quarantine frame
+        W-->>V: quarantine address
+    end
+    opt the valid table was written
+        V-->>D: MaterializeResult
+    end
+    V-->>D: an AssetCheckResult per check
+```
+
+`orders` passes the frame and the writer to `validation_results`.
+If rows failed, `validation_results` calls the writer with the quarantine frame, and the writer returns the quarantine address.
+`validation_results` then yields the `MaterializeResult` if the asset's table was written, and one result for each check.
+`orders` passes each one to Dagster with `yield from`.
 
 `output_required=False` lets the column-schema check, both aborts and the skip end the step without yielding.
 Leave it off and every path that does not raise has to yield the output.

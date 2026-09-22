@@ -133,7 +133,7 @@ The checks then fail at `WARN` and the run succeeds, so downstream proceeds on t
 ## Documentation
 
 [**https://ozanozbeker.com/dagster-dataframely**](https://ozanozbeker.com/dagster-dataframely/) is the guide, the API reference and the upgrade log.
-The site publishes what a user needs; what a contributor needs stays in the repo: [`CONTEXT.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CONTEXT.md) is the glossary, [`ARCHITECTURE.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/ARCHITECTURE.md) is how the parts fit, [`docs/adr/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/) holds the decisions and [`docs/research/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/) the measurements behind them.
+The site publishes what a user needs; what a contributor needs stays in the repo: [`CONTEXT.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CONTEXT.md) is the glossary, [`docs/adr/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/) holds the decisions and [`docs/research/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/) the measurements behind them.
 
 ## License
 

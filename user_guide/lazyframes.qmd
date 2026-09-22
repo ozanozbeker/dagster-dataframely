@@ -19,7 +19,9 @@ Two places meet a `pl.LazyFrame`, and they read it differently on purpose.
 A read has no object yet, so the annotation is the only signal it has.
 Validation takes the plan and executes it, once, in `Schema.filter`.
 
-```mermaid
+<!-- rumdl-disable-next-line MD078 -->
+```{mermaid}
+%%| label: lazyframes-diagram
 flowchart TB
     subgraph validated["@dd.asset"]
         direction TB
