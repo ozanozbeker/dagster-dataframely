@@ -1,11 +1,6 @@
-# A `.qmd` is markdown, and saying so is what lets the formatter reach the guide's code
-# chunks: without it ruff parses the file as Python and dies on the YAML frontmatter. Ruff
-# formats markdown but does not lint it, so an unused import or an ambiguous name inside a
-# chunk still reaches nobody.
+# Without this, ruff parses a `.qmd` as Python and fails on the YAML frontmatter. Ruff formats
+# the guide's code chunks but does not lint them, so nothing reports an unused import in one.
 extension = { qmd = "markdown" }
-
-# Ruff configuration file
-# See: https://docs.astral.sh/ruff/
 
 target-version = "py312"
 
@@ -15,7 +10,7 @@ ignore = [
   # No per-file copyright headers; a single top-level LICENSE covers the project
   "CPY001",  # flake8-copyright
 
-  # Recommended rules to disable per the docs
+  # These conflict with the formatter, so ruff's docs recommend disabling them.
   "COM812",  # flake8-commas
   "COM819",  # flake8-commas
   "D206",  # pydocstyle
@@ -38,13 +33,11 @@ unfixable = [
 classmethod-decorators = ["dataframely.rule"]
 
 [lint.per-file-ignores]
-# __init__.py related ignores
 "**/__init__.py" = [
   "D104",  # pydocstyle > undocumented-public-package
   "F401",  # Pyflakes > unused-import
 ]
 
-# Pytest related ignores
 "**/tests/**/*.py" = [
   "ANN",  # flake8-annotations > ALL
   "ARG001",  # flake8-unused-arguments > unused-function-argument
@@ -76,9 +69,8 @@ runtime-evaluated-decorators = [
 convention = "numpy"
 
 [format]
-# Markdown formatting is still preview at 0.16.7, and it is the whole reason `extension`
-# above is set. The cost is preview's other formatter changes, which restyled 153 lines
-# across six files when this landed; none of them changed behaviour.
+# `extension` above needs markdown formatting, which was a preview feature in ruff 0.16.7.
+# Preview also enables the formatter's other preview changes for Python files.
 preview = true
 docstring-code-format = true
 line-ending = "lf"

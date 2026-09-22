@@ -1,8 +1,4 @@
-# Great Docs configuration. `great-docs init` writes every option out at its default with
-# the docs above it; this file keeps only what this project actually sets.
-#
-# `_quarto.yml` is generated into the ephemeral `great-docs/` build directory on every
-# build, so it is never edited and never committed. This file is the only source of truth.
+# Each build generates `great-docs/_quarto.yml` from this file, so edit this file, not that one.
 
 parser: numpy
 dynamic: true
@@ -14,19 +10,12 @@ authors:
     role: Maintainer
     email: github@ozanozbeker.com
 
-# Braces the fences in the build directory, so `README.md` can stay plain markdown for
-# GitHub and PyPI and a docstring can stay plain for ruff's formatter. ADR-0009.
+# Adds braces to the Python fences in the build directory's copies, so `README.md` and docstrings keep plain fences for GitHub, PyPI and ruff (ADR-0009).
 pre_render: scripts/brace-example-fences.py
 
-# No `freeze:` key, deliberately. Quarto re-executes every page by default, which is what
-# the gate needs: the examples are checked against the package, not against themselves, so a
-# rename in `src/` has to re-run a `.qmd` nobody touched. Setting `freeze: false` would be
-# inert anyway, because great-docs maps it to None and then omits `execute.freeze`. What
-# keeps it honest is `_freeze/` staying out of git and out of the CI cache.
+# No `freeze:` key, so Quarto runs every page on every build, which the build check needs: a change in `src/` can break a page nobody edited. `freeze: false` would have no effect, because great-docs omits it. Keeping `_freeze/` out of git and the CI cache makes every page run again.
 
-# Two tracks. The guide is the path a reader walks once, in the order the sections were
-# already written to be met in; the reference is what they come back to look up. Splitting
-# them keeps Settings, Naming, Errors and Hand-wiring out of a newcomer's reading path.
+# A reader reads the Guide pages once, in order, and looks things up in the Reference pages. So Settings, Naming, Errors and Hand-wiring are Reference pages, not Guide pages.
 user_guide:
   - section: Guide
     contents:
@@ -44,24 +33,18 @@ user_guide:
       - errors.qmd
       - hand-wiring.qmd
 
-# By module, not by Python kind. The generated default groups the public surface into
-# Classes, Exceptions, Functions, Constants and Type Aliases, which splits `dd.wiring`
-# across four headings and buries the two names most readers want. This ordering is the one
-# `wiring.py`'s own docstring states: the decorator is the happy path, hand-wiring is
-# supported but not recommended, and the errors are looked up rather than read.
-#
-# The mapping form rather than the bare list, for `title` alone: it renames the navbar item
-# from "Reference" to "API". Without it the navbar says Reference for these generated pages
-# while the guide's own sidebar says Reference for its look-up track, and a reader has to
-# click one to find out which is which.
+# Grouped by module, because the default groups by kind and puts `dd.wiring` under four headings.
+# The mapping form sets `title`, so the navbar shows "API" instead of a second "Reference".
 reference:
   title: API
   desc: >-
-    Every public name, generated from the source. The guide explains the behaviour; this is
-    where the signatures are.
+    This page lists every public name with its signature, generated from the source. The
+    guide explains what each one does.
   sections:
     - title: Core
-      desc: The decorator, and the spec that puts a quarantine in the graph.
+      desc: >-
+        `dd.asset` builds an asset from a schema, and `quarantine_spec` adds that asset's
+        quarantine to the asset graph.
       contents:
         - asset
         - quarantine_spec
@@ -70,8 +53,8 @@ reference:
 
     - title: Hand-wiring
       desc: >-
-        The parts the decorator assembles, for a `@dg.asset` you wire yourself. Reach for
-        these only where the decorator does not fit.
+        `dd.asset` assembles these parts. Use them to build a `@dg.asset` yourself, where
+        `dd.asset` does not fit.
       contents:
         - wiring.schema_metadata
         - wiring.table_schema
@@ -88,18 +71,19 @@ reference:
         - wiring.validate_quarantine_key
 
     - title: Errors
-      desc: Every error this package raises, all subclassing `DagsterDataframelyError`.
+      desc: >-
+        This package raises these errors. Each one subclasses `DagsterDataframelyError`.
       contents:
         - errors.DagsterDataframelyError
         - errors.CollectionNotSupportedError
         - errors.ReservedColumnError
-        - errors.UnnameableColumnError
+        - errors.InvalidColumnNameError
         - errors.CheckNameCollisionError
         - errors.InvalidSettingError
         - errors.MaterializeResultValueError
         - errors.MaterializeResultFieldError
         - errors.ColumnSchemaError
         - errors.ValidationAbortError
-        - errors.NothingSurvivedError
+        - errors.NoValidRowsError
         - errors.QuarantineKeyCollisionError
         - errors.QuarantineDirError

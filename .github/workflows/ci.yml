@@ -30,13 +30,9 @@ jobs:
       - run: uv sync --locked
       - run: uv run --no-sync pytest
 
-  # Everything `prek.toml` holds: ruff, pyrefly, rumdl, gitleaks, zizmor, actionlint,
-  # typos, `uv lock --check`, and the two source bans the package states in prose. A local
-  # commit hook is the only other thing that runs them, so without this job a fork's pull
-  # request, or one `--no-verify`, lands unchecked.
-  #
-  # Its own job rather than a step on `test`. Installing the hook environments is slow and
-  # has nothing to do with the test matrix, and a red lint should not hide a red test.
+  # Without this job only a local commit hook runs the `prek.toml` hooks, so nothing checks a
+  # fork's pull request or a `--no-verify` commit. It is separate from `test` so that a lint
+  # failure does not hide a test failure.
   lint:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -49,11 +45,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked
-      # `--all-files`, because a hook run against a diff proves nothing about the rest of
-      # the tree. The commit-msg hook has no commit to read here and skips itself.
+      # `--all-files`, because a run on the changed files does not check the rest of the tree.
+      # The commit-msg hook does not run here, because there is no commit message.
       - run: uv run --no-sync prek run --all-files --show-diff-on-failure
 
-  # The drift tripwire: `tests/test_upstream_characterization.py` against unpinned releases.
+  # This job runs the tests against unpinned releases. `tests/test_upstream_characterization.py`
+  # fails when an upstream release changes behaviour this package depends on.
   latest:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
@@ -72,7 +69,9 @@ jobs:
           cache-suffix: latest-${{ matrix.python-version }}
           python-version: ${{ matrix.python-version }}
       - run: uv sync --upgrade
-      # Dagster deprecates before it removes and raises a plain `DeprecationWarning`, so its sentence is the only handle. `-o` not `-W`: pytest escapes `-W` messages.
+      # Fails on Dagster's deprecation warnings, which come before a removal. They are plain
+      # `DeprecationWarning`s, so the filter matches their message. The filter uses `-o`, not
+      # `-W`, because pytest escapes a `-W` message, so it cannot be a regex.
       - run: >
           uv run --no-sync pytest
           -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"

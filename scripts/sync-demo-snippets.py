@@ -1,19 +1,10 @@
-# A repo tool prek runs, not package code: `scripts/` is deliberately not a package (INP001),
-# and what this writes to stdout is its interface, because prek shows it (T201).
+# `scripts/` is not a package (INP001), and prek shows what this prints (T201).
 # ruff: noqa: INP001, T201
 """Copy each demo module into the markdown code block that names it.
 
-A block opts in with `<!-- snippet: demo/src/.../module.py -->` on the line above its fence.
-The README cannot include a file at render time, because GitHub and PyPI render it as plain
-markdown, so the code is copied in and this keeps the copy true. The demo's tests then cover
-what the README shows, and the values in its screenshots match the code beside them.
-
-A module is copied whole, minus three things a reader has no use for: its docstring, its
-imports from the demo package itself, and any `# demo:` comment. Whole modules rather than
-named regions, so the demo carries no markers and reads like the pipeline it is.
-
-Like a formatter, it rewrites what drifted and exits 1, so the commit that caused the drift
-stops until the rewrite is staged with it.
+GitHub and PyPI cannot include a file in the README, so the README holds copies of the
+tested demo modules. This script copies whole modules, not marked regions, so the demo
+modules need no markers.
 """
 
 import ast
@@ -27,7 +18,7 @@ PACKAGE = "dagster_dataframely_demo"
 
 
 def demo_code(path: pathlib.Path) -> str:
-    """Return a demo module's source as a reader should see it."""
+    """Return a demo module's source without its docstring, demo-package imports and `# demo:` comments."""
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
     dropped: set[int] = set()
@@ -68,7 +59,7 @@ def synced(text: str, root: pathlib.Path) -> str:
         opener = lines[i]
         out.append(opener)
         i += 1
-        # Quarto cell options belong to the page, not the module, so they stay.
+        # Quarto cell options are part of the page, not the module, so this loop keeps them.
         while i < len(lines) and OPTION.match(lines[i]):
             out.append(lines[i])
             i += 1
@@ -81,11 +72,11 @@ def synced(text: str, root: pathlib.Path) -> str:
 
 
 def main() -> int:
-    """Sync every opted-in block, and report the files that drifted.
+    """Rewrite every marked block that differs from its module, and print each file rewritten.
 
     Returns
     -------
-    A process exit code: 1 when any file was rewritten, so the hook stops the commit.
+    The exit code: 1 when this script rewrote a file, so prek fails the commit.
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     drifted = 0

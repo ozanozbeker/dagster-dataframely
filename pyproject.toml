@@ -30,10 +30,9 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Typing :: Typed",
 ]
-# Every lower bound in this file is the version `uv.lock` resolves, because nothing tests
-# an older version. `universal-pathlib` and `duckdb` are the exceptions and keep older
-# lower bounds: another dependency already installs each one, and this repo declares
-# them only because it imports them directly.
+# Each lower bound is the version `uv.lock` resolves, because no test runs an older one.
+# `universal-pathlib` and `duckdb` keep older bounds, because another dependency already
+# requires each. This repo lists them only because it imports them directly.
 dependencies = [
   "dagster>=1.13.24",
   "dataframely>=3.1.2",
@@ -49,7 +48,7 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 
 [dependency-groups]
 dev = [
-  # One manager from each base class Dagster ships: `dagster-polars` is a `UPathIOManager` and `dagster-duckdb-polars` is a `DbIOManager`. Between them the delegation tests cover nearly every first-party manager (ADR-0006). `duckdb` is transitive, and declared because the tests query the database directly.
+  # One subclass each of `UPathIOManager` and `DbIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
   "dagster-duckdb-polars>=0.29.24",
   "dagster-polars>=0.27.12",
   "duckdb>=1.1",
@@ -59,9 +58,8 @@ dev = [
   "ruff>=0.16.8",
   "rumdl>=0.2.75",
 ]
-# Its own group, not `dev`. `uv sync --locked` for the test and lint jobs then skips
-# griffe, Pillow, nbclient and ipykernel, and a contributor running pytest installs none
-# of them. `great-docs` brings its own kernel, so nothing here names `ipykernel`.
+# Not in `dev`, so the test and lint jobs and a contributor running pytest skip the docs
+# packages. This group omits `ipykernel`, because `great-docs` requires it through `jupyter`.
 docs = ["great-docs>=0.17"]
 
 [build-system]
@@ -76,9 +74,7 @@ testpaths = ["tests"]
 [tool.uv]
 required-version = ">=0.12,<0.13"
 
-# `demo/` is a member rather than its own project, so one lockfile covers both and the demo
-# always runs the working tree rather than a published wheel. A screenshot then shows the
-# code in front of you. `uv sync` at the root installs this package alone, so the webserver
-# the demo depends on stays out of the environment CI tests in.
+# In the workspace, so both projects use one `uv.lock` and the demo runs this working tree,
+# not a published wheel. A root `uv sync` skips the demo, so CI tests without its webserver.
 [tool.uv.workspace]
 members = ["demo"]

@@ -1,10 +1,4 @@
-# Pyrefly configuration file
-# See: https://pyrefly.org/en/docs/configuration/
-
 preset = "strict"
-# `demo/src` because CI's `uv sync --locked` installs the root package alone, not the `demo`
-# workspace member, so the demo's own modules would otherwise be unresolvable. Pointing at
-# the source keeps the demo type-checked without installing its webserver into CI, which the
-# workspace comment in `pyproject.toml` keeps out on purpose. Everything else the demo
-# imports is already in the root dev group.
+# CI's `uv sync --locked` does not install the demo, so pyrefly reads the demo's modules from
+# `demo/src`. CI then type-checks the demo without installing its webserver.
 search-path = [".", "demo/src"]

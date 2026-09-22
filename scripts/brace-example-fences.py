@@ -1,22 +1,19 @@
 # ruff: noqa: INP001, T201
-"""Brace the generated pages' Python fences, leaving every source file plain. ADR-0009.
+"""Add braces to the Python fences in Great Docs' generated pages (ADR-0009).
 
-Quarto's pre-render hook, run with the build directory as the working directory, so the pages Great Docs generated are already there and nothing on disk outside it is touched.
-
-Two surfaces, one reason. `README.md` is also PyPI's long description and GitHub's front page.
-A docstring is read by ruff, whose `docstring-code-format` reaches the plain spelling only.
-Both keep plain fences and get braces here instead.
-
-Only the reference pages' `Examples` sections are rewritten, never the whole page: Great Docs emits the function signature as its own ` ```python ` block, and executing a signature would fail the build.
+Quarto runs this before rendering, in the build directory, so it changes no source file.
+In a reference page it changes only the `Examples` section, because Great Docs writes the signature as a ` ```python ` block too, and running a signature fails the build.
 """
 
 import pathlib
 import re
 
-# `[ \t]` rather than `\s`, which in MULTILINE mode backtracks across the newline that ends
-# the fence line and swallows a following blank line.
+# `[ \t]`, not `\s`: in MULTILINE mode `\s*` also matches the newline after the fence line and
+# a blank line after it, which the substitution would then delete.
 PLAIN = re.compile(r"^([ \t]*)```python[ \t]*\r?$", re.MULTILINE)
 BRACED = re.compile(r"^[ \t]*```\{python\}[ \t]*\r?$", re.MULTILINE)
+# Any Python fence, including one with attributes that `PLAIN` does not match.
+PYTHON = re.compile(r"^[ \t]*```[ \t]*\{?\.?(?:python|py)\b", re.MULTILINE)
 EXAMPLES = "## Examples {.doc-examples}"
 
 INDEX = pathlib.Path("index.qmd")
@@ -25,7 +22,7 @@ REFERENCE = pathlib.Path("reference")
 
 
 def read(path: pathlib.Path) -> str:
-    """Read a generated page as UTF-8, whatever the process locale says."""
+    """Read a generated page as UTF-8, whatever the process locale is."""
     return path.read_text(encoding="utf-8")
 
 
@@ -35,11 +32,12 @@ def write(path: pathlib.Path, text: str) -> None:
 
 
 def landing_page() -> int:
-    """Brace the landing page, and report how many fences did not survive the trip.
+    """Add braces to the landing page's fences.
 
     Returns
     -------
-    The count missing against `README.md`. Checking the total rather than checking for zero is what catches the likelier failure, one fence gaining an attribute the pattern does not match, and what makes a second pass a no-op instead of an error.
+    The number of `README.md` fences that are not executable cells on the page.
+    Comparing totals, not checking that no plain fence remains, detects a fence that gained an attribute the pattern does not match, and lets a second run succeed.
     """
     braced, count = PLAIN.subn(r"\1```{python}", read(INDEX))
     expected = len(PLAIN.findall(read(README)))
@@ -53,11 +51,11 @@ def landing_page() -> int:
 
 
 def reference_pages() -> int:
-    """Brace each reference page's `Examples`, leaving its signature block alone.
+    """Add braces to each reference page's `Examples` fences, not to its signature block.
 
     Returns
     -------
-    The count of plain fences still sitting under an `Examples` heading, which means the pattern did not match one and that example would ship static.
+    The number of pages with a plain fence left under `Examples`, where the example would not run.
     """
     missed = 0
     for page in sorted(REFERENCE.glob("*.qmd")):
@@ -65,8 +63,8 @@ def reference_pages() -> int:
         if not heading:
             continue
         braced, count = PLAIN.subn(r"\1```{python}", tail)
-        if PLAIN.search(braced):
-            print(f"{page}: a fence under {EXAMPLES} is still plain")
+        if len(PYTHON.findall(braced)) != len(BRACED.findall(braced)):
+            print(f"{page}: a Python fence under {EXAMPLES} has no braces")
             missed += 1
             continue
         write(page, head + heading + braced)

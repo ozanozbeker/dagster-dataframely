@@ -1,27 +1,22 @@
-# Global configuration options
 [global]
 enable = ["ALL"]
 disable = [
-  # Heading Rules
   "MD024",  # Multiple headings with the same content
   "MD063",  # Heading text capitalization style
   "MD082",  # No content before the next heading
 ]
 exclude = [
-  # Vendored upstream skills; keep byte-identical to their source repos
+  # Skill files, kept identical to their source repos
   ".claude",
   "docs/agents/",
-  "docs/adr/",
 ]
 respect-gitignore = true
-# `quarto` turns on MD078, which requires a label on every executable chunk. MD078
-# recognizes a `#|` label line but not the `%%|` line a mermaid cell uses, so each guide
-# diagram suppresses MD078 on its own fence. Turning the rule off would also remove the
-# check from every Python chunk.
+# `quarto` enables MD078, which requires a label on every executable chunk. MD078 does not read
+# the `%%|` label of a mermaid cell, so each diagram disables it on its own fence, and the rule
+# still checks every Python chunk.
 flavor = "quarto"
 line-length = 120
 
-# Rule configuration options
 [MD013]
 line-length = 0
 code-blocks = false

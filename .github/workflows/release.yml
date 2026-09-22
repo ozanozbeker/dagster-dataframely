@@ -8,9 +8,8 @@ on:
 permissions: {}
 
 jobs:
-  # A version is permanent once published: it can be yanked, never replaced. CI checks
-  # 3.12 on push and the other two only weekly, so without this a release could ship a
-  # support claim last verified days ago.
+  # PyPI never replaces a published version, and CI tests 3.13 and 3.14 only in the weekly run,
+  # so this job tests every supported Python before publishing.
   test:
     runs-on: ubuntu-latest
     permissions:
@@ -44,8 +43,7 @@ jobs:
           # A release must not restore a cache a pull-request run could have written.
           enable-cache: false
       - run: uv build
-      # `py.typed` makes the annotations visible to a type checker downstream. It is a file,
-      # not code, so only the built artifact settles whether it made the trip.
+      # The tests import the package from source, so only the wheel shows whether `py.typed` is in it.
       - name: py.typed ships in the wheel
         run: unzip -l dist/*.whl | grep -q 'dagster_dataframely/py.typed'
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

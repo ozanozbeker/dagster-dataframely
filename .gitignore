@@ -241,18 +241,14 @@ Temporary Items
 Icon
 $RECYCLE.BIN/
 
-# Great Docs build output. `_quarto.yml` is regenerated inside `great-docs/` on every
-# build, so nothing under it is a source file; `great-docs.yml` is the committed
-# configuration. `_freeze/` is Quarto's execution cache, and committing it would let a page
-# ship cached output after the code under it changed.
+# Great Docs build output. `_freeze/` is Quarto's execution cache, and committing it would let a page show cached output after the code changed.
 great-docs/
 _great_docs_build/
 _freeze/
 
-# The demo's tables, and what a killed `dg dev` leaves behind. `dg dev` builds its instance
-# under the cwd and removes it on exit, so nothing sets DAGSTER_HOME.
+# The demo's tables, and the temporary instance a killed `dg dev` leaves under the cwd.
 demo/storage/
 demo/.tmp_dagster_home_*/
 
-# dg writes a per-checkout telemetry id here; it is local state, not source.
+# dg writes a telemetry id for each checkout here.
 demo/.dg/telemetry.yaml
