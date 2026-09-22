@@ -1,10 +1,6 @@
-"""The parts the decorator assembles, for a `@dg.asset` you wire yourself.
+"""The parts `dd.asset` assembles, for a `@dg.asset` you wire yourself.
 
-The user guide's *Hand-wiring* has what each part gives up against the decorator, and three worked arrangements.
-
-A namespace, not an implementation. Every name is defined in a private module and re-exported here, so the file tree can change while the import path stays put. `__init__.py` does the same for the same reason.
-
-Its own module rather than thirteen more names in the root. The root is the happy path, and so is the decorator. Someone who never hand-wires should not read past `check_specs` and `quarantine_spec` to find it. Hand-wiring is supported, not recommended, and one name in the root instead of thirteen shows that distinction. `errors` is the other module with a public name, for the same reason.
+Most users need only `dd.asset`, so this module holds these names instead of the root namespace.
 """
 
 from dagster_dataframely._checks import check_results, check_specs

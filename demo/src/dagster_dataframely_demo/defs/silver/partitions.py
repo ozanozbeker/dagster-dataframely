@@ -21,7 +21,7 @@ BY_REGION = dg.MultiPartitionsDefinition({
 def daily_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame:
-    """Take one day's order lines."""
+    """Return one day's order lines."""
     return _data.orders_on(raw_orders, dt.date.fromisoformat(context.partition_key))
 
 
@@ -29,7 +29,7 @@ def daily_orders(
 def regional_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame | None:
-    """Take one region's order lines for one day, and skip a region not yet open."""
+    """Return one region's order lines for one day, or skip APAC before its storefront opened."""
     cell = context.partition_key.keys_by_dimension
     day = dt.date.fromisoformat(cell["day"])
     if cell["region"] == "apac" and day < _data.APAC_LAUNCH:

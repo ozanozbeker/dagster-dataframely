@@ -1,10 +1,6 @@
-"""The three sources of a setting, asserted at the one call every setting resolves through.
+"""Tests for `_Setting.resolve`, which reads each setting from its three sources.
 
-The three sources meet in `resolve`, so precedence and validation are both testable without going near an asset. The shipped settings are exercised through it. A fake one covers the default source, because a shipped default is valid by construction.
-
-A flag and a count parse the environment variable rather than match it, because the environment arrives as a string whatever the setting holds. A count accepts a range, so it is the one setting with something left to reject after a type checker has narrowed the source. A directory ships a package default of `None`, which means no directory rather than the absence of a setting.
-
-`schema_rules` is the exception at the end. Every other setting's environment variable is driven through the code that reads it somewhere in this suite, and that one's was driven only as far as `resolve`, so the two tests that take it the rest of the way live here beside the source they exercise.
+The last two tests call `check_specs`, because no other test file sets `DAGSTER_DATAFRAMELY_SCHEMA_RULES`.
 """
 
 from dataclasses import replace
@@ -31,29 +27,17 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 _QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
 
-# The literal is already a static error, so the runtime guard is asserted through a name a type checker cannot narrow. A user without a type checker gets the same.
+# Typed `Any`, so the type checker does not reject the wrong values these tests need.
 _WRONG: Any = "per_column"
-
-# The same, for a count, whose allowed values a type checker narrows to `int`.
 _FRACTION: Any = 2.5
 _YES: Any = True
-
-# The same, for the two-valued setting. It is the environment variable's own spelling, so it is the word somebody writes into the argument by mistake.
 _WORD: Any = "false"
-
-# The same, for the setting that holds a path. A user reaches for a `Path`; the setting holds the string spelling instead.
 _PATH_OBJECT: Any = Path("/scratch")
 
-# A setting whose package default is already outside its own allowed values. The shipped settings cannot be wrong from that source, so this is the only way to assert the default is validated, not trusted. Each is a shipped setting with its default swapped for a wrong one.
+# Every shipped default is valid, so these copies with a wrong default test the default source.
 _BROKEN = replace(CHECK_GRANULARITY, name="fake_setting", default=_WRONG)
-
-# A count whose default is a number it does not accept.
 _BROKEN_COUNT = replace(MAX_FAILURE_SAMPLES, name="fake_count", default=-1)
-
-# A flag whose default is the word for a value rather than the value.
 _BROKEN_FLAG = replace(STATISTICS, name="fake_flag", default=_WORD)
-
-# A directory whose default is the empty path, the only wrong value it has.
 _BROKEN_DIRECTORY = replace(QUARANTINE_DIR, name="fake_directory", default="")
 
 
@@ -69,21 +53,18 @@ def test_a_setting_nobody_touched_is_the_package_default():
 def test_the_environment_variable_beats_the_package_default(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The house-style source: set once by a platform engineer, for every asset in the code location."""
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
     assert CHECK_GRANULARITY.resolve(None) == "column"
 
 
 def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyPatch):
-    """The override: the house style holds everywhere except where an asset says otherwise."""
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
     assert CHECK_GRANULARITY.resolve("schema") == "schema"
 
 
 def test_every_setting_names_its_environment_variable_after_itself():
-    """`DAGSTER_DATAFRAMELY_*` is collision-proof and obviously meant for a machine to read. It is derived, not transcribed, so the name and the setting cannot drift."""
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert SCHEMA_RULES.env_var == _SCHEMA_RULES_ENV
     assert STATISTICS.env_var == _STATISTICS_ENV
@@ -95,7 +76,6 @@ def test_every_setting_names_its_environment_variable_after_itself():
 def test_a_flag_parses_the_environment_source_rather_than_matching_it(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The one source where a flag differs from a choice, asserted in both directions and in the casing a deployment is as likely to write."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
     assert STATISTICS.resolve(None) is False
 
@@ -106,7 +86,6 @@ def test_a_flag_parses_the_environment_source_rather_than_matching_it(
 def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The case a truthiness test would get wrong. With the source below saying on, the setting would be impossible to turn off."""
     monkeypatch.setenv(_STATISTICS_ENV, "true")
 
     assert STATISTICS.resolve(argument=False) is False
@@ -115,7 +94,6 @@ def test_a_flag_turned_off_by_an_argument_is_off_rather_than_unset(
 def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`1` is the plausible wrong word. The error has to be the same one a choice raises: same setting, same allowed values, same source order."""
     monkeypatch.setenv(_STATISTICS_ENV, "1")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -128,10 +106,7 @@ def test_a_flag_rejects_a_word_that_is_not_one_of_its_two(
 
 
 def test_a_flag_rejects_a_word_from_the_argument():
-    """The one setting where an unvalidated argument is silently the opposite of what was written.
-
-    `statistics="false"` is a non-empty string, so trusting the `bool | None` annotation resolves it to the word and turns the pass on. The environment variable spells the same instruction that way, so the mistake is reachable.
-    """
+    """The setting rejects `statistics="false"`, because a non-empty string is truthy and would turn statistics on."""
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
 
@@ -143,7 +118,7 @@ def test_a_flag_rejects_a_word_from_the_argument():
 def test_a_count_reads_the_environment_source_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The other setting that parses rather than matches. A wrong reading here would be silent: `'0'` is a string every truthiness test calls true."""
+    """`'0'` resolves to the number `0`, not to the truthy string `'0'`."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "3")
     assert ROW_SAMPLE.resolve(None) == 3
 
@@ -154,7 +129,6 @@ def test_a_count_reads_the_environment_source_as_a_number(
 def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Zero turns a sample off, so the test cannot be truthiness. With the source below saying 5, the setting would be impossible to turn off."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "5")
 
     assert ROW_SAMPLE.resolve(0) == 0
@@ -188,7 +162,7 @@ def test_a_count_rejects_a_negative_from_the_environment(
 def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The same error a negative gets, so a deployment never has to tell two failures apart."""
+    """`resolve` raises the same error for a word as for a negative number."""
     monkeypatch.setenv(_ROW_SAMPLE_ENV, "five")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -201,7 +175,6 @@ def test_a_count_rejects_a_word_the_environment_cannot_read_as_a_number(
 
 
 def test_a_count_rejects_a_fraction():
-    """Half a row is not a row. The value arrives through an untyped name because the literal is already a static error, like a value outside a setting's allowed values."""
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_FRACTION)
 
@@ -209,7 +182,7 @@ def test_a_count_rejects_a_fraction():
 
 
 def test_a_count_rejects_a_bool():
-    """`True` is an `int` in Python, so a setting confused with `statistics` would otherwise resolve to one row and say nothing."""
+    """The setting rejects `True` even though `bool` subclasses `int`."""
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_YES)
 
@@ -219,7 +192,6 @@ def test_a_count_rejects_a_bool():
 def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The setting with nothing to parse and nothing to match: the environment variable already arrives as what the setting holds."""
     monkeypatch.setenv(_QUARANTINE_DIR_ENV, "/scratch/quarantine")
 
     assert QUARANTINE_DIR.resolve(None) == "/scratch/quarantine"
@@ -229,10 +201,6 @@ def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
 def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` in a deployment whose `SCRATCH` never got set arrives empty.
-
-    Reading that as unset would report a setting nobody wrote when somebody wrote one wrong. The refusal names the variable instead, so the fix lands where the mistake is.
-    """
     monkeypatch.setenv(_QUARANTINE_DIR_ENV, "   ")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -244,20 +212,17 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """A `Path` is the plausible wrong value here, wrong for the same reason a word is wrong in a count. Every source for this setting spells a path as a string, because the environment variable can spell it no other way.
-
-    The source goes unasserted. `dd.asset` declares no `quarantine_dir=` parameter, so only a hand-wired call reaches this branch. The source phrase it produces then names an argument nobody can pass.
-    """
+    """The setting rejects a `Path` object, because it holds a string, like its environment variable."""
     with pytest.raises(InvalidSettingError) as raised:
         QUARANTINE_DIR.resolve(_PATH_OBJECT)
 
+    # This test does not assert the source: it names a `quarantine_dir=` argument, which `dd.asset` does not take.
     assert "Setting `quarantine_dir` got '/scratch'" in str(raised.value)
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A wrong value in a deployment's environment is the source where a silent misconfiguration would spread furthest."""
     monkeypatch.setenv(_GRANULARITY_ENV, "per_column")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -269,7 +234,6 @@ def test_a_value_outside_the_allowed_values_raises_from_the_environment(
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
-    """The chain validates on resolve, so no source is trusted, including the package's own."""
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
 
@@ -292,10 +256,6 @@ def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
 
 
 def test_the_error_names_the_setting_the_value_and_the_source_order():
-    """Everything needed to find the typo without opening the package source: which setting, what it got, and every place it could have come from.
-
-    The chain names all three sources whatever raised, so it is asserted apart from the attribution rather than through it.
-    """
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(_WRONG)
     message = str(raised.value)
@@ -306,7 +266,7 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
     )
     assert "'rule', 'column', 'schema'" in message
     assert (
-        "It resolves in three, each overriding the one before: the package default,"
+        "It is read from three sources, each overriding the one before: the package default,"
         in message
     )
     assert f"then the environment variable {_GRANULARITY_ENV}," in message
@@ -316,10 +276,6 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
 def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """`dd.asset` declares no `quarantine_dir=` parameter, so the chain has two sources rather than three.
-
-    Naming a third would send a user to fix the one thing they cannot: the argument the message told them to pass raises `TypeError`.
-    """
     monkeypatch.setenv(_QUARANTINE_DIR_ENV, "")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -327,22 +283,19 @@ def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     message = str(raised.value)
 
     assert (
-        "It resolves in two, each overriding the one before: the package default,"
+        "It is read from two sources, each overriding the one before: the package default,"
         in message
     )
     assert f"then the environment variable {_QUARANTINE_DIR_ENV}." in message
     assert "There is no `quarantine_dir=` argument." in message
 
 
-def test_the_house_schema_rules_setting_reaches_the_checks_it_shapes(
+def test_the_schema_rules_environment_variable_changes_the_check_specs(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """A platform engineer setting this house-wide has nothing else proving it lands: every other test of it passes the argument instead.
-
-    `column` granularity, because it is the one granularity with a second place to put a rule no column owns.
-    """
     monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_rule")
 
+    # `schema_rules` has no effect at the other granularities.
     names = [
         spec.name
         for spec in check_specs(Orders, asset="orders", check_granularity="column")
@@ -355,7 +308,6 @@ def test_the_house_schema_rules_setting_reaches_the_checks_it_shapes(
 def test_a_schema_rules_value_outside_the_allowed_values_raises(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """The refusal the other choice setting gets, for the setting nothing had ever driven a wrong value through."""
     monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_column")
 
     with pytest.raises(InvalidSettingError) as raised:
@@ -367,10 +319,3 @@ def test_a_schema_rules_value_outside_the_allowed_values_raises(
         in message
     )
     assert "'collapsed', 'per_rule'" in message
-
-
-# There is no fourth source and no `set_default_*()`. Dagster loads code locations lazily,
-# so "has the default been set yet" would depend on an import order the user does not
-# control, and the same asset would derive different checks depending on which module
-# imported first. That is a grep over the source, so it is a `no-default-setter` hook in
-# `prek.toml`.

@@ -1,4 +1,4 @@
-"""The IO manager every table in the pipeline is written through."""
+"""The IO manager the pipeline writes every table through."""
 
 import dagster as dg
 from dagster_polars import PolarsParquetIOManager

@@ -1,9 +1,4 @@
-"""What a `DescribedRule` promises, which no single surface shows whole.
-
-Four places read these records and each reads different fields, so a wrong one can hide. A rule name this package has not met renders as the rule's name on every surface, which is also what a correct `kind` with no renderer does, so nothing downstream would report the difference.
-
-`Orders` carries a rule of every awkward kind on purpose, which is why the assertions below name it rather than declaring schemas of their own. `tests/scenario.py` says which rule covers what.
-"""
+"""The fields of `DescribedRule`, tested directly because a wrong field can render the same as a correct one."""
 
 import dataframely as dy
 import polars as pl
@@ -14,17 +9,14 @@ from tests.scenario import Orders
 
 
 def test_one_record_per_rule_in_the_schemas_own_order():
-    """Keyed by the name Dataframely gives it, so a caller indexes one rule or iterates them all.
-
-    Compared against Dataframely's own dict rather than a literal: order is the promise, and upstream is what defines it. `test_asset_definition.py` holds the literal that catches a rule disappearing.
-    """
     rules = described_rules(Orders)
 
+    # Dataframely sets the order; `tests/test_asset_definition.py` has the literal list of names.
     assert list(rules) == list(Orders._validation_rules(with_cast=False))
 
 
 def test_only_a_delimited_rule_owns_a_column():
-    """The `|` decides, and it sets both fields or neither. Every renderer leans on that pairing."""
+    """`described_rules` sets `column` and `rule_name` from the `|`, or leaves both `None`."""
     rules = described_rules(Orders)
 
     assert (rules["amount|min"].column, rules["amount|min"].rule_name) == (
@@ -42,7 +34,6 @@ def test_only_a_delimited_rule_owns_a_column():
 
 
 def test_a_description_appears_only_where_a_rule_wrote_one():
-    """A `@dy.rule()` keeps its docstring on the `RuleFactory`. A column rule is generated from a column argument and has no function to document."""
     rules = described_rules(Orders)
 
     assert rules["paid_orders_have_amount"].description == (
@@ -53,7 +44,7 @@ def test_a_description_appears_only_where_a_rule_wrote_one():
 
 
 def test_the_check_name_is_the_rewrite():
-    """One string for the check, the quarantine's rule column and the metadata key, so the record carries it rather than each reader rebuilding it."""
+    """The check and the quarantine's rule column share this name."""
     rules = described_rules(Orders)
 
     assert rules["amount|min"].check_name == "dy_rule__amount__min"
@@ -61,10 +52,7 @@ def test_the_check_name_is_the_rewrite():
 
 
 def test_the_expression_is_not_resolved_where_the_record_is_built():
-    """Dataframely builds a `@dy.rule()` body as `Rule(expr=lambda: ...)`, and nothing at definition time reads it: only a run's check metadata does.
-
-    Resolving every expression eagerly costs a schema of forty rule bodies nine times what leaving it alone costs. This asserts the laziness rather than the timing, because a body that raises can only run if something read it.
-    """
+    """Only a run reads the expression, because reading it at definition time is slow (`docs/pre-1.0.md`)."""
 
     class Exploding(dy.Schema):
         amount = dy.Int64()

@@ -1,11 +1,11 @@
-"""The schema every validated order table in the pipeline is held to."""
+"""`Orders`, the schema that every silver and gold order asset uses."""
 
 from decimal import Decimal
 
 import dataframely as dy
 import polars as pl
 
-#: The longest operator note the fulfilment tool accepts.
+#: The fulfilment tool rejects an operator note of this many characters or more.
 NOTE_MAX_CHARS = 100
 
 
@@ -45,7 +45,7 @@ class Orders(dy.Schema):
     status = dy.Enum(
         ["new", "paid", "shipped", "cancelled"],
         nullable=False,
-        description="Where the line sits in fulfilment.",
+        description="Fulfilment status of the line.",
     )
     tracking_id = dy.String(
         nullable=True,
@@ -76,7 +76,7 @@ class Orders(dy.Schema):
 
     @dy.rule()
     def line_numbers_are_dense(cls) -> pl.Expr:
-        """Require every order's lines to run 1 to n with no gaps."""
+        """Require each order's line numbers to be 1 to n with no gaps."""
         return cls.line_no.col.max().over("order_id") == cls.line_no.col.count().over(
             "order_id"
         )

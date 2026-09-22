@@ -1,10 +1,6 @@
-"""The decorator: one argument attaches a Dataframely schema to a Dagster asset.
+"""The `dd.asset` decorator (ADR-0005).
 
-The decorator coordinates three artifacts no single `@dg.asset` parameter accepts as a bundle: the check specs, the definition metadata, and the wrapped runtime. `@dbt_assets` is the first-party precedent.
-
-ADR-0005 has why the decorator wraps `dg.asset` rather than stacking under it: a check spec is an op output, and no public API adds one to a finished `AssetsDefinition` or swaps its compute function.
-
-This module carries no `from __future__ import annotations`. At a 3.12 floor it would buy only unquoted forward references, and it would turn user-facing annotations into strings that Dagster's runtime introspection rejects. So every annotation is a runtime-real object, and `CoercibleToAssetDep` is imported from where Dagster defines it, because `dagster` does not export it.
+It has no `from __future__ import annotations`, because Dagster reads the annotations at run time.
 """
 
 import functools
@@ -16,11 +12,8 @@ from typing import Any
 import dagster as dg
 import dataframely as dy
 
-# The union `dg.asset` annotates `deps` with. Defined at runtime, not exported from `dagster`.
+# Dagster keeps both private; `tests/test_upstream_characterization.py` pins them.
 from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAssetDep
-
-# Upstream's own rule for whether a decorated function asked for a context.
-# Characterization tests pin it.
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 
 from dagster_dataframely._checks import check_specs
@@ -50,27 +43,23 @@ from dagster_dataframely._settings import (
 from dagster_dataframely.errors import CollectionNotSupportedError
 
 DecoratedFn = Callable[..., DecoratedReturn]
-"""What `dd.asset` accepts. The return union makes a function returning anything else a static error, which `tests/test_asset_runtime.py` pins with a `pyrefly: ignore` on the call that breaks it."""
 
 AutomationCondition = (
     dg.AutomationCondition[dg.AssetKey]
     | dg.AutomationCondition[dg.AssetKey | dg.AssetCheckKey]
 )
-"""The union `@dg.asset` accepts, spelled out because `AutomationCondition` is generic and its two parameterizations are not interchangeable."""
 
 
-def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
+def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     schema: type[dy.Schema],
     /,
     *,
-    # --- decorator-owned ---
     quarantine: bool = False,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
-    # --- `@dg.asset`'s own, forwarded. ---
     name: str | None = None,
     key_prefix: str | Sequence[str] | None = None,
     ins: Mapping[str, dg.AssetIn] | None = None,
@@ -97,87 +86,51 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
 ) -> Callable[[DecoratedFn], dg.AssetsDefinition]:
     """Turn the decorated function into an asset that validates the frame it returns against `schema`.
 
-    The Columns tab fills from the schema before the asset has run, every rule reports through an asset check, and a frame whose column schema does not match aborts the run before a row is filtered.
+    The decorated function returns a `pl.DataFrame` or `pl.LazyFrame`, a `dg.MaterializeResult` whose `value` is one of those, or `None` to skip.
 
-    Five returns are accepted: a frame or a `dg.MaterializeResult` carrying one, eager or lazy, or `None` to skip. What the function returns decides what happens; the annotation is not enforced, because `Schema.filter` materializes the valid rows either way.
-
-    The user guide has the failure policy, the quarantine, partitioning, settings and testing.
-
-    Every parameter is declared with its runtime-real type, so editors autocomplete them and `group_nme="sales"` is a static error rather than an import-time crash. `check_specs` is absent because this decorator owns it.
+    Every keyword parameter not listed below is `@dg.asset`'s, passed to it unchanged.
 
     Parameters
     ----------
-    schema
-        The Dataframely schema the decorated function's output must satisfy. Positional-only, and the only such parameter: it is the reason this decorator exists, so it is required and never one keyword among thirty.
     quarantine
-        Whether invalid rows are kept, which is the whole failure policy. **`True` adds a `context` parameter** to the asset whether or not the decorated function declared one, because the writer is built from the execution context. **`True` also reserves the asset key `<name>_quarantine`**, and a run fails with `QuarantineKeyCollisionError` when another asset already materializes it.
+        Whether a run writes the valid rows when some rows fail. With `True`, the run writes the invalid rows to the quarantine, under the asset key `<name>_quarantine`. A run fails with `QuarantineKeyCollisionError` if another asset already materializes that key. With `False`, any invalid row fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
     check_granularity
-        How far the rules collapse into checks: `rule`, `column` or `schema`. **Changing this on an existing asset orphans its check history.** Unset resolves through `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, then `rule`.
+        How many asset checks report the schema's rules: one per rule at `rule`, one per column with rules at `column`, and one for the schema at `schema`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
-        Where the schema-level rules land at `column` granularity: `collapsed` into `dy_schema__rules`, or `per_rule` for a check each. Read at no other granularity, because neither has a second place to put them. Unset resolves through `DAGSTER_DATAFRAMELY_SCHEMA_RULES`, then `collapsed`.
+        Which checks report the schema-level rules at `column` granularity: `collapsed` into one check, `dy_schema__rules`, or `per_rule`, one check each. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
-        How many rows that failed a rule reach that rule's check metadata, under `dy_failed_sample`. **These are real rows in the Dagster event log**, which is shared, exported and not redacted. The bound is this package's own; `dy.Config.set_max_failure_examples` does not touch it. Unset resolves through `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`, then `5`.
+        A rule's check metadata has at most this many rows that failed it, under `dy_failed_sample`. **A run writes the rows to the Dagster event log unredacted.** `dy.Config.set_max_failure_examples` does not change this number. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
     statistics
-        Whether the materialization carries statistics for what it wrote, one table per dtype group present. Unset resolves through `DAGSTER_DATAFRAMELY_STATISTICS`, then `true`.
+        Whether the materialization metadata has statistics of the written rows, one table per dtype group. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
-        How many rows reach the materialization metadata, of what was written and of what was held back. **These are real rows in the event log**, on the same terms as `max_failure_samples`. Unset resolves through `DAGSTER_DATAFRAMELY_ROW_SAMPLE`, then `5`.
-    name
-        Asset name. Defaults to the function name.
+        The materialization metadata has at most this many valid rows, and this many invalid rows. **A run writes the rows to the Dagster event log unredacted.** `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
     key_prefix
-        Prefix for the asset key. The checks and the quarantine follow it.
-    ins
-        Explicit input mapping, for the cases a parameter name cannot express.
-    deps
-        Upstream assets this one depends on without loading.
+        The quarantine's asset key has the same prefix.
     metadata
-        Definition metadata to carry alongside the schema's own. `dagster/column_schema` is the package's and wins a collision.
-    tags
-        Asset tags, for filtering and grouping in the catalog.
+        Definition metadata. The schema's `dagster/column_schema` entry replaces a key of the same name.
     description
-        Asset description. Unset, the schema's own docstring fills it, and the decorated function's docstring stands only where the schema has none.
-    config_schema
-        Run configuration schema for the underlying op. Narrower than Dagster's six-member union: a mapping is the one form worth a static guarantee, and the rest are legacy.
-    required_resource_keys
-        Resources the decorated function reaches through the context. The quarantine needs none: its manager comes off the step, not off the context's resources.
-    resource_defs
-        Resources bound to this asset specifically.
-    hooks
-        Hooks to attach to the underlying op.
+        `None` uses the schema's docstring, or the decorated function's docstring if the schema has none.
     io_manager_key
-        Resource key the table is stored under. The quarantine goes to the same manager, so moving one moves both.
+        In a run, `delegating_writer` passes the invalid rows to the same IO manager.
     partitions_def
-        Partitioning for the asset. Validation runs per partition, and the quarantine is written under the same partition key.
-    op_tags
-        Tags on the underlying op, for run launcher and executor routing.
-    backfill_policy
-        How Dagster backfills this asset's partitions.
-    retry_policy
-        Retry policy for the underlying op.
-    code_version
-        Version string for change-based staleness.
-    owners
-        Asset owners, as emails or `team:<name>`.
-    kinds
-        Kind badges shown on the asset in the graph.
-    pool
-        Concurrency pool the underlying op runs in.
+        The writer writes the quarantine under the same partition key.
 
     Returns
     -------
-    A decorator producing a `dg.asset` carrying the checks `check_granularity` asks for.
+    A decorator that returns a `dg.AssetsDefinition` with the schema's check specs and a Columns tab filled from the schema.
 
     Raises
     ------
     CollectionNotSupportedError
         `schema` is a `dy.Collection`.
     ReservedColumnError
-        A user column sits inside the reserved namespace.
-    UnnameableColumnError
-        A user column is spelled in characters Dagster refuses in a name.
+        A column name is in the reserved `dy_` namespace.
+    InvalidColumnNameError
+        A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
-        Two rules rewrite to the same check name.
+        Two rules produce the same asset check name.
     InvalidSettingError
-        A setting resolved to a value outside its allowed values, from any source.
+        A setting's argument or environment variable has a value the setting does not allow.
 
     Examples
     --------
@@ -190,7 +143,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
     import dagster_dataframely as dd
     ```
 
-    One declaration is the schema, the checks, the filter and the quarantine:
+    At the default `rule` granularity, the asset has one check per rule, plus the column-schema check:
 
     ```python
     class Orders(dy.Schema):
@@ -206,32 +159,26 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
     [spec.name for spec in orders.check_specs]
     ```
 
-    Every one of those exists before the asset has run, so the catalog lists a failing
-    check by name before it can fail.
+    The check specs exist before the asset first runs, so the catalog lists every check before its first result.
     """
-    # Only a `Collection` is refused here. Anything else keeps failing however it already fails.
     if isinstance(schema, type) and issubclass(schema, dy.Collection):
         raise CollectionNotSupportedError(schema.__name__)
 
-    # Here rather than left to the `check_specs` below, so the factory refuses on the line that takes the schema and a `maker = dd.asset(Reserved)` cannot hand back a decorator that raises later (ADR-0008).
     validate_namespace(schema)
 
-    # Resolved once, here, and handed to both the specs and the runtime. Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared. The last three affect nothing built at definition time, but they resolve here too: a mistyped environment variable then fails where the asset is declared rather than on whichever run reaches it first.
+    # Resolved once, here, for both the check specs and the run.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
-    # `quarantine_dir` is the one whose value is dropped. What a deployment writes after this module imports is what a call should use, and a call holding nothing back should never have to name a directory, so the writer reads the setting itself when the rows arrive (#115).
-    # The resolve stays for the sentence above it: `${SCRATCH}` unexpanded arrives empty, and a variable written wrong is worth reporting where it was written rather than on whichever call first has a row to hold back. Unconditional, because a malformed variable is malformed whether or not this asset declares a quarantine.
+    # Only to raise on a malformed value (#115).
     QUARANTINE_DIR.resolve(None)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
         "deps": deps,
         "tags": tags,
-        # The schema's docstring fills a description the decorator was not given, because the schema describes the table while the decorated function's docstring describes the code that fills it. Returning nothing leaves Dagster's own fallback to that docstring standing, so an empty string on either source reads as absent and neither can say "no description at all".
-        # `__doc__` rather than `inspect.getdoc`, which walks the MRO: a schema with no docstring would inherit `dy.Schema`'s and describe itself as a base class for schema definitions. `cleandoc` because a raw docstring keeps its source indentation, which the catalog renders as a code block.
         "description": description or inspect.cleandoc(schema.__doc__ or "") or None,
         "config_schema": config_schema,
         "required_resource_keys": required_resource_keys,
@@ -258,17 +205,12 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
             prefix = [key_prefix] if isinstance(key_prefix, str) else list(key_prefix)
         key = dg.AssetKey([*prefix, asset_name])
 
-        # Read off the decorated function, so `compute` can hand the context to a function that asked for one and withhold it from one that did not.
         parameters = list(inspect.signature(fn).parameters.values())
         declares_context: bool = is_context_provided(parameters)
 
         def asset_yields(
             returned: DecoratedReturn, writer: QuarantineWriter | None
         ) -> AssetYield:
-            """Validate what the decorated function handed back and report it.
-
-            One stage either side of `validation_results`, and neither changes it (#77).
-            """
             frame, result = frame_and_result(returned, asset=key.to_user_string())
             yield from with_returned_fields(
                 validation_results(
@@ -287,15 +229,12 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
             )
 
         if quarantine:
-            # The context is the one thing a wrapper cannot ask Dagster for after the fact, and building the writer is the only reason to want it (ADR-0001). So a quarantined asset declares it whether or not the decorated function did, and an asset without a quarantine keeps the signature it was written with.
 
             @functools.wraps(fn)
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
-                # Ahead of the body, and ahead of the writer: a body whose invalid rows would land on another asset's key has nowhere to put them, so nothing is gained by running it first (ADR-0007).
                 validate_quarantine_key(context)
-                # Bound to the context here, where it is in hand and nowhere else. The route is picked when the rows arrive, so a body that holds nothing back needs nowhere to put them.
                 writer = quarantine_writer(context)
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
@@ -305,9 +244,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
                 yield from asset_yields(returned, writer)
 
             if not declares_context:
-                # `functools.wraps` forwards the decorated function's own signature, which Dagster resolves the asset's inputs from. Prepending the context is the whole edit; the rest is the decorated function's parameter list, untouched.
-                # The context takes the first parameter's own kind when that kind is positional-only, because `inspect.Signature` refuses a positional-or-keyword parameter ahead of one. Dagster cannot resolve a positional-only input either way, so this buys its refusal rather than a bare `ValueError` naming no asset.
-                # Unannotated: `inspect` keeps the kind enum private, and the name buys nothing a reader does not already see.
+                # Positional-only if the first parameter is, as `inspect.Signature` requires.
                 leading = (
                     parameters[0].kind
                     if parameters
@@ -331,10 +268,7 @@ def asset(  # noqa: PLR0913 - forwarding the whole parameter list is the point
         return dg.asset(
             name=asset_name,
             key_prefix=prefix or None,
-            # The column-schema check, both failures that write nothing, and the skip all end the step without yielding.
             output_required=False,
-            # The package's own key is applied last, so a user cannot accidentally displace the Columns tab.
-            # The opposite precedence from `description` above: this key belongs to the package, while a description is prose the author owns.
             metadata={**(metadata or {}), **schema_metadata(schema)},
             check_specs=check_specs(
                 schema,

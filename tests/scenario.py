@@ -1,17 +1,4 @@
-"""The one `Orders` schema and the frames every test runs against.
-
-The schema covers the dtypes a round trip or a metadata emission could get wrong, and the rule kinds the naming and description fallbacks have to distinguish.
-
-Nothing here is a fixture. A schema is a class and a frame is a value, so both read more cheaply as module constants. `Orders` also has to be importable at class-definition time to decorate an asset.
-
-`POLARS_SCHEMA` restates the dtypes by hand rather than deriving them. A frame that drifts from the schema then fails the column-schema check loudly in every runtime test, instead of being rebuilt to match.
-
-`storage` builds `dagster-polars`' parquet manager, the one ADR-0004 recommends, so a test that only needs somewhere to write exercises what a user runs.
-
-`warehouse` builds a database manager for the few tests that need one. Delegation places a quarantine on both without knowing which it is talking to (ADR-0006), and only two managers can show that.
-
-`materialize`, the indexers beside it and `records` are here because every runtime test module asks a run the same questions.
-"""
+"""The `Orders` schema, the frames the tests validate, and the helpers several test modules share."""
 
 import datetime as dt
 from decimal import Decimal
@@ -26,40 +13,16 @@ from dagster_duckdb_polars import DuckDBPolarsIOManager
 from dagster_polars import PolarsParquetIOManager
 
 WAREHOUSE_SCHEMA = "analytics"
-"""The database schema `warehouse` writes into, so also the prefix the assets under it carry. `DbIOManager` addresses a table as `<schema>.<name>`, so the two have to agree."""
+"""The database schema `warehouse` writes to."""
 
 
 def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
-    """Build the resources for a run that only needs somewhere to write.
-
-    Parameters
-    ----------
-    tmp_path
-        The directory the run writes under.
-
-    Returns
-    -------
-    The `resources` mapping to hand `dg.materialize`.
-    """
+    """Build the resources for a run that only needs somewhere to write."""
     return {"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))}
 
 
 def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
-    """Build the resources for a run that writes into a database.
-
-    `PolarsParquetIOManager` is a `UPathIOManager` and this is a `DbIOManager`. Between them the two base classes cover nearly every first-party manager, so a quarantine that lands natively on both is not support for two integrations (ADR-0006).
-
-    The schema is created here because the manager assumes one exists.
-
-    Parameters
-    ----------
-    tmp_path
-        The directory the database file goes in.
-
-    Returns
-    -------
-    The `resources` mapping to hand `dg.materialize`.
-    """
+    """Build the resources for a run that writes into a database."""
     database = tmp_path / "warehouse.duckdb"
     with duckdb.connect(str(database)) as connection:
         connection.sql(f"CREATE SCHEMA IF NOT EXISTS {WAREHOUSE_SCHEMA}")
@@ -71,36 +34,14 @@ def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
 
 
 class Table(NamedTuple):
-    """What a warehouse test can ask about a table without reading its values back.
-
-    Values stay in the database. `Orders` carries a `Duration`, DuckDB stores that as an INTERVAL, and Polars refuses to import one without an unstable environment variable set. The placement tests care that the table exists, holds the right rows and carries the rule columns. The parquet tests compare the values.
-
-    Attributes
-    ----------
-    columns
-        The table's column names, in the order DuckDB reports them.
-    height
-        How many rows it holds.
-    """
+    """A warehouse table's column names and row count, not its values: Polars loads DuckDB's INTERVAL only with an unstable environment variable set."""
 
     columns: list[str]
     height: int
 
 
 def tables(tmp_path: Path) -> dict[str, Table]:
-    """Describe every table a `warehouse` run wrote, keyed by name.
-
-    Parameters
-    ----------
-    tmp_path
-        The same directory `warehouse` was given.
-
-    Returns
-    -------
-    One description per table in the warehouse schema.
-    """
-    # Interpolated, not parameterized: an identifier cannot be bound, and every value
-    # here is this file's own literal or a name DuckDB reported.
+    """Describe every table a `warehouse` run wrote, keyed by name."""
     with duckdb.connect(str(tmp_path / "warehouse.duckdb")) as connection:
         columns: dict[str, list[str]] = {}
         for name, column in connection.sql(
@@ -118,22 +59,16 @@ def tables(tmp_path: Path) -> dict[str, Table]:
 
 
 Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-"""What draining a called asset hands back."""
+"""The events a called asset yields."""
 
 
 def events(asset: dg.AssetsDefinition, *args: object) -> Yielded:
-    """Call the asset and drain what comes back.
-
-    `AssetsDefinition.__call__` is annotated `-> object` upstream, because a direct call hands back whatever the body returns. Here it is always the wrapper's generator. The ignore asserts that, and `tests/test_upstream_characterization.py` pins it.
-    """
+    """Call the asset and consume the events it yields."""
     return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
 
 
 def results(yielded: Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """Index the materialization each output yielded by asset key.
-
-    A run records this merged with whatever the IO manager adds, so a key both write reads as the manager's in the run. What the step itself said is visible only here.
-    """
+    """Index the materialization each output yielded by asset key."""
     return {
         event.asset_key: event
         for event in yielded
@@ -177,10 +112,7 @@ def check_evaluations(
 
 
 def records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
-    """Read a table metadata value back as a row per record.
-
-    The `isinstance` is the narrowing a type checker needs off `MetadataValue`, and it is also the assertion: a key that stopped being a table fails here rather than on whichever field the test reads next.
-    """
+    """Read a table metadata value back as a row per record."""
     assert isinstance(value, dg.TableMetadataValue)
     return [dict(record.data) for record in value.records]
 
@@ -188,16 +120,15 @@ def records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
 class Orders(dy.Schema):
     """Customer orders, one row per order line.
 
-    Every column and rule here is awkward somewhere:
+    Each column or rule covers a case:
 
-    - `Decimal` crashes `TableRecord` emission unless coerced (#23).
-    - `Duration` has no readable Polars string form (#23).
-    - `Binary` is the one member of the string statistics group with no string form to read, so the cast has to exempt it (#23).
-    - The composite primary key is the case where a per-column `unique` constraint would be false; `tracking_id` is the case where it is true. Dataframely keeps `primary_key` and `unique` independent, so both need exercising.
-    - `paid_orders_have_amount` carries a docstring and `line_numbers_are_dense` does not, so both paths of the description fallback run (#17).
-    - `email` names its check and `note` leaves it anonymous, so both paths of the check-name renderer run (#20).
-    - `email` and `tags` both spell `max_length` and mean different things by it, bytes against elements, so both paths of the constraint renderer's length unit run (#20).
-    - `amount` carries free-form `metadata=` with a non-string value, the only Dataframely attribute that reaches Dagster's column tags.
+    - `amount` is a `Decimal`, which `TableRecord` raises on unless coerced.
+    - `fulfilled_in` is a `Duration`, which has no readable string form.
+    - `payload` is a `Binary`, the one dtype in the `string` dtype group with no string form.
+    - The composite primary key is not unique per column, and `tracking_id` is.
+    - `line_numbers_are_dense` has no docstring.
+    - `email` names its check and `note` does not.
+    - `email` and `tags` both set `max_length`, in bytes and in elements.
     """
 
     order_id = dy.String(
@@ -246,6 +177,7 @@ class Orders(dy.Schema):
         )
 
 
+# Not derived from `Orders`, so a frame that differs from the schema fails the column-schema check.
 POLARS_SCHEMA: dict[str, pl.DataType] = {
     "order_id": pl.String(),
     "line_no": pl.Int32(),
@@ -316,21 +248,18 @@ def mixed_orders() -> pl.DataFrame:
 
 
 def cooccurring_orders() -> pl.DataFrame:
-    """Three valid rows and one that trips three rules at once.
-
-    The fifth frame, added by #19. The other four fail at most one rule per row, so co-occurrence counts read as singletons on all of them and a broken emission would look like a working one.
-    """
+    """Three valid rows and one that fails three rules, the only frame with more failures than invalid rows."""
     return _frame([
         _row("ORD-1", "a@example.com", "10.00", 1, "new"),
         _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
         _row("ORD-3", "c@example.com", "99.00", 3, "shipped"),
-        # amount|min, email|check__lowercase and paid_orders_have_amount together.
+        # amount|min, email|check__lowercase and paid_orders_have_amount
         _row("ORD-4", "D@example.com", "-1.00", 1, "paid"),
     ])
 
 
 def no_valid_orders() -> pl.DataFrame:
-    """Every row fails `amount|min`, so nothing survives the filter."""
+    """Every row fails `amount|min`, so no row is valid."""
     return _frame([
         _row("ORD-1", "a@example.com", "-1.00", 1, "new"),
         _row("ORD-2", "b@example.com", "-2.00", 1, "new"),
@@ -338,5 +267,5 @@ def no_valid_orders() -> pl.DataFrame:
 
 
 def wrong_dtype_orders() -> pl.DataFrame:
-    """`quantity` arrives `Int64`: a pipeline defect the column-schema check catches before the filter."""
+    """`quantity` is `Int64`, so the column-schema check fails."""
     return clean_orders().with_columns(pl.col("quantity").cast(pl.Int64))

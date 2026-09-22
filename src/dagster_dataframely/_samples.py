@@ -1,31 +1,21 @@
-"""The rows a run puts in front of a reader, bounded.
+"""The sample rows that `_checks` and `_runtime` write to metadata.
 
-Bounded by construction. There is no unbounded setting and no unbounded read. Nothing leaves this module without a caller saying how many rows it wanted. **These rows go into the Dagster event log, which is shared, exported and not redacted**, so somebody chooses the amount that lands there.
-
-A sample is absent, never empty. Dagster enforces the same from the other side: a table value with no records and no schema is an error, so an empty one would fail the run rather than show nothing.
-
-Its own module rather than `_metadata`'s or `_statistics`'. `_metadata` holds what an asset declares before it runs. This module holds what a run held. And unlike a statistic, a cell here is a value out of the data, which decides the rendering rule in `cell`.
+Sample rows go into the Dagster event log, which nothing redacts, so `sample_rows` always takes a row limit.
 """
 
 import dagster as dg
 import polars as pl
 
 VALID_SAMPLE_KEY = "dataframely/valid_sample"
-"""The valid rows' materialization display key. Namespaced like `dataframely/valid_statistics/*`, so everything this package writes sorts in one block apart from Dagster's and the IO manager's."""
 
 type Cell = str | int | float | bool | None
-"""What a `dg.TableRecord` cell may hold. Dagster states the union inline on the record's field and exports no name for it."""
-
 type Row = dict[str, Cell]
-"""One row, rendered."""
 
 
 def cell(value: object) -> Cell:
-    """Render one value as something a table record accepts.
+    """Render one value as a `dg.TableRecord` cell.
 
-    Everything a record cannot hold becomes its string form, once, here. `Decimal`, `Datetime`, `Duration`, `Binary` and `List` all reach this from schemas the package tests.
-
-    A `Decimal` becomes a string, not the `float` the statistics tables coerce it to. A statistic is a number nobody stored; this is the row itself. `10.00` must still read `10.00`, and a high-precision decimal must keep its digits.
+    A `Decimal` becomes a string rather than a float, so it keeps its digits.
     """
     if value is None or isinstance(value, (bool, int, float, str)):
         return value
@@ -33,13 +23,9 @@ def cell(value: object) -> Cell:
 
 
 def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
-    """Read up to `limit` of a frame's rows as cells a table record accepts.
+    """Read the first `limit` rows as `dg.TableRecord` cells.
 
-    The head, not a random draw. A sample somebody reports a bug against must be the same sample when they reopen the run, and `head` is the only draw a re-read reproduces.
-
-    Returns
-    -------
-    One mapping per row, keyed by column in the frame's own order. Empty when the limit is zero or the frame has no rows.
+    A random sample would differ between two reads of the same frame.
     """
     return [
         {name: cell(value) for name, value in row.items()}
@@ -48,15 +34,9 @@ def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
 
 
 def sample_metadata(key: str, rows: list[Row]) -> dict[str, dg.TableMetadataValue]:
-    """Build the one metadata entry a sample lands under.
+    """Return the metadata entry for a sample, or nothing when there are no rows.
 
-    Every check and materialization that shows sampled rows goes through here, so "absent, never empty" stays one decision.
-
-    Table values rather than markdown: a table value renders as a full HTML table in the UI, and the same rows as markdown render as printed text.
-
-    Returns
-    -------
-    The one entry, or nothing when there are no rows: the limit was zero, the frame was empty, or nothing failed the rule.
+    Dagster raises on a table value with no records and no schema.
     """
     if not rows:
         return {}

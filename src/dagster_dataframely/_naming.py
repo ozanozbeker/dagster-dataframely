@@ -1,42 +1,29 @@
-"""The reserved namespace and the two names built out of it.
+"""The reserved `dy_` namespace and the names built in it.
 
-`dy_` is hardcoded, not configurable. Its value lies in being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
-
-Strings in, strings out. This module knows nothing about a schema, a rule or a frame, which is why it imports nothing: what a rule is and whether a schema may claim these names are `_rules`' questions, and it asks them through `check_name` below.
+`dy_` is not a setting, so check names are the same in every project.
 """
 
-# Spelled out again wherever a name is built, never interpolated: one grep for `dy_rule__` finds every producer and consumer.
+# Names repeat `dy_` literally, so grep finds every use.
 RESERVED_NAMESPACE = "dy_"
 
 COLUMN_SCHEMA_CHECK = "dy_schema__columns"
-"""The column-schema check. Present at every granularity, always blocking."""
 
 SCHEMA_RULES_CHECK = "dy_schema__rules"
-"""The check the rules no single column owns report through when they are collapsed.
-
-Not `dy_col__schema`, which would collide with a user column named `schema`, a column somebody has.
-"""
+"""Not `dy_col__schema`, which a `schema` column also gets."""
 
 
 def check_name(rule_name: str) -> str:
-    """Rewrite a Dataframely rule name into an asset-check name.
+    """Return the asset check name for the Dataframely rule named `rule_name`.
 
-    `amount|min` becomes `dy_rule__amount__min`, the same string wherever the rule shows up.
-
-    The rewrite is forced. Every check spec becomes an op output named `<asset>_<check>`, and Dagster validates that against `^[A-Za-z0-9_]+$`, which `|` fails.
+    The quarantine's rule columns and the checks at `rule` granularity have this name.
 
     Returns
     -------
-    The asset-check name, inside the reserved namespace.
+    `dy_rule__` followed by `rule_name` with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
     """
     return f"dy_rule__{rule_name.replace('|', '__')}"
 
 
 def column_check_name(column: str) -> str:
-    """Name the check that reports every rule on one column.
-
-    Returns
-    -------
-    The asset-check name, inside the reserved namespace.
-    """
+    """Return the check name for a column's rules."""
     return f"dy_col__{column}"

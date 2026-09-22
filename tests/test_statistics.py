@@ -1,8 +1,6 @@
-"""The statistics pass, asserted through the metadata a materialization carries.
+"""Tests for the statistics tables in a materialization's metadata.
 
-The groups and the duration rendering are never called directly. A data consumer meets them only as tables on a materialization, so that is where they are asserted.
-
-Statistics are opt-out, so almost every asset here declares nothing about them.
+The tests run an asset instead of calling `_statistics`, because a user reads the tables only on a materialization.
 """
 
 import datetime as dt
@@ -29,11 +27,9 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 
 class Shipment(dy.Schema):
-    """The dtypes `Orders` does not carry.
+    """The dtypes `Orders` lacks, so the two schemas together have every dtype a statistics table covers, plus both nested dtypes.
 
-    `Orders` exercises `Int32`, `Decimal`, `String`, `Enum`, `Binary`, `Datetime`, `Duration` and `List`. This schema adds `Float64`, `Date`, `Time`, `Categorical`, `Bool` and `Struct`. Between the two, every dtype the four tables claim reaches a table, and both nested dtypes reach none.
-
-    Every column is nullable so one row can be entirely null. A null separates `count` from `null_count`, and an all-null column has no `min`.
+    Every column is nullable, so a row or a whole column can be null.
     """
 
     weight = dy.Float64(nullable=True)
@@ -61,14 +57,10 @@ _DURATIONS: list[dt.timedelta | None] = [
     dt.timedelta(hours=2, minutes=5),
     None,
 ]
-"""The three durations the ticket names, `8d`, `1m 30s` and `2h 5m`, plus the null every column carries."""
 
 
 def _shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
-    """Build four rows: three with values and one entirely null.
-
-    `weight`'s mean and standard deviation run past four decimal places while its minimum is a stored value, so one frame shows both arms of the rounding rule.
-    """
+    """Return three rows with values and one all-null row."""
     return pl.DataFrame(
         {
             "weight": [1.23456789, 2.0, 4.0, None],
@@ -80,7 +72,7 @@ def _shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
             ],
             "opens_at": [dt.time(1, 0), dt.time(3, 5), dt.time(2, 0), None],
             "fulfilled_in": durations,
-            # An empty string beside two of different lengths, so `n_empty` and both length bounds each report something.
+            # The empty string makes `n_empty` non-zero.
             "region": ["US", "CANADA", "", None],
             "is_gift": [True, False, False, None],
             "address": [{"city": "NY"}, {"city": "LA"}, {"city": "SF"}, None],
@@ -102,14 +94,14 @@ def _shipment() -> pl.DataFrame:
 def _metadata(
     tmp_path: Path, asset: dg.AssetsDefinition, key: str = "orders"
 ) -> Mapping[str, dg.MetadataValue[Any]]:
-    """Materialize one asset and read the metadata of the materialization under `key`."""
+    """Return the metadata of `key`'s materialization from one run."""
     return materializations(materialize(tmp_path, asset))[dg.AssetKey([key])].metadata
 
 
 def _table(
     metadata: Mapping[str, dg.MetadataValue[Any]], group: str
 ) -> dict[str, dict[str, Any]]:
-    """Read one group's table back as a row per column, keyed by column name."""
+    """Return one group's table as rows keyed by column name."""
     value = metadata[f"dataframely/valid_statistics/{group}"]
     return {str(row["column"]): row for row in records(value)}
 
@@ -119,7 +111,7 @@ def _groups(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
 
 
 def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    """List every column that reached a table, whichever group it landed in."""
+    """Return every column in any statistics table."""
     return {
         column
         for group in _groups(metadata)
@@ -129,9 +121,7 @@ def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[st
     }
 
 
-# --- which groups are emitted ---
 def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
-    """`skimr`-style statistics: four tables grouped by dtype group, so a distribution read needs no separate tool."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _groups(metadata) == {
@@ -143,8 +133,6 @@ def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
 
 
 def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
-    """An empty table would be a row of nothing in the UI, permanently."""
-
     class Weights(dy.Schema):
         weight = dy.Float64(nullable=False)
 
@@ -158,13 +146,12 @@ def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
 
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
-    """`List` and `Struct` have nothing to say beyond their counts, and a fifth table holding two columns is not worth the row it takes."""
     shipped = _metadata(tmp_path, _shipment, key="shipment")
     ordered = _metadata(tmp_path, _orders)
 
     assert "address" not in _statistics_columns(shipped)
     assert "tags" not in _statistics_columns(ordered)
-    # `Orders` carries no `Bool`, so the fourth table is absent for a second reason.
+    # No boolean table, because `Orders` has no `Bool` column.
     assert _groups(ordered) == {
         "dataframely/valid_statistics/numeric",
         "dataframely/valid_statistics/temporal",
@@ -173,7 +160,6 @@ def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Pat
 
 
 def test_the_groups_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
-    """A table value renders as a full-featured HTML table in the UI; markdown renders as printed text. Judged in the running UI."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert all(
@@ -183,10 +169,6 @@ def test_the_groups_are_emitted_as_tables_rather_than_markdown(tmp_path: Path):
 
 
 def test_a_group_table_runs_one_row_per_column_in_the_frames_own_order(tmp_path: Path):
-    """A reader scans a statistics table against the Columns tab beside it, so the two have to run in one order.
-
-    Every other assertion here indexes a row by its column name, which reads the same whatever order the rows came in.
-    """
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert list(string) == [
@@ -199,9 +181,8 @@ def test_a_group_table_runs_one_row_per_column_in_the_frames_own_order(tmp_path:
     ]
 
 
-# --- the numeric group ---
 def test_the_numeric_group_reports_seven_statistics_per_column(tmp_path: Path):
-    """`min` and `max` are values that exist in the data, so the UI never shows a number nobody stored. `mean`, `std` and `p50` are derived, so four places is enough. Both rules are visible in the row below: `min` keeps all nine digits and `mean` keeps four."""
+    """Derived statistics round to four places, and `min` and `max` keep the stored value."""
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _table(metadata, "numeric")["weight"] == {
@@ -217,7 +198,7 @@ def test_the_numeric_group_reports_seven_statistics_per_column(tmp_path: Path):
 
 
 def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
-    """The numeric group picks up `Decimal`, and the aggregate returns a Python `Decimal` that `TableRecord` rejects, so a money column would otherwise take the whole materialization down."""
+    """A `Decimal` column's statistics are floats, because `TableRecord` rejects a `Decimal`."""
     amount = _table(_metadata(tmp_path, _orders), "numeric")["amount"]
 
     assert amount["min"] == 10.0
@@ -230,9 +211,7 @@ def test_a_decimal_column_emits_without_crashing(tmp_path: Path):
     )
 
 
-# --- the temporal group ---
 def test_a_date_column_renders_as_a_date_rather_than_a_datetime(tmp_path: Path):
-    """What routing through `describe()` costs: it stringifies with per-source-dtype formatting, and a `Date` comes back as a datetime nobody stored."""
     ordered_on = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "ordered_on"
     ]
@@ -256,7 +235,6 @@ def test_a_temporal_column_reports_the_span_between_its_bounds(tmp_path: Path):
 
 
 def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
-    """`8d`, `1m 30s`, `2h 5m`. The default rendering gives ISO-8601, which nobody reads a span off."""
     fulfilled_in = _table(_metadata(tmp_path, _shipment, key="shipment"), "temporal")[
         "fulfilled_in"
     ]
@@ -266,14 +244,7 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
     assert fulfilled_in["span"] == "7d 23h 58m 30s"
 
 
-# A signed duration keeps its sign because `to_string("polars")` renders it that way, which
-# `test_polars_renders_a_duration_in_its_own_friendly_style` pins against Polars itself,
-# `-1m -30s` and `0µs` included. Nothing here chooses the sign.
-
-
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
-    """A column nobody filled in has no bounds and no span. Zero would claim it did."""
-
     @dd.asset(Shipment, name="shipment")
     def unfulfilled() -> pl.DataFrame:
         return _shipment_frame([None, None, None, None])
@@ -292,9 +263,8 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
     }
 
 
-# --- the string group ---
-def test_the_string_group_carries_no_value_bearing_statistic(tmp_path: Path):
-    """The setting does not cover this rule, so the whole row is asserted, not the absence of one cell. A `min` here would print a real address into a shared, exported event log."""
+def test_the_string_group_shows_no_values_from_the_data(tmp_path: Path):
+    """The string table has only counts and lengths, because a `min` would show a real address in the event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert string["email"] == {
@@ -310,7 +280,7 @@ def test_the_string_group_carries_no_value_bearing_statistic(tmp_path: Path):
 
 
 def test_the_string_group_covers_every_dtype_it_claims(tmp_path: Path):
-    """`String`, `Categorical`, `Enum` and `Binary`: four dtypes whose useful statistics are all lengths and counts, so they read as one table rather than four."""
+    """`String`, `Categorical`, `Enum` and `Binary` columns share the string table."""
     ordered = _table(_metadata(tmp_path, _orders), "string")
     shipped = _table(_metadata(tmp_path, _shipment, key="shipment"), "string")
 
@@ -330,9 +300,7 @@ def test_the_string_group_covers_every_dtype_it_claims(tmp_path: Path):
     }
 
 
-# --- the boolean group ---
 def test_the_boolean_group_reports_both_counts_and_the_rate(tmp_path: Path):
-    """The rate is the computed one of the three, so it rounds where the counts do not."""
     is_gift = _table(_metadata(tmp_path, _shipment, key="shipment"), "boolean")[
         "is_gift"
     ]
@@ -347,16 +315,14 @@ def test_the_boolean_group_reports_both_counts_and_the_rate(tmp_path: Path):
     }
 
 
-# --- the setting ---
 def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
     tmp_path: Path,
 ):
-    """Opt-out: the asset declares nothing and the tables are there."""
     assert _groups(_metadata(tmp_path, _orders))
 
 
 def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
-    """Off is off for the whole run, and the row count is not a statistic: it survives."""
+    """With `statistics=False`, the package still writes `dagster/row_count`, because it is not a statistic."""
 
     @dd.asset(Orders, name="orders", quarantine=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
@@ -373,21 +339,17 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
 def test_the_setting_off_in_the_environment_suppresses_the_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """The house-style source: a platform engineer turns the pass off for a whole code location without touching an asset."""
     monkeypatch.setenv(_STATISTICS_ENV, "false")
 
     @dd.asset(Orders, name="orders")
-    def house_style() -> pl.DataFrame:
+    def statistics_off_by_environment() -> pl.DataFrame:
         return clean_orders()
 
-    assert not _groups(_metadata(tmp_path, house_style))
+    assert not _groups(_metadata(tmp_path, statistics_off_by_environment))
 
 
 def test_the_quarantine_carries_no_statistics(tmp_path: Path):
-    """Nothing consumes the quarantine: it is evidence of one run, read by a person opening it (ADR-0004). The run says three things about the held-back rows: their count, which rules they failed together, and a sample.
-
-    Nothing is computed, rather than computed and dropped, so a reader pays only for the pass over the table they asked for.
-    """
+    """Statistics cover only the valid rows, because nothing downstream reads the quarantine (ADR-0004)."""
 
     @dd.asset(Orders, name="orders", quarantine=True)
     def quarantined() -> pl.DataFrame:
@@ -397,14 +359,7 @@ def test_the_quarantine_carries_no_statistics(tmp_path: Path):
 
     assert _groups(metadata)
     assert "dataframely/invalid_count" in metadata
-    # The rule columns are the quarantine's own and they are strings, so a pass over the
-    # held-back rows instead of the written ones would land them in the string group.
+    # Rule columns are strings, so statistics over the invalid rows would add them to the string table.
     assert not [
         column for column in _statistics_columns(metadata) if column.startswith("dy_")
     ]
-
-
-# Nothing routes through `describe()`: it stringifies with per-source-dtype formatting and
-# cannot be cast back, so a `Date` mean renders as a datetime and `min` mixes numbers,
-# strings and dates in one column. That is a grep over the source, not a test, so it is a
-# `no-describe` hook in `prek.toml`.

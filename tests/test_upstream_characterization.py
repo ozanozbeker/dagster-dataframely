@@ -1,6 +1,6 @@
-"""Characterization tests for the upstream APIs this package takes a hard dependency on.
+"""Characterization tests for the upstream behaviour this package depends on.
 
-These test upstream, not this package. Each covers either an API that is private, unexported, or undocumented, or a documented behaviour a decision in this package rests on, and carries a comment naming the decision that took the dependency, so a failure reads as "upstream changed" rather than "something broke".
+Each docstring names the upstream behaviour and the code here that uses it, so a failure shows what upstream changed.
 """
 
 import copy
@@ -36,7 +36,7 @@ from tests.scenario import events
 
 
 class Orders(dy.Schema):
-    """The smallest schema carrying all three rule kinds: a column rule, a schema-level primary key, and a `@dy.rule`."""
+    """A schema with a column rule, a primary key and a `@dy.rule()`."""
 
     order_id = dy.String(primary_key=True)
     amount = dy.Float64(nullable=False, min=0.0)
@@ -48,7 +48,7 @@ class Orders(dy.Schema):
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 
 
-# One clean row, then one row per rule: `amount|min`, `paid_orders_have_amount`, and a `primary_key` duplicate pair.
+# One valid row, then rows that fail `amount|min`, `paid_orders_have_amount` and `primary_key`.
 _MIXED_ORDERS = pl.DataFrame({
     "order_id": ["ORD-1", "ORD-2", "ORD-3", "ORD-3"],
     "amount": [10.0, -1.0, 0.0, 5.0],
@@ -57,20 +57,17 @@ _MIXED_ORDERS = pl.DataFrame({
 
 
 def test_rules_are_keyed_by_pipe_delimited_rule_name():
-    """`Schema._validation_rules(with_cast=False)` still returns rule objects keyed by rule name."""
-    # #17 derives one asset check per rule from this dict and rewrites `|` to `__` for the check name.
-    # `_validation_rules` has no public equivalent: `validate()` flattens per-rule detail into one error string.
+    """`Schema._validation_rules` keys a column rule as `<column>|<rule>`, and `_rules.described_rules` reads every rule from it."""
     rules = Orders._validation_rules(with_cast=False)
 
-    assert "amount|min" in rules  # column rule: `<column>|<rule>`
-    assert "primary_key" in rules  # schema-level rule: a bare name
-    assert "paid_orders_have_amount" in rules  # `@dy.rule`: the method name
+    assert "amount|min" in rules
+    assert "primary_key" in rules
+    assert "paid_orders_have_amount" in rules
     assert all(name.split("|")[0] in Orders.columns() for name in rules if "|" in name)
 
 
 def test_rule_values_are_rule_instances_carrying_a_polars_expr():
-    """The values of `_validation_rules` are still `dataframely._rule.Rule` objects with a `pl.Expr` on `expr`."""
-    # `_naming.py` types against `Rule`, and every check's `dy_rule__expr` metadata is `str(rule.expr)`, so the values matter as much as the keys.
+    """Each `_validation_rules` value is a `Rule` with a `pl.Expr` on `expr`, which `_rules.DescribedRule` stores and `_checks` writes to check metadata."""
     rules = Orders._validation_rules(with_cast=False)
 
     assert all(isinstance(rule, Rule) for rule in rules.values())
@@ -78,8 +75,7 @@ def test_rule_values_are_rule_instances_carrying_a_polars_expr():
 
 
 def test_a_dy_rule_stays_reachable_by_name_and_keeps_its_docstring():
-    """A `@dy.rule()` still leaves a `RuleFactory` on the class whose `validation_fn` carries the decorated function's docstring."""
-    # `_naming.rule_description` reads a check's description off this. The metaclass builds a `Rule` for validation, but the `RuleFactory` survives on the class with the docstring attached, and there is no public route to it.
+    """A `@dy.rule()` leaves a `RuleFactory` on the class, and `_rules._described_rule` reads the rule's description from its `validation_fn`."""
     factory = Orders.paid_orders_have_amount
 
     assert isinstance(factory, RuleFactory)
@@ -87,17 +83,14 @@ def test_a_dy_rule_stays_reachable_by_name_and_keeps_its_docstring():
 
 
 def test_a_column_rule_is_not_reachable_by_name():
-    """A `|`-delimited column rule still misses the `getattr` lookup, so descriptions fall through to the rule-name fallback."""
-    # `_naming.rule_description` looks every rule up by name. Column rules are generated from column arguments and have no function to document; the `|` makes the lookup miss without a branch.
+    """No class attribute has a column rule's name, and `primary_key` names a method, so `_rules._described_rule` checks for a `RuleFactory`."""
     assert getattr(Orders, "amount|min", None) is None
 
-    # `primary_key` is why that function tests `isinstance` rather than truthiness: it collides with `Schema.primary_key`, so the lookup hits a bound method whose docstring belongs to Dataframely, not to any rule.
     assert not isinstance(getattr(Orders, "primary_key", None), RuleFactory)
 
 
 def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it():
-    """Every value-carrying constraint still generates a rule named after its column parameter, and still keeps the value on an attribute of the same name."""
-    # #20 renders the constraint from that value, reading the attribute by the rule's own name rather than through a second lookup table. The mixins holding these attributes are private, so the regularity is covered by a test rather than typed against.
+    """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering._value` reads with `getattr`."""
     declared: dict[str, dy.Column] = {
         "min": dy.Int64(min=1),
         "max": dy.Int64(max=9),
@@ -116,8 +109,7 @@ def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it():
 
 
 def test_length_bounds_are_declared_on_exactly_string_and_list():
-    """`min_length` / `max_length` are still parameters of `dy.String` and `dy.List` and of no other column type, and each still counts something different."""
-    # #20 dispatches the constraint's unit on the column type, because the parameter name cannot distinguish them: `String` measures bytes and `List` measures elements. A third column type growing the parameter would render in the wrong unit, silently.
+    """Only `dy.String` (bytes) and `dy.List` (elements) take length bounds, so `_rendering._length_unit` checks for `dy.List` alone."""
     columns = [
         column
         for name in dy.__all__
@@ -140,8 +132,7 @@ def test_length_bounds_are_declared_on_exactly_string_and_list():
 
 
 def test_a_struct_emits_one_inner_rule_per_constrained_field():
-    """A `dy.Struct` still generates its fields' rules as `inner_<field>_<rule>`, under the struct column's own name."""
-    # #21 collapses a schema's checks by column, and a struct is where that matters most: every field's rules land on one column, so a ten-field struct is ten checks at `rule` granularity and one at `column`. The `<column>|inner_...` spelling puts them there; a flatter naming upstream would scatter them across columns that do not exist.
+    """A `dy.Struct` names its fields' rules `inner_<field>_<rule>` under its own column, so `column` granularity collapses them into that column's check."""
     address = dy.Struct({
         "city": dy.String(nullable=False),
         "postcode": dy.String(nullable=True),
@@ -149,7 +140,6 @@ def test_a_struct_emits_one_inner_rule_per_constrained_field():
     })
 
     assert set(address.validation_rules(pl.col("address"))) == {
-        # The struct's own rule sits beside its fields', so one check per column can hold them all.
         "nullability",
         "inner_city_nullability",
         "inner_number_nullability",
@@ -158,16 +148,13 @@ def test_a_struct_emits_one_inner_rule_per_constrained_field():
 
 
 def test_a_list_and_an_array_still_reach_their_element_column_through_inner():
-    """`dy.List` and `dy.Array` still carry the element column on `inner`, and still name its rules `inner_<rule>` under the outer column's own name."""
-    # #20 renders a nested constraint by recursing on `inner` with the prefix stripped, which is how a bounded `List` reads "elements >= 1" rather than "inner_min". Rename either and every nested constraint degrades to its raw rule name, silently, because the renderer falls back to the name for any rule it does not recognise.
-    # `Struct` is the type above, and the reason that branch names these two rather than every nested column: a struct's rules read `inner_<field>_<rule>`, where a field named `a_min` cannot be told from field `a` bounded by `min`.
+    """`dy.List` and `dy.Array` keep the element column on `inner` and name its rules `inner_<rule>`, so `_rendering._column_constraint` renders `inner_min` as `elements >= 1`."""
     tags = dy.List(dy.Int32(nullable=False, min=1), min_length=1)
     point = dy.Array(dy.Int32(nullable=False, min=1), shape=3)
 
     assert isinstance(tags.inner, dy.Int32)
     assert isinstance(point.inner, dy.Int32)
     assert set(tags.validation_rules(pl.col("tags"))) == {
-        # The outer column's own rules sit beside its element's, exactly as a struct's do.
         "nullability",
         "min_length",
         "inner_nullability",
@@ -181,8 +168,7 @@ def test_a_list_and_an_array_still_reach_their_element_column_through_inner():
 
 
 def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_allowed():
-    """`allow_inf` and `allow_nan` still default to `False`, and still generate their rules only at that default."""
-    # #20 draws the line for defaulted constraints here: an `inf` constraint on every float column would state something no author asked for, and could never state anything else, because allowing the value removes the rule instead of inverting it.
+    """A float column has `inf` and `nan` rules until `allow_inf=True` and `allow_nan=True` remove them, so `_rendering.column_constraints` leaves both out of the Columns tab."""
     assert not dy.Float64().allow_inf
     assert not dy.Float64().allow_nan
     assert {"inf", "nan"} <= set(dy.Float64().validation_rules(pl.col("a")))
@@ -192,9 +178,7 @@ def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_
 
 
 def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit():
-    """`dy.Column.validate_dtype` still answers by comparing dtypes, and still refuses a `Datetime` whose time unit or time zone differs from the column's."""
-    # #17 makes the column-schema check the one blocking check, and this is its sole arbiter: `_column_schema_problems` asks it once per column, and one `False` stops the run before anything is filtered or written.
-    # Absent from `dy.__all__` and from Dataframely's API reference. The time unit is the part worth pinning: loosened upstream, a `ns` column reaches a table declared `us`; tightened, every `Datetime` asset becomes a `ColumnSchemaError`.
+    """The undocumented `dy.Column.validate_dtype` rejects another `Datetime` time unit or time zone, and `_checks._column_schema_problems` calls it."""
     assert dy.Int64().validate_dtype(pl.Int64)
     assert not dy.Int64().validate_dtype(pl.Int32)
 
@@ -203,15 +187,12 @@ def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit()
     assert not dy.Datetime().validate_dtype(pl.Datetime("ns"))
     assert not dy.Datetime().validate_dtype(pl.Datetime("us", "UTC"))
 
-    # The one column that answers `True` whatever it is handed, so a schema declaring one never reaches the check's failing branch.
     assert dy.Any().validate_dtype(pl.Int64)
     assert dy.Any().validate_dtype(pl.String)
 
 
 def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
-    """`Schema.filter` still narrows a frame to the schema's columns, in the schema's order, whatever `cast` is set to."""
-    # #88 rests the "never casts" section on this: a frame carrying extra columns, or the schema's own in another order, needs no `Schema.cast` and no `select` on the way out, because `filter` already projects. Upstream does it with `lf.select(target.column_names())`, on the cast and the no-cast path alike.
-    # Documented for neither `filter` nor `validate`, which say what happens to rows and nothing about columns. If it stopped holding, the section would be wrong silently and every asset returning a superset would fail on the release that changed it.
+    """`Schema.filter` keeps only the schema's columns, in the schema's order, as `user_guide/the-failure-policy.qmd` states and Dataframely does not document."""
     superset = _MIXED_ORDERS.select(
         "status", "amount", pl.lit("note").alias("shipping"), "order_id"
     )
@@ -225,9 +206,7 @@ def test_filter_projects_a_superset_to_the_schemas_columns_in_order():
 
 
 def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine():
-    """`Schema.filter` on a `LazyFrame` still hands back a result carrying `collect_all`, which still forwards `engine=` to Polars and still answers the valid frame and a `FailureInfo`."""
-    # #118 runs the valid rows and the invalid rows through this one call. It is where a `LazyFrame` executes, and where the engine is named rather than left to `auto`. The test above unpacks the eager form as a plain tuple and never reaches it, because `filter` on a `DataFrame` hands back a result that has no `collect_all` at all.
-    # Dataframely documents the forward as "keyword arguments passed directly to `polars.collect_all`", which is the whole of what the engine choice rests on. Lose it and the only test in this suite to fail is `test_the_filter_runs_on_the_streaming_engine`, which monkeypatches `pl.collect_all`, so the failure would read as this package's bug.
+    """On a `LazyFrame`, `Schema.filter` returns a result whose `collect_all` passes `engine=` to Polars, which `_checks.filtered` calls with `engine="streaming"`."""
     lazy_result = Orders.filter(_MIXED_ORDERS.lazy(), cast=False)
 
     assert not hasattr(Orders.filter(_MIXED_ORDERS, cast=False), "collect_all")
@@ -239,16 +218,13 @@ def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine():
     assert valid.height == 1
     assert len(failure) == 3
 
-    # Polars raises this, not Dataframely, so the refusal is the forward itself asserted.
+    # Polars raises this error, so `collect_all` passes `engine=` through to Polars.
     with pytest.raises(ValueError, match="Invalid engine argument"):
         lazy_result.collect_all(engine="nonsense")
 
 
 def test_details_returns_invalid_rows_plus_one_column_per_rule():
-    """`FailureInfo.details()` still returns the invalid rows plus one column for each rule."""
-    # #19 builds the quarantine frame straight off `details()`: original columns untouched, rule columns renamed into the reserved namespace.
-    # #24 filters the same frame on the same vocabulary, one rule at a time, to sample the rows that failed each rule.
-    # Guide-documented and upstream-tested, but absent from Dataframely's API reference.
+    """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.quarantine_frame` and `_checks._failed_rows` both read."""
     _, failure = Orders.filter(_MIXED_ORDERS)
     details = failure.details()
 
@@ -257,8 +233,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
         Orders._validation_rules(with_cast=False)
     )
 
-    # #19 casts the rule columns to String because a raw Enum panics the Delta writer.
-    # This dtype makes that cast mandatory, so it is covered alongside the vocabulary it carries.
+    # An `Enum`, which `quarantine_frame` casts to `String` because the Delta writer panics on it.
     assert details.schema["amount|min"] == pl.Enum(["valid", "invalid", "unknown"])
     assert (
         details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item() == "invalid"
@@ -266,9 +241,7 @@ def test_details_returns_invalid_rows_plus_one_column_per_rule():
 
 
 def test_the_failure_example_limit_does_not_truncate_the_filter_path():
-    """`dy.Config`'s `max_failure_examples` still governs only the message `validate` builds, and nothing `filter` returns."""
-    # #24 bounds the sample of failing rows in check metadata with the package's own setting. The bound is worth having only if Dataframely applies none, and package-owned only if a project that tightened this one still gets the sample it asked this package for.
-    # Documented as "examples to include in failure messages", which says where it applies but not where it does not.
+    """`dy.Config(max_failure_examples=)` limits only the message `validate` builds, so only `max_failure_samples` limits the rows in check metadata."""
     with dy.Config(max_failure_examples=1):
         _, failure = Orders.filter(_MIXED_ORDERS)
 
@@ -278,9 +251,7 @@ def test_the_failure_example_limit_does_not_truncate_the_filter_path():
 
 
 def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
-    """`FailureInfo.cooccurrence_counts()` still returns counts keyed by the set of rules a row broke together."""
-    # #19 emits this as the quarantine's `cooccurrence` metadata, so one broken upstream field tripping three rules shows as one row, not three unrelated counts.
-    # Documented upstream, but the key type matters most: a `frozenset` is unordered, so the package sorts it before rendering, and a tuple here would silently change that rendering.
+    """`FailureInfo.cooccurrence_counts()` keys each count by a `frozenset` of rule names, which `_runtime._cooccurrence` sorts before rendering."""
     _, failure = Orders.filter(_MIXED_ORDERS)
     cooccurrence = failure.cooccurrence_counts()
 
@@ -290,9 +261,7 @@ def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names():
 
 
 def test_polars_renders_a_duration_in_its_own_friendly_style():
-    """`dt.to_string("polars")` still renders a duration the way a Polars frame repr does: `8d`, `1m 30s`, `2h 5m`, a sign on every part of a negative one, and a null left null."""
-    # #23 renders every duration cell of the temporal statistics table through it. The ticket calls Polars' own style unreachable, which was true before Polars 1.14 added `format="polars"`. The package's floor is past that, so the rendering is upstream's rather than fifteen lines of this package's.
-    # Documented as "the same form seen in the frame repr". A repr can be restyled without anybody upstream calling it a break, so the four decisions below, which the tables state, are worth pinning.
+    """`dt.to_string("polars")` formats a duration as the frame repr does, and `_statistics` formats every duration in the temporal statistics table with it."""
     spans = pl.Series(
         "spans",
         [
@@ -315,17 +284,15 @@ def test_polars_renders_a_duration_in_its_own_friendly_style():
         None,
     ]
 
-    # The two routes the ticket ruled out, covered so a change to either is visible: the default is ISO-8601, and the obvious cast raises.
+    # Why `_statistics` names the format: the default is ISO-8601, and a cast raises.
     assert spans.dt.to_string().to_list()[0] == "P8D"
     with pytest.raises(pl.exceptions.InvalidOperationError):
         spans.cast(pl.String)
 
 
 def test_a_partitioned_asset_check_spec_is_still_in_preview():
-    """`AssetCheckSpec(partitions_def=)` still warns `PreviewWarning`, and still warns nothing else."""
-    # #31 waits on this warning disappearing. It is the ticket's only trigger: `tests/test_partitions.py` pins the symptoms of not using the parameter, and those hold whether it is preview or GA, so nothing else in the suite notices upstream promoting it.
-    # The category is asserted exactly, not through `pytest.warns`, because three outcomes have to be told apart and `pytest.warns` reports two of them as "DID NOT WARN". An empty list is GA and the parameter can be adopted. A `BetaWarning` is the stage between and cannot be adopted, because beta still permits "behavior changes in patch releases", the risk the deferral rests on.
-    # `dagster_shared` is Dagster's vendored utilities, not public API, so the category has no exported spelling.
+    """`AssetCheckSpec(partitions_def=)` warns `PreviewWarning` and nothing else, and #31 waits until Dagster removes that warning."""
+    # The whole list, not `pytest.warns`, so a failure distinguishes `[]` (GA) from `[BetaWarning]`.
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
         dg.AssetCheckSpec(
@@ -338,19 +305,16 @@ def test_a_partitioned_asset_check_spec_is_still_in_preview():
 
 
 def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
-    """A spec whose `partitions_def` differs from its asset's is still accepted, through a resolved asset graph and through a run."""
-    # Upstream states the constraint in the parameter's own docstring: "Must be either None or the same as the PartitionsDefinition of the asset specified by `asset`." Nothing checks it, at construction, at attach, at definition load, or at run.
-    # #31 would forward a caller's `partitions_def` through `check_specs` unvalidated, because that function takes an asset key and a key carries no partitioning. That is safe only while this holds: a release that enforces the constraint would raise on hand-wired call sites written against it.
+    """Dagster does not check that a spec's `partitions_def` matches its asset's, so #31 can pass one through `check_specs` without checking it either."""
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     elsewhere = dg.StaticPartitionsDefinition(["x", "y"])
     key = dg.AssetKey(["orders"])
 
     with warnings.catch_warnings():
-        # The warning is the subject of the test above, not of this one, and letting it through would put a line in every run's warnings summary.
         warnings.simplefilter("ignore", PreviewWarning)
         spec = dg.AssetCheckSpec("row_count", asset=key, partitions_def=elsewhere)
 
-    # No return annotation, unlike the assets above: one carrying `check_specs` infers its outputs from the annotation, so `-> None` fails with `Expected Tuple annotation for multiple outputs`.
+    # Unannotated: with `check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
     @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
     def orders():
         return dg.MaterializeResult(
@@ -366,13 +330,11 @@ def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
         [orders], partition_key="mon"
     ).get_asset_check_evaluations()[0]
 
-    # The stamp is the step's partition key, never the spec's own definition, so a mismatch is inert in storage: `mon` is not a member of `elsewhere`.
     assert evaluation.partition == "mon"
 
 
 def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run():
-    """A blocking check carrying a `partitions_def` still stamps its partition, and a failing one still ends the run."""
-    # #31 passes the partitions_def to every spec `check_specs` builds, the column-schema check included. That one is worth proving: it is the only spec this package marks `blocking=True`, and a preview parameter that disarmed the column-schema check would let a mismatched frame reach the table.
+    """A failing blocking check with a `partitions_def` still fails the run, which #31 needs because it gives one to the column-schema check."""
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     key = dg.AssetKey(["orders"])
 
@@ -398,10 +360,8 @@ def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run()
     assert evaluation.partition == "mon"
 
 
-def test_dagster_still_refuses_a_check_name_outside_the_regex_this_package_restates():
-    """Dagster still validates a name against `^[A-Za-z0-9_]+$`, and still quotes the regex in the refusal."""
-    # `_rules.DAGSTER_NAME` restates it, because upstream spells it inline in the message it raises and exports no name for it. `validate_namespace` refuses an unnameable column against that copy, so `UnnameableColumnError` names the column and the `alias=` behind it (ADR-0008).
-    # Asserted against a real refusal rather than against a literal, so the copy cannot drift unseen. A wider set upstream would leave the guard refusing a column Dagster would have taken, and a narrower one would leave Dagster refusing a column the guard passed.
+def test_dagster_still_rejects_a_check_name_outside_the_regex_this_package_restates():
+    """Dagster quotes `^[A-Za-z0-9_]+$` when it rejects a check name, and `_rules.DAGSTER_NAME` copies that regex for `validate_namespace`."""
     key = dg.AssetKey(["orders"])
 
     with pytest.raises(dg.DagsterInvalidDefinitionError) as raised:
@@ -413,14 +373,12 @@ def test_dagster_still_refuses_a_check_name_outside_the_regex_this_package_resta
             yield dg.MaterializeResult(asset_key=key)
 
     assert f"regex ^{DAGSTER_NAME.pattern}$" in str(raised.value)
-    # The op output is `<asset>_<check>`, so the string Dagster quotes is neither name the author wrote, which is why the package refuses first.
+    # Dagster names the op output, not the column, so `validate_namespace` raises first.
     assert '"orders_unit-price"' in str(raised.value)
 
 
 def test_the_deps_union_is_still_the_one_the_asset_decorator_annotates():
-    """`CoercibleToAssetDep` still lives in `dagster._core.definitions.assets.definition.asset_dep`, and is still exactly the union `dg.asset` annotates `deps` with."""
-    # The decorator forwards `deps` to `dg.asset` under this annotation. `_asset.py` carries no `from __future__ import annotations`, so the import runs at import time and a module move breaks `import dagster_dataframely` outright rather than at the first decorated asset. `dagster` exports no name for the union.
-    # Loud rather than silent, so the import alone is most of the cover. The equality is the half that could go quiet: `dg.asset` could take its `deps` annotation elsewhere, and this package would go on advertising a union Dagster no longer honours.
+    """`dg.asset` annotates `deps` with the `CoercibleToAssetDep` union, which `_asset.py` imports to annotate `dd.asset`'s own `deps`."""
     assert (
         inspect.signature(dg.asset).parameters["deps"].annotation
         == Iterable[CoercibleToAssetDep] | None
@@ -428,10 +386,8 @@ def test_the_deps_union_is_still_the_one_the_asset_decorator_annotates():
 
 
 def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
-    """Calling an asset directly still refuses a check result bundled onto a `MaterializeResult`, and still accepts the same result yielded standalone."""
+    """A direct invocation raises on a check result inside a `MaterializeResult` but accepts one yielded separately, as `validation_results` yields them (ADR-0002)."""
 
-    # #72 unbundles every check result for this reason (ADR-0002). A run flattens the two forms into one event stream, so nothing else in the suite can tell them apart, and the bundled form made a decorated asset untestable by calling it.
-    # Undocumented: direct invocation is Dagster's documented unit-testing path, but nothing says a bundled check leaves its output unsatisfied. The error names an output name no user wrote.
     def spec(asset: dg.AssetKey) -> dg.AssetCheckSpec:
         return dg.AssetCheckSpec("dy_schema__columns", asset=asset)
 
@@ -467,10 +423,8 @@ def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result():
 def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
     tmp_path: Path,
 ):
-    """`@dg.asset` still infers the output's `dagster_type` from the return annotation and still fails the run when the returned object does not match it."""
+    """`@dg.asset` fails the run on a return that does not match its annotation, the contrast `user_guide/declaring-an-asset.qmd` draws with `dd.asset`."""
 
-    # #77 documents that `dd.asset` does the opposite, a claim worth making only while this side of the contrast holds. The decorator cannot follow: `dagster_type` describes what the asset stores, and filtering collects the valid rows and the invalid rows, so the asset holds a `DataFrame` however the decorated function arrived at it.
-    # Undocumented as a contrast, though each side is documented alone. A reader carries this expectation over from `@dg.asset`, and the decorator breaks it.
     @dg.asset(name="mismatch")
     def mismatch() -> pl.DataFrame:
         return pl.LazyFrame({"order_id": ["ORD-1"]})  # pyrefly: ignore[bad-return]
@@ -485,16 +439,11 @@ def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
 
 
 def test_a_check_input_is_still_type_checked_against_its_annotation():
-    """A `@dg.multi_asset_check` input is still checked against its parameter annotation, and the body still never runs when the loaded object disagrees."""
-
-    # #124 declines a `frame` type guard on `check_results` because Dagster catches a non-frame arriving from an IO manager load, which is the arrangement that function exists for. `docs/out-of-scope/wiring-argument-type-guards.md` has the decision.
-    # Documented rather than private, and pinned because the decision rests on it alone. Lose this and a wrong frame goes back to failing two frames inside the package, on `collect_schema`.
+    """Dagster type-checks a `@dg.multi_asset_check` input, so `check_results` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""
     key = dg.AssetKey(["orders"])
     ran = False
 
     class Lying(dg.IOManager):
-        """Writes nothing and loads a dict, standing in for any manager whose load type drifts from the annotation."""
-
         @override
         def handle_output(self, context: dg.OutputContext, obj: object) -> None: ...
 
@@ -522,16 +471,12 @@ def test_a_check_input_is_still_type_checked_against_its_annotation():
 
 
 def test_materialize_result_value_still_defaults_to_a_sentinel():
-    """`dg.MaterializeResult().value` is a sentinel rather than `None`."""
-    # The sentinel lets one `isinstance` check in `frame_and_result` cover a result carrying nothing and one carrying a non-frame. A default of `None` would make the two indistinguishable from a decorated function that returned `value=None` on purpose.
+    """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_returns.frame_and_result` covers a missing and a non-frame `value`."""
     assert dg.MaterializeResult().value is not None
 
 
 def test_replace_still_skips_the_constructors_normalization_and_keeps_every_other_field():
-    """`dg.AssetCheckResult` and `dg.MaterializeResult` are still tuples with a working `_replace`, which still bypasses the constructor and still leaves every field it was not handed alone."""
-    # `_addressed` writes the quarantine's address onto every check result, and `with_returned_fields` writes three of a returned result's fields onto the materialization. Both rebuild through `_replace`, and both rest on the untouched fields surviving, including a field upstream adds later.
-    # The bypass is why `_addressed` wraps its own value: the check result's constructor normalizes metadata into `MetadataValue`s and `_replace` does not, so an unwrapped string would reach Dagster raw.
-    # The two reach `_replace` by different routes, and neither route is public. The check result is a real `NamedTuple`; the materialization is a `@record` that borrows the method from `dagster_shared`'s `LegacyNamedTupleMixin`.
+    """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._addressed` and `_returns.with_returned_fields` call it."""
     check = dg.AssetCheckResult(
         check_name="dy_schema__columns",
         asset_key=dg.AssetKey(["orders"]),
@@ -547,7 +492,7 @@ def test_replace_still_skips_the_constructors_normalization_and_keeps_every_othe
     assert isinstance(result, tuple)
     assert check.metadata == {"rows": dg.MetadataValue.int(3)}
 
-    # The raw string is the assertion: `_replace` takes what the constructor would have wrapped. `_addressed` wraps its own value for exactly this reason, so the annotation being wrong here is the behaviour under test.
+    # A raw string on purpose: the assertion below shows `_replace` does not wrap it.
     readdressed = check._replace(
         metadata={"dataframely/quarantine_address": "here"}  # pyrefly: ignore[bad-assignment]
     )
@@ -563,10 +508,7 @@ def test_replace_still_skips_the_constructors_normalization_and_keeps_every_othe
 
 
 def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
-    """An IO manager's metadata lands on the materialization after the step's, so a key both write reads as the manager's.
-
-    `dagster-polars` counts the rows it writes and files them under `dagster/row_count`, the same key this package yields. The two agree, so nothing is wrong, but a test asserting that count through a run would pass with the package's emission deleted. The row-count assertions therefore read the step's own yield.
-    """
+    """`PolarsParquetIOManager` writes its own `dagster/row_count` over the step's, so tests assert this package's row count on what the step yields."""
 
     @dg.asset
     def counted() -> dg.MaterializeResult[pl.DataFrame]:
@@ -588,12 +530,7 @@ def test_dagster_polars_writes_its_own_row_count_over_the_steps(tmp_path: Path):
 
 
 def test_the_three_path_escapes_dagster_applies_are_still_importable():
-    """`quarantine_path` calls all three rather than restating them, so a quarantine and the table it came from are escaped by one implementation (#104).
-
-    None is exported from `dagster` and none is marked `@public`, so they are pinned here. Each protects against a write outside the root: `pathlib` drops the left side of a join when the right side is absolute, and the OS walks a `..` segment upward at write time.
-
-    `escape_dotdot_segments` completes the pair `FilesystemIOManager.make_safe_partition_path` applies. The `UPathIOManager` base class applies only the first and documents overriding for the second, as this package does.
-    """
+    """`UPathIOManager` escapes a leading `/` but not `..`, and `_quarantine.quarantine_path` calls these three functions to escape both."""
     assert escape_leading_slash("/etc") == "%2Fetc"
     assert escape_leading_slash("etc") == "etc"
     assert escape_dotdot_segments("../etc") == "%2E%2E/etc"
@@ -605,10 +542,7 @@ def test_the_three_path_escapes_dagster_applies_are_still_importable():
 def test_upath_io_manager_still_formats_a_multi_partition_key_by_dimension_name(
     tmp_path: Path,
 ):
-    """The one path rule `quarantine_path` restates instead of importing, because upstream keeps it in a closure inside `_get_paths_for_partitions` (#104).
-
-    Asserted as a derivation, not a literal: the quarantine's tail under its own leaf must equal the tail the manager writes under the asset's leaf, so upstream reordering the dimensions fails here rather than hiding a quarantine.
-    """
+    """`UPathIOManager` formats a multi-partition key in a closure, so `_quarantine._formatted_partition_key` copies it and this test compares the two paths."""
     written: dict[str, UPath] = {}
 
     class Probe(dg.UPathIOManager):
@@ -650,16 +584,11 @@ def test_upath_io_manager_still_formats_a_multi_partition_key_by_dimension_name(
     )
 
 
-# --- what the delegating writer borrows (ADR-0006) ---
+# --- The private Dagster APIs ADR-0006 lists ---
 def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use(
     tmp_path: Path,
 ):
-    """The four private APIs the quarantine's placement rests on, asserted through one asset.
-
-    `get_step_execution_context` reaches the step, `StepOutputHandle` names its output, `get_output_context` hands back the context that output was going to be written under, and `get_io_manager` hands back the manager that was going to write it. Nothing else reaches a `DbIOManager`'s `resource_config`, which it reads its database and connection settings off at write time. Delegation exists to avoid reconstructing that by hand.
-
-    ADR-0006 named `get_io_manager` only when amended. It replaces reading `context.resources.io_manager`, which needed the asset to declare `required_resource_keys`. Dagster validates that at bind time, so every direct invocation would have to supply a manager it never uses.
-    """
+    """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_quarantine.delegating_writer` uses."""
     borrowed: dict[str, Any] = {}
 
     @dg.asset(name="orders", io_manager_key="warehouse", metadata={"owner": "finance"})
@@ -688,11 +617,8 @@ def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_
     assert borrowed["manager"] == "PolarsParquetIOManager"
 
 
-def test_a_directly_invoked_asset_still_refuses_to_hand_over_a_step():
-    """How the decorator tells a run from a call, which decides whether the quarantine is delegated or written to a file.
-
-    A call has no step, so `DagsterInvalidPropertyError` is the whole signal. It is asked for, not tested for, because no predicate answers it.
-    """
+def test_a_directly_invoked_asset_still_has_no_step():
+    """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_quarantine.quarantine_writer` catches to use `file_writer`."""
 
     @dg.asset(name="orders")
     def orders(context: dg.AssetExecutionContext) -> str:
@@ -704,7 +630,7 @@ def test_a_directly_invoked_asset_still_refuses_to_hand_over_a_step():
 
 
 def test_keys_by_output_name_still_omits_the_check_outputs():
-    """A check spec is an op output too, so the step has one more output per declared check and the asset's own must be picked out by key. `keys_by_output_name` does that, and carries no `@public`."""
+    """`keys_by_output_name` omits check outputs, so `_quarantine.delegating_writer` unpacks the asset's one output name from it."""
     key = dg.AssetKey(["orders"])
 
     @dg.asset(name="orders", check_specs=[dg.AssetCheckSpec(name="probe", asset=key)])
@@ -717,7 +643,7 @@ def test_keys_by_output_name_still_omits_the_check_outputs():
 
 
 def test_dagster_still_reads_the_context_parameter_off_the_first_name_alone():
-    """The decorator prepends a `context` parameter to a quarantined asset, and has to agree with Dagster about whether the decorated function already declared one. `is_context_provided` is upstream's own rule, imported rather than restated so the two cannot disagree."""
+    """`is_context_provided` reads only the first parameter's name, and `dd.asset` calls it to check whether the decorated function declares `context`."""
 
     def declared(context: dg.AssetExecutionContext, raw: str) -> str: ...
 
@@ -729,10 +655,7 @@ def test_dagster_still_reads_the_context_parameter_off_the_first_name_alone():
 
 
 def test_an_output_context_still_clones_and_re_points_by_attribute():
-    """The fifth private API the delegating writer rests on: `OutputContext` keeps its asset key on `_asset_key` and offers no setter, so re-pointing a clone is an attribute write.
-
-    A shallow copy carries `resource_config`, `definition_metadata`, the partition and everything else no code here understands. Two properties make that safe, and both are asserted: the copy is a separate object, and `add_output_metadata` rebinds the mapping rather than mutating the one the original shares, so a manager writing onto the clone cannot reach the step's own output.
-    """
+    """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and has its own output metadata, which `_quarantine.delegating_writer` depends on."""
     original = dg.build_output_context(
         asset_key=dg.AssetKey(["analytics", "orders"]),
         definition_metadata={"partition_expr": "ordered_at"},
@@ -750,12 +673,9 @@ def test_an_output_context_still_clones_and_re_points_by_attribute():
     assert original.get_logged_metadata() == {}
 
 
-# --- what the key guard reads (ADR-0007) ---
+# --- What validate_quarantine_key reads (ADR-0007) ---
 def test_an_in_process_run_still_has_no_repository_definition():
-    """`repository_def` carries every key in a code location, and an in-process run has no code location behind it.
-
-    It raises rather than answering `None`, and the exception is `dagster_shared`'s `CheckError`, which `dagster._check` re-exports. The guard catches it to fall back to the job, so upstream turning this into a `None` would route every deployed run through the narrower graph without failing anything.
-    """
+    """`repository_def` raises `CheckError` in an in-process run, which `_quarantine._executable_keys` catches to read the job's asset graph instead."""
 
     @dg.asset(name="orders")
     def orders(context: dg.AssetExecutionContext) -> str:
@@ -766,8 +686,8 @@ def test_an_in_process_run_still_has_no_repository_definition():
     assert dg.materialize([orders]).success
 
 
-def test_a_directly_invoked_asset_still_refuses_the_repository_too():
-    """A call has no run, so there is no graph to check a quarantine key against. The signal is the same `DagsterInvalidPropertyError` the step refuses with, which is what lets the guard pass a call straight through."""
+def test_a_directly_invoked_asset_still_has_no_repository_definition():
+    """`repository_def` raises `DagsterInvalidPropertyError` in a direct invocation, which `_quarantine._executable_keys` catches to return no keys."""
 
     @dg.asset(name="orders")
     def orders(context: dg.AssetExecutionContext) -> str:
@@ -779,10 +699,7 @@ def test_a_directly_invoked_asset_still_refuses_the_repository_too():
 
 
 def test_the_job_graph_still_narrows_to_what_the_run_selected():
-    """The fallback the guard uses in process, and the reason it is a fallback rather than the source.
-
-    A job holds what it was handed, so an in-process run sees a sibling asset. Subset it and the sibling is gone, which is what materializing one asset from the UI does. Only `repository_def` answers the same either way.
-    """
+    """The job's asset graph holds only the selected assets, so `_quarantine._executable_keys` reads it only when `repository_def` raises."""
     seen: dict[str, set[str]] = {}
 
     @dg.asset(name="orders")
@@ -805,7 +722,7 @@ def test_the_job_graph_still_narrows_to_what_the_run_selected():
 
 
 def test_a_bare_spec_is_still_unexecutable_beside_its_asset():
-    """What exempts a quarantine spec from the key guard with no marker of ours. A spec Dagster cannot materialize cannot write over a quarantine, and `quarantine_spec` returns exactly that."""
+    """Dagster marks a bare `dg.AssetSpec` unexecutable, so the spec from `quarantine_spec` is not among the keys `validate_quarantine_key` checks."""
     key = dg.AssetKey(["orders"])
 
     @dg.asset(name="orders")

@@ -1,8 +1,6 @@
-"""Every public function that takes a schema refuses one this package cannot name.
+"""Every public function that takes a schema rejects one whose column or rule names this package cannot use.
 
-Every argument but the schema is a stand-in nothing reads. The guard runs first, so `ReservedColumnError` proves the ordering and a `TypeError` proves the guard sits too late.
-
-Listed, not reflected. `test_public_surface.py` already makes every new public name a decision taken in a test file, so a ninth schema-taking function costs one line here beside the eight it joins.
+The other arguments are placeholders, so a `TypeError` means the check runs too late (ADR-0008).
 """
 
 from collections.abc import Callable
@@ -15,15 +13,13 @@ import pytest
 import dagster_dataframely as dd
 from dagster_dataframely.errors import (
     CheckNameCollisionError,
+    InvalidColumnNameError,
     ReservedColumnError,
-    UnnameableColumnError,
 )
 from tests.scenario import Orders, clean_orders
 
 
 class Reserved(dy.Schema):
-    """A schema claiming a column inside `dy_`."""
-
     dy_rule = dy.String(nullable=False)
     amount = dy.Int64(min=1)
 
@@ -38,25 +34,19 @@ class Colliding(dy.Schema):
         return cls.order_id.col.is_not_null()
 
 
-class Unnameable(dy.Schema):
-    """A schema whose column carries an alias Dagster cannot spell."""
-
+class InvalidNames(dy.Schema):
     total = dy.Int64(min=1, alias="Order Total")
 
 
 class Delimited(dy.Schema):
-    """A schema whose column carries Dataframely's own rule delimiter."""
-
     total = dy.Int64(min=1, alias="a|b")
 
 
 _KEY = dg.AssetKey(["orders"])
 _, _FAILURE = Orders.filter(clean_orders())
-"""A failure nothing reads. `quarantine_frame` takes one, and its guard raises before it looks."""
 
-# Every public function that takes a schema, called with whatever else it needs to reach its guard. The two generators are drained, because theirs raises on first iteration rather than at call time. `dd.asset` is the factory itself, never applied: `maker = dd.asset(Reserved)` has to raise rather than hand back a decorator that will (ADR-0008).
 _TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
-    "asset": dd.asset,
+    "asset": dd.asset,  # raises before it returns a decorator (ADR-0008)
     "quarantine_spec": lambda schema: dd.quarantine_spec(schema, _KEY),
     "wiring.check_results": lambda schema: list(
         dd.wiring.check_results(
@@ -76,7 +66,7 @@ _TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
 
 
 @pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
-def test_a_public_function_refuses_a_reserved_column(
+def test_a_public_function_rejects_a_reserved_column(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(ReservedColumnError) as raised:
@@ -86,12 +76,11 @@ def test_a_public_function_refuses_a_reserved_column(
 
     assert "Column 'dy_rule' of Reserved uses" in message
     assert "Rename it." in message
-    # The other column is fine, so the message never mentions it.
     assert "amount" not in message
 
 
 @pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
-def test_a_public_function_refuses_two_rules_that_rewrite_to_one_check_name(
+def test_a_public_function_rejects_two_rules_that_rewrite_to_one_check_name(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(CheckNameCollisionError) as raised:
@@ -99,34 +88,29 @@ def test_a_public_function_refuses_two_rules_that_rewrite_to_one_check_name(
 
     message = str(raised.value)
 
-    # Both rules by their Dataframely names, and the one check name they collide on.
     assert "order_id__nullability" in message
     assert "order_id|nullability" in message
     assert "dy_rule__order_id__nullability" in message
 
 
 @pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
-def test_a_public_function_refuses_a_column_dagster_cannot_name(
+def test_a_public_function_rejects_a_column_dagster_cannot_name(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
-    with pytest.raises(UnnameableColumnError) as raised:
-        taker(Unnameable)
+    with pytest.raises(InvalidColumnNameError) as raised:
+        taker(InvalidNames)
 
     message = str(raised.value)
 
-    assert "Column 'Order Total' of Unnameable is not spelled" in message
+    assert "Column 'Order Total' of InvalidNames contains characters outside" in message
     assert "A-Za-z0-9_" in message
-    # The alias is what named it, so the fix is named too.
     assert "`alias=`" in message
 
 
 @pytest.mark.parametrize("taker", list(_TAKERS.values()), ids=list(_TAKERS))
-def test_a_public_function_refuses_a_column_carrying_the_rule_delimiter(
+def test_a_public_function_rejects_a_column_name_with_the_rule_delimiter(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
-    """`|` is Dataframely's own delimiter, so `described_rules` reads `a|b|min` as column `a` and rule `b|min`.
-
-    Before the guard the first renderer to index by that column raised `KeyError: 'a'`, naming a column the schema does not have. Dagster never saw it, so this is the one unnameable column its own refusal would not have caught.
-    """
-    with pytest.raises(UnnameableColumnError):
+    """`|` is Dataframely's rule delimiter, so `described_rules` would read `a|b|min` as column `a` and rule `b|min`."""
+    with pytest.raises(InvalidColumnNameError):
         taker(Delimited)

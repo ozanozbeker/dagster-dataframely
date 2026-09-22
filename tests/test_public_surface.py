@@ -1,30 +1,22 @@
-"""What `import dagster_dataframely` puts in reach, what it keeps private, and the marker that makes the annotations visible downstream.
+"""The public names of `dagster_dataframely`, `dd.errors` and `dd.wiring`.
 
-The surface is spelled out here, not derived from `__all__`. A test that reads its expectation off the thing it tests agrees with every change. Adding a name to the package costs a line in this file, where the question "should a user see this?" gets asked.
-
-`errors` and `wiring` are the only modules besides the root with public names. Nothing lands in any of the three namespaces that it did not choose to export.
+Each set lists its names rather than reading them from `__all__`, so every new public name needs a line in this file.
 """
 
 import pkgutil
 
 import dagster_dataframely as dd
 
-# The root: the happy path, and one name for each namespace that is not it.
 _PUBLIC = {
-    # The decorator, and the spec that puts its quarantine in the graph.
     "asset",
     "quarantine_spec",
-    # The two namespaces, rather than their twenty names.
     "errors",
     "wiring",
-    # The types, so a caller can annotate what it passes the decorator. Not behind a
-    # namespace of their own: a heavily annotated code base reaches for these
-    # constantly, and two aliases do not earn the indirection.
+    # At the root rather than in a namespace, because annotated code uses them often.
     "Granularity",
     "SchemaRules",
 }
 
-# What `dd.wiring` puts in reach, for a `@dg.asset` a user assembles themselves.
 _WIRING = {
     "AssetYield",
     "QuarantineWriter",
@@ -41,10 +33,9 @@ _WIRING = {
     "validate_quarantine_key",
 }
 
-# What `dd.errors` imports to build its messages. Named so a third one is a decision made here, not a name that became reachable as `dd.errors.<it>`.
+# Imported by `dd.errors` for its annotations, and listed so a third import fails a test.
 _ERROR_IMPORTS = {"Mapping", "Sequence"}
 
-# What `dd.errors` puts in reach, spelled out for the reason the root's list is.
 _ERRORS = {
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
@@ -52,11 +43,11 @@ _ERRORS = {
     "InvalidSettingError",
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
-    "NothingSurvivedError",
+    "NoValidRowsError",
     "QuarantineDirError",
     "QuarantineKeyCollisionError",
     "ReservedColumnError",
-    "UnnameableColumnError",
+    "InvalidColumnNameError",
     "ColumnSchemaError",
     "ValidationAbortError",
 }
@@ -75,14 +66,7 @@ def test_the_wiring_module_exports_exactly_the_assembled_parts():
 
 
 def test_nothing_public_leaks_past_any_export_list():
-    """The namespaces themselves, which `__all__` alone does not cover in either direction.
-
-    A submodule with a public name, or a third-party name imported at the root, is reachable as `dd.<name>` whatever `__all__` says, and a user will come to depend on whatever is reachable. The same assertion catches the other side: a name left in `__all__` after its import moved away breaks `from dagster_dataframely import *`.
-
-    `dd.errors` is held to the same standard, minus the two names it imports to build its messages. Those are listed, not eliminated. Eliminating them has two routes. One is `from __future__ import annotations` plus a `TYPE_CHECKING` block; Polars does this, and it would make this the one module in the package with stringified annotations. The other is spelling them `_Mapping` and `_Sequence` at six sites in the module a user reads tracebacks from. Neither is worth paying to hide a name nobody will type. Listing them keeps the guarantee that matters: a third import fails this test.
-
-    `dd.wiring` imports nothing but what it re-exports, so it is held to the standard exactly.
-    """
+    """`__all__` controls only `import *`, so this also compares each module's attributes."""
     reachable = {name for name in vars(dd) if not name.startswith("_")}
     errors = {name for name in vars(dd.errors) if not name.startswith("_")}
     wiring = {name for name in vars(dd.wiring) if not name.startswith("_")}
@@ -93,12 +77,7 @@ def test_nothing_public_leaks_past_any_export_list():
 
 
 def test_only_errors_and_wiring_have_public_module_names():
-    """One responsibility per module and no promise about any of them, so the tree stays free to change.
-
-    Two exceptions, both bought for the same thing: a root namespace where the happy path is not outnumbered. Thirteen error names and thirteen wiring names would be twenty-six of a namespace of thirty, and a user reaches for neither set to get work done. Polars answered errors the same way and deprecated its own root re-exports in 1.0.0 to finish the move.
-
-    Each costs the freedom to rename that one file. `errors` is a leaf holding one class per failure, so it has nothing to split along. `wiring` re-exports rather than defines, so everything behind it stays free to move.
-    """
+    """Every other module is private, so renaming or splitting one does not break an import."""
     public = [
         module.name
         for module in pkgutil.iter_modules(dd.__path__)
@@ -109,10 +88,7 @@ def test_only_errors_and_wiring_have_public_module_names():
 
 
 def test_the_error_family_is_exported_whole():
-    """Catching `DagsterDataframelyError` is the point of the family, so a subclass a user cannot name is one they cannot catch on its own.
-
-    Derived from the base, not listed, because the failure this guards against is a new error added to the package and forgotten in `errors.__all__`.
-    """
+    """`__subclasses__()` finds the family, so a new error the package does not export fails this test."""
 
     def descendants(error: type[Exception]) -> set[str]:
         return {error.__name__}.union(
@@ -122,6 +98,4 @@ def test_the_error_family_is_exported_whole():
     assert descendants(dd.errors.DagsterDataframelyError) <= _ERRORS
 
 
-# `py.typed` shipping in the wheel is asserted where the wheel is built, in
-# `.github/workflows/release.yml`. Building one from a unit test costs a subprocess per run
-# to check a packaging fact that only the release artifact can settle.
+# `.github/workflows/release.yml` checks that the wheel contains `py.typed`.

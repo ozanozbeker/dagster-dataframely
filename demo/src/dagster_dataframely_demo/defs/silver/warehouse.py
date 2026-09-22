@@ -1,4 +1,4 @@
-"""Order lines the warehouse loads from the marketplace feed, checked after the write."""
+"""A hand-wired asset and its checks, which run after the asset writes the table."""
 
 from collections.abc import Iterator
 
@@ -13,7 +13,7 @@ WAREHOUSE_ORDERS = dg.AssetKey(["warehouse_orders"])
 
 @dg.asset(metadata=dd.wiring.schema_metadata(Orders))
 def warehouse_orders(raw_marketplace_orders: pl.LazyFrame) -> pl.LazyFrame:
-    """Load the marketplace feed into the warehouse as it arrives."""
+    """Load the marketplace feed into the warehouse without validating it first."""
     return raw_marketplace_orders
 
 
@@ -21,7 +21,7 @@ def warehouse_orders(raw_marketplace_orders: pl.LazyFrame) -> pl.LazyFrame:
 def warehouse_orders_checks(
     warehouse_orders: pl.LazyFrame,
 ) -> Iterator[dg.AssetCheckResult]:
-    """Report on what the load wrote, without blocking it."""
+    """Check the written `warehouse_orders` table, and report failures as warnings."""
     yield from dd.wiring.check_results(
         Orders,
         warehouse_orders,

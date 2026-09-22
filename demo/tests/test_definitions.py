@@ -1,8 +1,6 @@
-"""The code location loads, and each asset still does what the README and screenshots show.
+"""The code location loads, and each asset does what the README and screenshots show.
 
-A demo fails silently: the library moves, the autoloader picks up a module that no longer defines what it used to, and nobody notices until the webserver is open in front of an audience. These turn that into a red run.
-
-Everything reads the resolved asset graph rather than `Definitions.assets`. The unresolved list holds each `quarantine_spec` twice, because the autoloader reaches a module-level spec by two routes and Dagster dedupes on resolve.
+The tests read the resolved asset graph, because `Definitions.assets` lists each `quarantine_spec` twice.
 """
 
 import collections
@@ -16,7 +14,7 @@ import dagster_dataframely_demo
 import polars as pl
 import pytest
 
-# Private in Dagster, and the type `resolve_asset_graph()` returns: nothing public names it.
+# Private: nothing public names the type `resolve_asset_graph()` returns.
 from dagster._core.definitions.assets.graph.asset_graph import AssetGraph
 from dagster_dataframely_demo import _data
 from dagster_dataframely_demo.defs.gold.rollups import orders_snapshot
@@ -57,8 +55,7 @@ EXPECTED_GROUPS = {
     "gold": {"weekly_orders", "high_value_orders", "orders_snapshot"},
 }
 
-# What each granularity collapses the schema's rules to, counting the blocking
-# `dy_schema__columns` check. The README and the screenshots quote these.
+# Includes `dy_schema__columns`. The README and the screenshots quote these.
 EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 14, "legacy_orders": 2}
 
 EXPECTED_QUARANTINES = {
@@ -67,8 +64,6 @@ EXPECTED_QUARANTINES = {
     "regional_orders_quarantine": "regional_orders",
 }
 
-# Every rule the marketplace feed breaks. `ORD-0015` breaks three at once, and both of
-# `ORD-0016`'s lines fail the density rule together.
 MARKETPLACE_BROKEN_RULES = {
     "amount|min",
     "email|check__lowercase",
@@ -101,7 +96,6 @@ def _names(keys: Iterable[dg.AssetKey]) -> set[str]:
 
 
 def _events(asset: dg.AssetsDefinition, *args: object) -> Yielded:
-    """Call the asset and drain it; `__call__` is typed `-> object` upstream, as in `tests/scenario.py`."""
     return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
 
 
@@ -141,7 +135,7 @@ def test_nothing_has_more_than_one_parent(graph: AssetGraph):
     assert fanned_in == set()
 
 
-def test_every_quarantine_hangs_off_its_own_asset(graph: AssetGraph):
+def test_every_quarantine_depends_on_its_own_asset(graph: AssetGraph):
     parents = {
         key.to_user_string(): _names(graph.get(key).parent_keys)
         for key in graph.get_all_asset_keys()
@@ -160,7 +154,7 @@ def test_the_grid_quarantine_is_partitioned_like_its_asset(graph: AssetGraph):
     assert partitioned == {"regional_orders_quarantine"}
 
 
-def test_the_marketplace_feed_breaks_the_rules_it_is_known_for():
+def test_the_marketplace_feed_breaks_the_expected_rules():
     valid, failure = Orders.filter(_data.marketplace_orders(), cast=False)
     assert valid.height == 12
     assert len(failure) == 8
@@ -170,7 +164,7 @@ def test_the_marketplace_feed_breaks_the_rules_it_is_known_for():
 
 
 def test_the_customer_export_is_clean():
-    """The README opens on this table, so it has to validate whole."""
+    """The README opens on this table, so every row must be valid."""
     valid, failure = Customers.filter(_data.storefront_customers(), cast=False)
     assert valid.height == 5
     assert len(failure) == 0
@@ -182,7 +176,7 @@ def test_every_legacy_line_fails():
     assert len(failure) == 3
 
 
-def test_the_partner_feed_only_disagrees_on_quantity():
+def test_the_partner_feed_differs_only_in_quantity():
     drifted = {
         name
         for name, dtype in _data.partner_orders().schema.items()
@@ -201,7 +195,7 @@ def test_the_daily_partitions_hold_disjoint_orders():
     assert len(failure) == 0
 
 
-def test_every_order_lands_in_exactly_one_region_cell():
+def test_every_order_is_in_exactly_one_region_cell():
     days = [dt.date(2026, 8, day) for day in range(1, 6)]
     cells = [
         _data.orders_in(_data.storefront_orders(), day, region)
@@ -225,7 +219,7 @@ def test_apac_skips_the_days_before_it_opened():
     assert not any(isinstance(event, dg.MaterializeResult) for event in events)
 
 
-def test_finance_stops_the_load_on_one_bad_line():
+def test_finance_stops_the_load_on_one_invalid_line():
     with pytest.raises(dd.errors.ValidationAbortError):
         _events(finance_orders, _data.marketplace_orders())
 
@@ -235,8 +229,8 @@ def test_the_partner_feed_stops_at_the_column_schema_check():
         _events(partner_orders, _data.partner_orders())
 
 
-def test_nothing_survives_the_legacy_migration(quarantine_dir: Path):
-    with pytest.raises(dd.errors.NothingSurvivedError):
+def test_the_legacy_migration_writes_only_the_quarantine(quarantine_dir: Path):
+    with pytest.raises(dd.errors.NoValidRowsError):
         _events(legacy_orders, dg.build_asset_context(), _data.legacy_orders())
     assert (
         pl.read_parquet(quarantine_dir / "legacy_orders_quarantine.parquet").height == 3
@@ -261,13 +255,13 @@ def test_a_returned_result_is_inspectable_by_calling_the_asset():
     metadata = materialization.metadata or {}
 
     assert materialization.value.height == 12
-    # The package counts the valid rows itself and applies that key last, so the 999 loses.
+    # The package's own row count takes precedence over the returned 999.
     assert metadata["dagster/row_count"] == 12
     assert metadata["source"] == "storefront"
     assert materialization.data_version == dg.DataVersion("2026-08-05")
 
 
 def test_an_asset_without_a_description_shows_the_schemas(graph: AssetGraph):
-    """`cleandoc` because the decorator applies it; a raw docstring would render as a code block."""
+    """`dd.asset` dedents the schema's docstring, so it does not render as a code block."""
     description = graph.get(dg.AssetKey(["orders"])).description
     assert description == inspect.cleandoc(Orders.__doc__ or "")

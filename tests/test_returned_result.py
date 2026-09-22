@@ -1,8 +1,6 @@
-"""A decorated function that returns a `dg.MaterializeResult` instead of a bare frame.
+"""A decorated function that returns a `dg.MaterializeResult` instead of a frame.
 
-`@dg.asset` accepts one, and Dagster's own docs teach it for attaching metadata, so refusing it cost parity with the decorator this one is modelled on (#77). The result's `value` is the frame to validate. Its metadata, data version and tags fold into the materialization the package yields for the valid out.
-
-Every field is asserted twice where both routes can see it: once by calling, once through `dg.materialize`. Metadata survives either route. A data version and tags are event-level: a call hands back the `dg.MaterializeResult` carrying them, and a run turns them into event tags, so both routes need pinning.
+`dd.asset` merges the result's metadata, data version and tags into the asset's materialization. A run turns the data version and tags into event tags, so these tests assert them on a call and in a run.
 """
 
 import re
@@ -18,7 +16,7 @@ import dagster_dataframely as dd
 from dagster_dataframely.errors import (
     MaterializeResultFieldError,
     MaterializeResultValueError,
-    NothingSurvivedError,
+    NoValidRowsError,
     ValidationAbortError,
 )
 from tests.scenario import (
@@ -36,10 +34,7 @@ from tests.scenario import (
 _VALID = dg.AssetKey(["orders"])
 
 
-# --- what folds in ---
-def test_a_returned_result_carries_its_metadata_onto_the_valid_out():
-    """The gap #77 opened with: one line of metadata on a validated table, without giving up the schema."""
-
+def test_the_returned_metadata_is_merged_into_the_materialization():
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
@@ -53,8 +48,6 @@ def test_a_returned_result_carries_its_metadata_onto_the_valid_out():
 
 
 def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: Path):
-    """Beside, not instead: the row count the package emits is still there."""
-
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(value=clean_orders(), metadata={"source": "stripe"})
@@ -65,26 +58,20 @@ def test_a_run_records_the_returned_metadata_beside_the_packages_own(tmp_path: P
     assert metadata["dagster/row_count"].value == 3
 
 
-def test_the_packages_own_key_wins_a_collision():
-    """The same precedence the decorator applies to definition metadata. `dagster/row_count` matters most: Dagster reads it, and a decorated function that overwrote it would put a count nothing counted in the catalog.
-
-    Asserted on the call, not through a run. An IO manager that counts rows writes the same key last, so a run's materialization cannot tell the package's precedence from the manager's.
-    """
-
+def test_the_packages_own_key_takes_precedence():
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
             value=clean_orders(), metadata={"dagster/row_count": 999}
         )
 
+    # A call, not a run: in a run the IO manager writes `dagster/row_count` last.
     called = results(events(orders))[_VALID].metadata or {}
 
     assert called["dagster/row_count"] == 3
 
 
-def test_a_returned_data_version_and_tags_reach_the_valid_result():
-    """Neither has another route. `context.set_data_version` carries no `@public`, and the context exposes nothing for a materialization's tags."""
-
+def test_a_call_yields_the_returned_data_version_and_tags():
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
@@ -100,8 +87,6 @@ def test_a_returned_data_version_and_tags_reach_the_valid_result():
 
 
 def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path: Path):
-    """Dagster decides where they land: both become tags on the materialization event."""
-
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
         return dg.MaterializeResult(
@@ -117,7 +102,7 @@ def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(tmp_path
 
 
 def test_a_lazy_return_folds_the_same_way():
-    """`with_returned_fields` sits over what `validation_results` yields. `Schema.filter` takes both frame kinds through the same call, so laziness changes nothing."""
+    """`dd.asset` merges a result with a `pl.LazyFrame` value like one with a `pl.DataFrame`."""
 
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.LazyFrame]:
@@ -129,9 +114,10 @@ def test_a_lazy_return_folds_the_same_way():
     assert_frame_equal(result.value, clean_orders())
 
 
-# --- what a quarantine changes about `with_returned_fields` ---
-def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
-    """The quarantine is written, not materialized, so the returned result has one place to land. The package's own keys still win a collision."""
+def test_with_quarantine_the_result_is_merged_into_the_one_materialization(
+    tmp_path: Path,
+):
+    """The run writes the quarantine and does not materialize it, so the asset's materialization is the only one."""
 
     @dd.asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -153,31 +139,25 @@ def test_a_quarantined_asset_folds_onto_the_one_materialization(tmp_path: Path):
     assert tags["run/flavour"] == "backfill"
 
 
-# --- what stays refused ---
-# Every refusal is asserted twice, once by calling and once through a run. `frame_and_result` runs inside
-# the wrapper's generator, so nothing happens until something advances it. A refusal that only
-# surfaced on a direct call would let a run write a table the package never validated.
-# Declared as bare returns, not decorated assets: the two tests below share the same seven cases,
-# and a decorated asset cannot be re-declared per test without a name collision.
-_REFUSALS = [
+# Asserted on a call and in a run, so a run never writes a table that a call rejects.
+_REJECTED_RETURNS = [
     pytest.param(
         lambda: dg.MaterializeResult(metadata={"source": "stripe"}),
         MaterializeResultValueError,
-        # The message names the alternative: whoever wrote this was trying to attach metadata.
         "context.add_asset_metadata",
         id="no value",
     ),
     pytest.param(
         lambda: dg.MaterializeResult(value=[1, 2, 3]),
         MaterializeResultValueError,
-        "carries no frame",
+        "has no frame",
         id="a value that is not a frame",
     ),
     pytest.param(
-        # A bare `None` is the skip; this is not. A returned result puts something on a materialization, and a skipped run has none, so the rest of this object has nowhere to go (#95).
+        # Not a skip: a skipped run has no materialization for the metadata (#95).
         lambda: dg.MaterializeResult(value=None, metadata={"delivered": False}),
         MaterializeResultValueError,
-        "carries no frame",
+        "has no frame",
         id="a value of None",
     ),
     pytest.param(
@@ -198,14 +178,13 @@ _REFUSALS = [
         id="check_results",
     ),
     pytest.param(
-        # The legacy spelling, which Dagster's docs steer away from in new code. It reaches the frame guard like everything else unreadable.
         lambda: dg.Output(clean_orders(), metadata={"source": "stripe"}),
         dg.DagsterInvariantViolationError,
         "'orders' returned a Output",
         id="dg.Output",
     ),
     pytest.param(
-        # Not `None`, which the guard lets through as the skip (#95). A string is the nearest thing that is still a mistake.
+        # Not `None`, which is a skip (#95).
         lambda: "orders",
         dg.DagsterInvariantViolationError,
         "'orders' returned a str",
@@ -214,38 +193,34 @@ _REFUSALS = [
 ]
 
 
-def _refusing(fn: Callable[[], object]) -> dg.AssetsDefinition:
-    """Declare the asset under the one name every message above expects.
-
-    The decorated functions carry no annotation: each returns what the decorator's own type says it cannot.
-    """
+def _orders_asset(fn: Callable[[], object]) -> dg.AssetsDefinition:
+    """Declare `fn` as the `orders` asset, the name every message above expects."""
     return dd.asset(Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
 
-@pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
-def test_a_refused_return_names_what_is_wrong(
-    fn: Callable[[], object], error: type[Exception], says: str
+@pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
+def test_a_rejected_return_names_what_is_wrong(
+    fn: Callable[[], object], error: type[Exception], message: str
 ):
-    with pytest.raises(error, match=re.escape(says)):
-        events(_refusing(fn))
+    with pytest.raises(error, match=re.escape(message)):
+        events(_orders_asset(fn))
 
 
-@pytest.mark.parametrize(("fn", "error", "says"), _REFUSALS)
-def test_a_refused_return_fails_the_run_and_writes_nothing(
+@pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
+def test_a_rejected_return_fails_the_run_and_writes_nothing(
     tmp_path: Path,
     fn: Callable[[], object],
     error: type[Exception],
-    says: str,
+    message: str,
 ):
-    with pytest.raises(error, match=re.escape(says)):
-        materialize(tmp_path, _refusing(fn))
+    with pytest.raises(error, match=re.escape(message)):
+        materialize(tmp_path, _orders_asset(fn))
 
     assert not list(tmp_path.rglob("*.parquet"))
 
 
-# --- no valid materialization to fold onto ---
 def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
-    """Nothing survived, so `with_returned_fields` has only checks to pass through and no materialization to land on. The error `validation_results` raises must reach the caller unchanged; the stage wrapping it must not swallow it."""
+    """With no valid rows, `with_returned_fields` receives no materialization and lets `NoValidRowsError` propagate."""
 
     @dd.asset(Orders, name="orders", quarantine=True)
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -253,12 +228,12 @@ def test_a_run_that_writes_no_table_still_raises_its_own_error(tmp_path: Path):
             value=no_valid_orders(), metadata={"source": "stripe"}
         )
 
-    with pytest.raises(NothingSurvivedError):
+    with pytest.raises(NoValidRowsError):
         materialize(tmp_path, orders)
 
 
 def test_an_abort_with_no_quarantine_still_raises_its_own_error():
-    """Rows failed and no quarantine is declared, so the run yields only checks and no materialization. `with_returned_fields` has nothing to land on and must not invent one."""
+    """With no quarantine, failing rows produce no materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
 
     @dd.asset(Orders, name="orders")
     def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -269,9 +244,9 @@ def test_an_abort_with_no_quarantine_still_raises_its_own_error():
 
 
 def test_the_frame_guard_names_every_route_out():
-    """Giving up the schema used to be the only advice, which was wrong for anyone who wanted metadata on a validated table. It is now the last of four routes, aimed at the one reader it fits: an asset that writes its own storage and never holds a frame."""
+    """The error for a return that is not a frame names every accepted return and the hand-wired alternative."""
     with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-        events(_refusing(lambda: "orders"))
+        events(_orders_asset(lambda: "orders"))
     message = str(raised.value)
 
     assert "Polars DataFrame or LazyFrame" in message
@@ -281,10 +256,7 @@ def test_the_frame_guard_names_every_route_out():
     assert "schema_metadata" in message
 
 
-# --- what a bare frame still does ---
-def test_a_bare_frame_carries_no_data_version_and_no_tags():
-    """The guarantee `with_returned_fields` rests on: an asset that returns a frame produces what it produced before #77."""
-
+def test_a_bare_frame_has_no_data_version_and_no_tags():
     @dd.asset(Orders, name="orders")
     def orders() -> pl.DataFrame:
         return clean_orders()
@@ -295,9 +267,7 @@ def test_a_bare_frame_carries_no_data_version_and_no_tags():
     assert result.tags is None
 
 
-def test_a_bare_frame_and_a_returned_result_agree_on_everything_else(tmp_path: Path):
-    """Same metadata keys, same rows on disk. Only what the result carried is different."""
-
+def test_a_bare_frame_and_a_returned_result_match_on_everything_else(tmp_path: Path):
     @dd.asset(Orders, name="orders")
     def bare() -> pl.DataFrame:
         return clean_orders()

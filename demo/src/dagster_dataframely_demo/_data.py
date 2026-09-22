@@ -1,14 +1,13 @@
-"""Sample extracts standing in for the source systems the bronze assets read."""
+"""The sample data that the bronze assets return instead of reading a real source."""
 
-# demo: the rows are literal rather than generated, so every run and every screenshot
-# shows the same numbers, and a red check always points at a row you can find here.
+# demo: the rows are hard-coded, not generated, so every run and screenshot shows the same values.
 
 import datetime as dt
 from decimal import Decimal
 
 import polars as pl
 
-#: The dtypes the source systems deliver.
+#: The source systems export these dtypes.
 SOURCE_SCHEMA: dict[str, pl.DataType] = {
     "order_id": pl.String(),
     "line_no": pl.Int32(),
@@ -25,11 +24,11 @@ SOURCE_SCHEMA: dict[str, pl.DataType] = {
     "note": pl.String(),
 }
 
-#: The day the APAC storefront opened. Before it, APAC customers ordered from the US store.
+#: The day the APAC storefront opened.
 APAC_LAUNCH = dt.date(2026, 8, 4)
 
 
-def _line(  # noqa: PLR0913 - a row of a thirteen-column table, and naming each field is the readable spelling
+def _line(  # noqa: PLR0913 - one parameter per column of a thirteen-column table
     order_id: str,
     line_no: int,
     email: str,
@@ -44,7 +43,7 @@ def _line(  # noqa: PLR0913 - a row of a thirteen-column table, and naming each 
     tags: list[str] | None = None,
     note: str | None = None,
 ) -> dict[str, object]:
-    """Return one order line, defaulting the columns a feed does not vary."""
+    """Return one order line, with defaults for the columns that most lines share."""
     return {
         "order_id": order_id,
         "line_no": line_no,
@@ -108,7 +107,7 @@ def storefront_customers() -> pl.DataFrame:
 
 
 def marketplace_orders() -> pl.DataFrame:
-    """Return the marketplace's order lines, which arrive with the defects its sellers leave in."""
+    """Return the marketplace's order lines, eight of which fail at least one rule."""
     # fmt: off
     return _frame(
         [
@@ -118,9 +117,9 @@ def marketplace_orders() -> pl.DataFrame:
             _line("ORD-0013", 1, "mo@example.com", "60.00", quantity=5000, ordered_at=_at(6, 10, 0)),  # quantity out of range
             _line("ORD-9", 1, "nia@example.com", "31.00", ordered_at=_at(6, 11, 0)),  # malformed order id
             _line("ORD-0014", 1, "ned@example.com", "77.00", priority=9, ordered_at=_at(6, 12, 0)),  # unknown priority
-            _line("ORD-0015", 1, "Ora@example.com", "-1.00", status="paid", ordered_at=_at(6, 13, 0)),  # negative, uppercase, and paid for nothing
-            _line("ORD-0016", 1, "pat@example.com", "14.00", ordered_at=_at(6, 14, 0)),  # line 2 never arrived,
-            _line("ORD-0016", 3, "pat@example.com", "16.00", ordered_at=_at(6, 14, 0)),  # so this order's lines have a gap
+            _line("ORD-0015", 1, "Ora@example.com", "-1.00", status="paid", ordered_at=_at(6, 13, 0)),  # negative amount on a paid line, and uppercase email
+            _line("ORD-0016", 1, "pat@example.com", "14.00", ordered_at=_at(6, 14, 0)),  # this order has lines 1 and 3 and no line 2
+            _line("ORD-0016", 3, "pat@example.com", "16.00", ordered_at=_at(6, 14, 0)),
         ]
     )
     # fmt: on
@@ -145,14 +144,14 @@ def legacy_orders() -> pl.DataFrame:
 
 
 def orders_on(orders: pl.DataFrame, day: dt.date) -> pl.DataFrame:
-    """Return the lines of `orders` placed on one day, whole orders together."""
+    """Return the lines of `orders` placed on `day`."""
     return orders.filter(pl.col("ordered_at").dt.date() == day)
 
 
 def orders_in(orders: pl.DataFrame, day: dt.date, region: str) -> pl.DataFrame:
-    """Return the lines of `orders` one region took on one day.
+    """Return the lines of `orders` placed on `day` in `region`.
 
-    Orders route by number: every third to APAC once it launched, the rest even to the EU and odd to the US.
+    The source data has no region column, so the order number sets the region.
     """
     number = pl.col("order_id").str.slice(4).cast(pl.Int32)
     apac = (number % 3 == 0) & pl.lit(day >= APAC_LAUNCH)

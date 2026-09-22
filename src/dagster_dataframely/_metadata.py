@@ -1,7 +1,4 @@
-"""What the asset definition declares about its data, before it has run.
-
-The asset body owns what the data is. The IO manager owns where and how it was written. A schema says what the data is, so it lives here and no IO manager has to emit it.
-"""
+"""Definition metadata that fills the Columns tab."""
 
 import dagster as dg
 import dataframely as dy
@@ -13,36 +10,29 @@ _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
 
 def _tags(column: dy.Column) -> dict[str, str] | None:
-    """Render a column's free-form metadata as Dagster tags.
-
-    Values are stringified because `TableColumn.tags` is `Mapping[str, str]` and Dagster rejects anything else at definition time. That is a display rendering, not a cast: no data is touched. Refusing would mean a `metadata={"pii": False}`, which Dataframely permits, could not be attached to an asset at all.
-    """
+    """Render a column's metadata as string tags, the only kind Dagster accepts."""
     if not column.metadata:
         return None
     return {key: str(value) for key, value in column.metadata.items()}
 
 
 def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
-    """Project a schema onto Dagster's Columns tab.
+    """Return the schema as the `dg.TableSchema` that Dagster's Columns tab shows.
 
-    Dtype, description, tags, and every constraint the schema declares. Nullability and uniqueness go in Dagster's own two fields, the rest as constraints, and the primary key once at table level.
-
-    `unique` is read from the column's own flag and never derived from `primary_key`. Dataframely keeps the two independent: a key member gets a composite `as_struct(...).is_unique()` rule and `column.unique` stays `False`. Deriving would claim a per-column uniqueness that nothing enforces.
-
-    Tags come from `Column.metadata`, which Dataframely stores and never reads. It is the one Dataframely attribute with no other home here, and Dagster's column tags exist for free-form key/value annotation.
+    Each column has its dtype, description, nullability, uniqueness and column constraints. Its tags come from `dy.Column(metadata=...)`, with each value converted to a string. The primary key is a table constraint, so only `unique=True` marks a key column unique.
 
     Returns
     -------
-    A table schema whose columns are in the schema's own order.
+    A table schema with the columns in the schema's order.
 
     Raises
     ------
     ReservedColumnError
-        A user column sits inside the reserved namespace.
-    UnnameableColumnError
-        A user column is spelled in characters Dagster refuses in a name.
+        A column name is in the reserved `dy_` namespace.
+    InvalidColumnNameError
+        A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
-        Two rules rewrite to the same check name.
+        Two rules produce the same asset check name.
     """
     validate_namespace(schema)
     constraints: dict[str, list[str]] = column_constraints(schema)
@@ -66,18 +56,7 @@ def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
 
 def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
-    """Project the quarantine's column schema onto its own Columns tab.
-
-    No constraints: these rows are here because they fail them, so a `not null` on a column full of nulls would state something false about every row, and a duplicate key is exactly what ends up here.
-
-    Its own function rather than a flag on `table_schema`. The two comprehensions read alike, but every constraint the other one carries is a claim this table cannot make.
-
-    The rule columns are `String` rather than the `Enum` Dataframely produces, because the cast happens before the write.
-
-    Returns
-    -------
-    A table schema: the schema's columns in their own order, then the rules in theirs.
-    """
+    """Return the quarantine's column schema, without the constraints its rows fail."""
     return dg.TableSchema(
         columns=[
             dg.TableColumn(
@@ -102,35 +81,24 @@ def _quarantine_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
 
 def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
-    """Build the definition metadata a schema-backed asset declares.
-
-    One entry, the Columns tab. A mapping rather than the bare value because the decorator merges it over the user's `metadata`.
-
-    Every refusal is `table_schema`'s, which is this function's whole body.
+    """Return the definition metadata that fills an asset's Columns tab from the schema.
 
     Returns
     -------
-    A mapping to hand to `dg.asset(metadata=...)`.
+    A one-entry mapping from `dagster/column_schema` to `table_schema(schema)`, to pass to `dg.asset(metadata=...)`.
 
     Raises
     ------
     ReservedColumnError
-        A user column sits inside the reserved namespace.
-    UnnameableColumnError
-        A user column is spelled in characters Dagster refuses in a name.
+        A column name is in the reserved `dy_` namespace.
+    InvalidColumnNameError
+        A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
-        Two rules rewrite to the same check name.
+        Two rules produce the same asset check name.
     """
     return {_COLUMN_SCHEMA_KEY: table_schema(schema)}
 
 
 def quarantine_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
-    """Build the metadata a quarantine declares about its own column schema.
-
-    Its own Columns tab, because every constraint the valid table states is one these rows break.
-
-    Returns
-    -------
-    A mapping to hand to `dg.AssetSpec(metadata=...)`.
-    """
+    """Return the quarantine's definition metadata."""
     return {_COLUMN_SCHEMA_KEY: _quarantine_table_schema(schema)}

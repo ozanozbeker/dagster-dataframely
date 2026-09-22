@@ -3,9 +3,8 @@ name = "dagster-dataframely-demo"
 version = "0.1.0"
 description = "Every UI surface dagster-dataframely touches, in one Dagster code location."
 requires-python = ">=3.12"
-# The webserver and the CLI are ordinary dependencies rather than a `dev` group. This
-# project is never published and its whole job is to be runnable in one command, so
-# splitting them would only add a `--group` to remember.
+# The webserver and the CLI are ordinary dependencies, not a `dev` group, because the demo is
+# never published. A group would only add a `--group` flag to every command that runs it.
 dependencies = [
   "dagster",
   "dagster-dataframely",
