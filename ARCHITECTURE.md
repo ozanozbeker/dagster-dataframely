@@ -233,7 +233,7 @@ Three, and the third is unlike the other two:
 Enable validation by decorating with `dd.asset(Schema)`.
 Enable a quarantine with `quarantine=True`, which forces the decorated function to declare `context`.
 Everything else resolves through the settings table above.
-`pyproject.toml` declares the floor versions: `dagster>=1.13.20`, `dataframely>=3.0.0`, `polars>=1.44.1`.
+`pyproject.toml` declares the floor versions: `dagster>=1.13.24`, `dataframely>=3.1.2`, `polars>=1.44.2`.
 
 ## Code References
 

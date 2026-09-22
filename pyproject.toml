@@ -31,9 +31,9 @@ classifiers = [
   "Typing :: Typed",
 ]
 dependencies = [
-  "dagster>=1.13.20",
-  "dataframely>=3.0.0",
-  "polars>=1.44.1",
+  "dagster>=1.13.24",
+  "dataframely>=3.1.2",
+  "polars>=1.44.2",
   "universal-pathlib>=0.2.0",
 ]
 
@@ -46,7 +46,7 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 [dependency-groups]
 dev = [
   # One manager from each base class Dagster ships: `dagster-polars` is a `UPathIOManager` and `dagster-duckdb-polars` is a `DbIOManager`. Between them the delegation tests cover nearly every first-party manager (ADR-0006). `duckdb` is transitive, and declared because the tests query the database directly.
-  "dagster-duckdb-polars>=0.27.12",
+  "dagster-duckdb-polars>=0.29.24",
   "dagster-polars>=0.27.12",
   "duckdb>=1.1",
   "prek>=0.5.3",
