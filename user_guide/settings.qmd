@@ -15,63 +15,66 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Every setting resolves in order, each overriding the one before: the package default, then an environment variable, then the argument on the asset.
-That way a platform engineer sets a house style once for a whole code location, and you override it on the one asset where that style is wrong.
-Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name, upper-cased.
+This package resolves each setting from three sources, each overriding the one before: the package default, then an environment variable, then the argument to `dd.asset`.
+An environment variable sets a default for the code location, and an argument overrides it for one asset.
+Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 
-| setting | what it decides | default |
+| setting | what it sets | default |
 | --- | --- | --- |
-| `check_granularity` | how far the schema's rules collapse into checks: `rule`, `column` or `schema` | `rule` |
-| `schema_rules` | where the schema-level rules land at `column` granularity: `collapsed` or `per_rule` | `collapsed` |
-| `statistics` | whether each materialization carries statistics for what it wrote | `true` |
-| `max_failure_samples` | how many of the rows that failed a rule reach that rule's check | `5` |
-| `row_sample` | how many rows reach the materialization, of what was written and of what failed | `5` |
-| `quarantine_dir` | where invalid rows go when the asset is called rather than run | unset, and a call with rows to hold back raises |
+| `check_granularity` | how many checks the package collapses the schema's rules into: `rule`, `column` or `schema` | `rule` |
+| `schema_rules` | how the package reports the schema-level rules at `column` granularity: `collapsed` or `per_rule` | `collapsed` |
+| `statistics` | whether each materialization has statistics for the rows it wrote | `true` |
+| `max_failure_samples` | how many of the rows that failed a rule appear in that rule's check | `5` |
+| `row_sample` | how many valid rows and how many invalid rows appear in the materialization | `5` |
+| `quarantine_dir` | the directory the package writes invalid rows to when you call the asset instead of running it | unset: a call with invalid rows raises `QuarantineDirError` |
 
-`quarantine_dir` is the one with two sources rather than three: there is no argument for it, because that would be the override ADR-0006 defers.
-It is also the one whose value is read where the rows are written rather than where the asset is declared, because nothing about a declaration depends on it.
-A malformed one still raises where the asset is declared, so `${SCRATCH}` unexpanded is reported where you wrote it rather than on whichever run first has a row to hold back.
+The package resolves the settings once, when you declare the asset, and the check specs and the validation both use those values.
 
-Every source validates on resolve, the package's own default included, so a typo raises `InvalidSettingError` naming the value and where it came from rather than quietly becoming something else three modules later.
-`statistics="false"` is a non-empty string that would otherwise turn the pass on, and `True` is an `int` that would resolve a count to one row, so the check runs even over values a type checker has already narrowed.
+`quarantine_dir` has two sources, not three, because `dd.asset` takes no argument for it (ADR-0006).
+The package reads its value when the writer writes the rows, not when you declare the asset.
+An empty value still raises `InvalidSettingError` when you declare the asset, not on the first call with invalid rows.
+For example, `DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` is empty when `SCRATCH` is unset.
 
-**A flag reads `true` or `false`, and nothing else.**
-Case does not matter, so `TRUE` is the same instruction.
-`1`, `yes` and `on` are plausible and wrong, so they raise rather than guess.
+The package validates every source when it resolves the setting, including the package default and the argument.
+An invalid value raises `InvalidSettingError`, which names the value and its source.
+So `statistics="false"` raises instead of turning statistics on, and `max_failure_samples=True` raises instead of meaning one row.
+
+**A flag's environment variable accepts `true` or `false`, and nothing else.**
+Case does not matter, so `TRUE` is the same as `true`.
+`1`, `yes` and `on` raise `InvalidSettingError`.
 
 There is no fourth source and no `set_default_*()` function.
-Dagster loads code locations lazily, so "has the default been set yet" would depend on an import order you do not control, and the same asset would derive different checks depending on which module imported first.
 
-Settings are resolved once, where the asset is declared, and handed to both the check specs and the runtime.
-Resolving again inside the run would read the executing process's environment, so a worker with a different `DAGSTER_DATAFRAMELY_*` would report against checks the code location never declared.
+## Changing `check_granularity` starts a new check history
 
-## Changing `check_granularity` orphans check history
+`rule` gives each rule its own check and its own history.
+`column` gives one check per column with rules, `dy_col__<column>`, so a 40-column schema's check list stays readable.
+A column's check reports for every rule on that column.
+For a `Struct` column, Dataframely generates one `inner_<field>_nullability` rule per field, so a ten-field struct has ten rules and one check.
+`schema` gives one check, `dy_schema__rules`, for every rule.
 
-`rule` gives every rule its own check and its own history.
-`column` gives one check per rule-bearing column, `dy_col__<column>`, which is what makes a 40-column schema's check list readable.
-A column's rules land together whatever they are, which makes a wide `Struct` bearable: Dataframely emits one `inner_<field>_nullability` rule per field, so a ten-field struct is ten rules and one rule set.
-`schema` gives a single `dy_schema__rules` for all of them.
+`schema_rules` sets how the package reports the schema-level rules at `column` granularity, because they belong to no single column.
+`collapsed` puts them all in one check, `dy_schema__rules`, and `per_rule` gives each one its own check.
+The setting has no effect at `rule` or `schema` granularity.
 
-`schema_rules` decides where the schema-level rules go at `column` granularity, since no column owns them.
-`collapsed` puts them all in `dy_schema__rules`; `per_rule` gives each one a check of its own.
-The other two granularities have no second place to put them, so nothing else reads the setting.
+A schema with no rules has only the column-schema check, at every granularity.
+That check is always present and always blocking.
 
-A schema with no rules gets no rule checks at any granularity, because a check reporting for nothing would pass forever.
-The column-schema check is always there and always blocking.
-
-**Changing `check_granularity` on an asset that has already run orphans that asset's check history.**
-The old check names stop being reported and their histories end where the change landed, while the new ones start empty.
-Nothing migrates them, so choose it before the asset ships rather than after.
+**Changing `check_granularity` on an asset that has already run starts a new check history.**
+The asset no longer reports the old checks, so their history ends with the last run before the change.
+The new checks start with no history.
+Nothing moves the old history to the new checks, so choose the granularity before you deploy the asset.
 
 ## Statistics and both samples are on by default
 
-Each materialization carries `skimr`-style statistics for what it wrote.
-[The statistics tables](what-a-run-produces.qmd#the-statistics-tables) has the columns.
+Each materialization has `skimr`-style statistics for the rows it wrote.
+[The statistics tables](what-a-run-produces.qmd#the-statistics-tables) lists their columns.
 
 ::: {.callout-important}
-Two of the settings write **real rows of your data into the Dagster event log**, and both ship on.
-The event log is shared across a deployment, it is exportable, and nothing here is redacted.
-If a column holds an email address, a name or an account number, that value lands in the log and stays there.
+Two of the settings write **real rows of your data to the Dagster event log**, and both are on by default.
+A deployment shares one event log, and you can export it.
+This package redacts nothing.
+If a column contains an email address, a name or an account number, the package writes that value to the log, where it stays.
 :::
 
 | setting | what it writes | where |
@@ -79,19 +82,13 @@ If a column holds an email address, a name or an account number, that value land
 | `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dy_failed_sample` |
 | `row_sample` | up to this many valid rows and this many invalid rows | the materialization, under `dataframely/valid_sample` and `dataframely/invalid_sample` |
 
-One number governs the valid rows and the invalid rows alike, so consenting to a sample is one decision rather than two.
+A sample is the first rows of the frame, not a random selection.
+A sample is absent, never empty: with no rows to show, the package writes no metadata key for it.
 
-A sample is the head of the frame rather than a random draw.
-A sample somebody reports a bug against has to be the same sample when they reopen the run, and `head` is the only draw a re-read reproduces.
+Dataframely's comparable setting defaults to `0`.
+This package defaults to `5`, because a count shows how many rows failed a rule but not what they contain.
 
-A sample is absent, never empty.
-Zero rows does not answer "what does a row look like", and an empty table in the UI would read as an answer.
-
-Dataframely's own comparable setting defaults to `0`, so this package is deliberately the more generous of the two.
-The reason is that a failing check raises exactly one question the counts cannot answer: not that 43 rows failed `amount|min`, but what three of those rows held.
-Paying for that in the event log should be a decision, which is what this section is for.
-
-Set either to `0` and it is off entirely, with the metadata key absent rather than empty.
+Set either setting to `0` to turn it off.
 Per asset:
 
 ```{python}
@@ -101,13 +98,13 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```
 
-Or once for a whole code location, in the deployment's environment:
+Or set it for a whole code location, in the deployment's environment:
 
 ```bash
 DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES=0
 DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 ```
 
-Turning the samples off leaves `statistics` on, and the two consents stay separate on purpose.
-A `Decimal` reaches a sample as a string, keeping every digit, where the statistics tables coerce it to a float for display.
-A statistic is a number nobody stored; a sampled row is the value somebody did.
+Turning the samples off does not change `statistics`, which is a separate setting.
+A sample shows a `Decimal` as a string, with every digit.
+The statistics tables convert it to a float for display.

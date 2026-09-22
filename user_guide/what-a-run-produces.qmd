@@ -15,40 +15,41 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Launching is Dagster's business and works the way it always does: materialize from the UI, from a schedule or a sensor, or call `dg.materialize([orders], resources={...})`.
-What the run leaves behind is the part this package is for, and it lands in two places: the table's materialization, and the asset checks.
+You launch a run as you would for any Dagster asset: from the UI, from a schedule or a sensor, or with `dg.materialize([orders], resources={...})`.
+This package reports a run's results in two places: the table's materialization and the asset checks.
 
 ## The table's materialization
 
-The row count goes under Dagster's own `dagster/row_count`, and everything else this package writes sits under `dataframely/`, so it sorts in one block apart from Dagster's keys and your IO manager's.
+The row count is under Dagster's own key, `dagster/row_count`.
+Every other key this package writes is in the `dataframely/` namespace, so these keys sort together, apart from Dagster's keys and your IO manager's.
 
 | key | what it holds |
 | --- | --- |
-| `dagster/row_count` | how many rows passed validation, not how many arrived |
+| `dagster/row_count` | how many rows passed validation, not how many the function returned |
 | `dataframely/valid_sample` | the first few of those rows |
 | `dataframely/valid_statistics/<group>` | one table per dtype group present |
-| `dataframely/quarantine_address` | where the invalid rows went, on the runs that wrote any |
+| `dataframely/quarantine_address` | where the writer wrote the invalid rows, on the runs that wrote any |
 | `dataframely/invalid_count` | how many rows failed at least one rule |
 | `dataframely/invalid_sample` | the first few of those, rule columns included |
-| `dataframely/invalid_by_rules` | which sets of rules the rows broke together, biggest group first |
+| `dataframely/invalid_by_rules` | which sets of rules the rows failed together, largest group first |
 
-The last four are absent on a clean run, where there is nothing to say.
-`dataframely/invalid_by_rules` is what stops one broken upstream field that trips three rules reading as three unrelated counts.
-It spells each rule the way the quarantine's own columns spell it, at every granularity, so the table and the rows it counts line up.
-The check list reads the same only at `rule` granularity, since `column` and `schema` name a check after the column or the schema instead.
-At either of those, follow a rule to the quarantine rather than to a check.
+The last four are absent when no rows failed.
+`dataframely/invalid_by_rules` counts each invalid row once, under the set of rules it failed.
+So one bad upstream field that fails three rules appears as one group, not as three unrelated counts.
+It names rules as the quarantine's rule columns do, so its names match the check names only at `rule` granularity.
 
-![The same run with rows held back. The third row of `dataframely/invalid_by_rules` is one order that broke three rules at once, counted once rather than three times.](../assets/images/invalid-by-rules.png)
+![The materialization of a run where 8 rows failed, and the writer wrote them to the quarantine. The third row of `dataframely/invalid_by_rules` is one row that failed three rules, counted once, not three times.](../assets/images/invalid-by-rules.png)
 
-Every value that holds rows is a Dagster table value rather than markdown, so the UI renders a real table with sorting rather than printed text.
-The two counts and the quarantine address are scalars, which is what they are.
+Every value that contains rows is a Dagster table value, not markdown, so the UI shows a sortable table.
+The two counts are integers, and the quarantine address is a string.
 
-![A clean run's materialization: the row count, one statistics table per dtype group present, the row sample, and the IO manager's own keys below them.](../assets/images/materialization-metadata.png)
+![The materialization of a run where no rows failed: the row count, one statistics table per dtype group present, the row sample, and the IO manager's own keys below them.](../assets/images/materialization-metadata.png)
 
 ## The statistics tables
 
-One table per dtype group present in what was written, each a row per column in the frame's own order.
-A column whose dtype belongs to no group reaches no table: a `List`, `Struct` or `Array` has nothing to say past a count and a null count.
+There is one table for each dtype group present in the written rows.
+Each table has one row per column, in the frame's column order.
+A column whose dtype is in no group, such as a `List`, `Struct` or `Array`, appears in no table, because only a count and a null count would apply to it.
 
 | group | dtypes | columns |
 | --- | --- | --- |
@@ -57,53 +58,54 @@ A column whose dtype belongs to no group reaches no table: a `List`, `Struct` or
 | `string` | `String`, `Categorical`, `Enum`, `Binary` | `count`, `null_count`, `n_unique`, `min_len`, `max_len`, `n_empty` |
 | `boolean` | `Boolean` | `count`, `null_count`, `n_true`, `n_false`, `true_rate` |
 
-`mean`, `std`, `p50` and `true_rate` are derived, so they round to four places.
-`min` and `max` exist in the data, so they show exactly.
-The UI never displays a number nobody stored.
+The package computes `mean`, `std`, `p50` and `true_rate`, so it rounds them to four decimal places.
+`min` and `max` are values from the data, so the table shows them exactly.
+The one exception is a `Decimal`: the table shows it as a float, so it rounds any value with more digits than a float holds.
 
-Lengths are bytes throughout, which is also the unit Dataframely's `max_length` bounds a `String` in, so a column constraint and this table agree.
-A `span` is rendered in Polars' own duration form, `8d` or `1m 30s`, rather than ISO-8601.
+Lengths are in bytes, the unit of Dataframely's `max_length` on a `String`, so this table matches the column constraints.
+The table shows a `span` in Polars' own duration form, such as `8d` or `1m 30s`, not ISO-8601.
 
-**The string group carries no value-bearing statistic**, at any setting.
-A `min` or `max` on an email column would print real addresses permanently into a shared, exported event log.
-Lengths and cardinality catch the same defects.
-The `statistics` setting does not cover this, because consenting to summary statistics is not consenting to raw values.
+**The string group has no statistic that shows values from the data**, at any setting.
+A `min` or `max` on an email column would write real addresses into the event log, which a deployment shares, anyone can export, and nothing deletes.
+Lengths and cardinality detect the same problems.
 
-The quarantine carries no statistics at all.
-What the invalid rows look like in aggregate is a question about a table nobody consumes.
+The package computes no statistics for the invalid rows.
 
 ## The checks
 
-The column-schema check reports first and blocks, then one check per rule set.
+The column-schema check reports first and is blocking.
+Each rule set then has one check.
 
 | check metadata | on which check |
 | --- | --- |
 | `dy_rule`, `dy_rule__expr` | a check reporting for one rule |
-| `dy_failed_count` | a check reporting for one rule, when anything failed |
-| `dy_failed_sample` | any check, when anything failed |
-| `dy_rules` | a collapsed check: a row per member rule with its failure count and expression |
-| `dy_schema__errors` | the column-schema check, when it fails: a row per offending column |
+| `dy_failed_count` | a check reporting for one rule, when any row failed |
+| `dy_failed_sample` | any check, when any row failed |
+| `dy_rules` | a collapsed check: a row per rule with its failure count and expression |
+| `dy_schema__errors` | the column-schema check, when it fails: a row per mismatched column |
 
-`dy_rule__expr` carries the expression rather than the bound, so tightening a `min` does not rename the check and orphan its history.
-A collapsed check's `dy_failed_sample` carries `dy_rule` on each row, so a sample standing for several rules still names the one that put each row there.
-There is no total failure count on a collapsed check: counts are per rule and one row can break several, so a sum would state a row count that is not one.
+A bound appears in `dy_rule__expr`, not in the check name, so changing a `min` neither renames the check nor starts a new check history.
+In a collapsed check, each row of `dy_failed_sample` has a `dy_rule` column with the rule that row failed.
+A collapsed check has no total failure count.
+Counts are per rule, and one row can fail several rules, so their sum is not a row count.
 
-Samples are bounded per rule rather than per check.
-A bound shared across a rule set would let the rule a thousand rows failed crowd out the rule one row failed, and the second is the more interesting.
+`max_failure_samples` applies per rule, not per check.
+So in a collapsed check, a rule that a thousand rows failed cannot fill the sample and leave out a rule that one row failed.
 
-On the outcomes that raise there is no materialization to carry the quarantine address, so `dataframely/quarantine_address` is copied onto every check result instead.
-A reader looking at a failed run finds it wherever they look.
+A run that raises `NoValidRowsError` yields no materialization, so the package copies `dataframely/quarantine_address` onto every check result instead.
 
 The Columns tab is not one of these two places.
-It comes off the definition, so it is filled in before the first run and stays filled after a failed one.
+It comes from the asset definition, so the catalog shows it before the first run and still shows it after a failed run.
 
 ## Attaching your own metadata
 
 Use the context to read the run.
-Use the return to write the materialization.
+Use the return value to write the materialization.
 
-**Return a `dg.MaterializeResult` carrying the frame.**
-It is what `@dg.asset` accepts, it is the only supported route to a materialization's tags and data version, and it survives direct invocation:
+**Return a `dg.MaterializeResult` with the frame as its `value`.**
+`@dg.asset` accepts the same return value.
+It is the only supported way to set a materialization's tags and data version.
+It also works under direct invocation:
 
 ```{python}
 #| label: what-a-run-produces-1
@@ -118,23 +120,23 @@ def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
 ```
 
 `value` is the frame to validate, and you have to set it.
-`metadata`, `data_version` and `tags` land on the table's materialization, which is the only one there is.
-The quarantine materializes no event, so nothing you set here can reach it.
+The package copies `metadata`, `data_version` and `tags` onto the table's materialization.
+The quarantine has no materialization event, so none of these fields apply to it.
 
-The result's own `asset_key` and `check_results` fields are refused by name with `MaterializeResultFieldError`, because the decorator decides the key from what it was declared with and the check results from the schema's rules.
-Naming the culprit beats dropping it silently, which would leave your check result nowhere and say nothing about why.
+Setting the result's `asset_key` or `check_results` raises `MaterializeResultFieldError`, which names the field.
+The decorator sets the asset key from its declaration and the check results from the schema's rules.
 
-**This package's own metadata keys win a collision.**
-A returned `dagster/row_count` loses to the count this package made, and so does anything under `dataframely/`.
-This package generates those keys, so a collision is a mistake rather than an override.
-Everything else you attach is yours, and it is carried through untouched.
+**This package's own metadata keys take precedence.**
+If you return `dagster/row_count` or a key in the `dataframely/` namespace, the package's value replaces yours.
+The package copies every other key you return onto the materialization unchanged.
 
-![An asset whose returned result set `source`, `extract/rows` and `extract/window`, and also returned `dagster/row_count` as 999. The three are carried through; the count reads 12, which is what was written.](../assets/images/returned-result-metadata.png)
+![An asset whose returned result set `source`, `extract/rows` and `extract/window`, and also set `dagster/row_count` to 999. The materialization shows the three keys unchanged, and `dagster/row_count` shows 12, the number of rows written.](../assets/images/returned-result-metadata.png)
 
-### The context route
+### Using the context
 
-`context.add_asset_metadata` is the other way in, and it is what older Dagster examples reach for.
-Nothing here blocks it, and since the decorator builds one asset with one key, the bare call works:
+`context.add_asset_metadata` is the other way to attach metadata, and older Dagster examples use it.
+The package does not block it.
+The decorator builds one asset with one key, so the call works without an `asset_key`:
 
 ```{python}
 #| label: what-a-run-produces-2
@@ -144,30 +146,29 @@ def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.Da
     return raw_orders
 ```
 
-Two things about it are worth knowing, and one neighbouring call is worth avoiding.
+**It overrides this package's own keys, unlike a returned result.**
+Dagster merges the context's metadata last, after the package yields its results.
+So `context.add_asset_metadata({"dagster/row_count": 999})` shows 999 in the catalog for a table with two rows.
+The package cannot prevent this.
 
-**It overrides this package's own keys, where a returned result loses to them.**
-Dagster builds an event's metadata from the output's first and applies the context's accumulator last.
-So `context.add_asset_metadata({"dagster/row_count": 999})` puts 999 in the catalog for a table with two rows.
-Nothing here can defend against that, because the merge happens after this package has yielded.
+**This package does not support `context.set_data_version`.**
+It is not marked `@public` in Dagster, and it does not work under direct invocation.
+Return `data_version=` on a `dg.MaterializeResult` instead, which sets the same event tags.
 
-**`context.set_data_version` is not supported.**
-It is mentioned here so you know why it is missing rather than going looking for it: it carries no `@public`, and you cannot reach it by calling the asset.
-Return `data_version=` on a `dg.MaterializeResult` instead, which produces the same event tags.
-
-One more call looks right and is not: `context.add_output_metadata`.
-Every asset check is an output, and this package always declares at least the column-schema check, so an asset here always has several:
+Avoid `context.add_output_metadata`.
+Every asset check is an output, and this package always declares the column-schema check.
+So an asset built with `dd.asset` always has several outputs, and the call raises:
 
 ```text
 DagsterInvariantViolationError: Attempted to add metadata without providing output_name, but multiple outputs exist. Please provide an output_name to the invocation of `context.add_output_metadata`.
 ```
 
-Naming the output does work, and the name is `result` whatever the asset is called: a single-output asset has one, and Dagster names it the same way under every `key_prefix`.
-That is a Dagster internal spelling rather than anything this package chose, so hardcoding it ties your asset body to a name the catalog never shows you.
-Reach for `add_asset_metadata` instead.
+Naming the output works: Dagster names the asset's output `result`, whatever you call the asset and under every `key_prefix`.
+That name is internal to Dagster, and the catalog never shows it.
+Use `add_asset_metadata` instead.
 
 ::: {.callout-note}
-`add_asset_metadata`, `set_data_version` and `add_output_metadata` are the whole of what this package has checked against Dagster's context, and no more will be checked.
-Nothing is guaranteed about the rest of the context, now or in a future Dagster.
-If you find another method that works and is worth teaching, [open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues).
+This package has tested only `add_asset_metadata`, `set_data_version` and `add_output_metadata` on Dagster's context, and it will test no others.
+It guarantees nothing about the rest of the context, in this or any future Dagster version.
+If you find another method that works and is worth documenting, [open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues).
 :::

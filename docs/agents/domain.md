@@ -2,12 +2,12 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-This repo is **single-context**: one `CONTEXT.md` and one `docs/adr/` at the root.
+This repo is **single-context**: one `CONTEXT.md` and one `docs/pre-1.0.md` at the root.
 
 ## Before exploring, read these
 
 - **`CONTEXT.md`** at the repo root.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
+- **`docs/pre-1.0.md`**. It records every decision and measurement the package was built on. Read the entries that touch the area you're about to work in. It is closed at 1.0, so nothing is added to it.
 - **`docs/out-of-scope/`** — one file per rejected concept, with the measurements that rejected it. Read before proposing a feature, so a settled question is not re-derived.
 
 If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
@@ -17,18 +17,16 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 ```text
 /
 ├── CONTEXT.md
-├── docs/adr/
-│   ├── 0001-....md
-│   └── 0002-....md
+├── docs/pre-1.0.md
 ├── docs/out-of-scope/
 │   └── <concept>.md
 └── src/dagster_dataframely/
 ```
 
 `/triage` looks for rejected concepts in a root `.out-of-scope/` by default.
-They live in `docs/out-of-scope/` here instead, beside the ADRs and the research, because a rejection record is something a reader goes looking for rather than something to hide in a dotdir.
+They live in `docs/out-of-scope/` here instead, beside the decision record, because a rejection record is something a reader goes looking for rather than something to hide in a dotdir.
 
-If this repo ever splits into multiple bounded contexts, add a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context, keep system-wide decisions in `docs/adr/`, and put context-specific decisions in `src/<context>/docs/adr/`.
+If this repo ever splits into multiple bounded contexts, add a root `CONTEXT-MAP.md` pointing at one `CONTEXT.md` per context, and give each context its own decision record beside its `CONTEXT.md`.
 
 ## Use the glossary's vocabulary
 

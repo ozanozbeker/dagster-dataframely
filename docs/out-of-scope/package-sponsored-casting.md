@@ -1,20 +1,19 @@
-# Package-Sponsored Casting
+# Casting by the Package
 
 `dd.asset` takes no `cast` argument, and nothing in this package coerces a dtype on a user's behalf.
-A frame whose column schema does not match the schema aborts the run through the blocking column-schema check.
-A user who wants conformance writes `Schema.cast` in their own asset body, where they can see it.
+When a frame's column schema does not match the schema, the blocking column-schema check fails the run.
+A user who wants a cast calls `Schema.cast` in the decorated function, where they can see it.
 
 ## Why this is out of scope
 
 Designed in full on 2026-09-10 while triaging [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88), and rejected.
-The measurements below are the durable part.
-They are what a fresh proposal has to answer, and re-deriving them costs an afternoon.
+A new proposal has to address the measurements below, and repeating them takes an afternoon.
 
-### The projection half is already free
+### Projection needs no cast
 
-The report hypothesised that the column-schema check's treatment of extra columns was what forced `Schema.cast` into all 21 of a user's assets.
-It is not.
-`Schema.filter` runs `lf.select(target.column_names())` on both of its paths, so it narrows a superset to the schema's columns, in the schema's order, eager and lazy, with `cast=False`:
+The report assumed that extra columns forced a user to call `Schema.cast` in all 21 of their assets.
+It did not.
+With `cast=False`, `Schema.filter` runs `lf.select(target.column_names())`, eager or lazy, so it narrows a superset to the schema's columns, in the schema's order:
 
 ```text
 frame  {"extra", "amount", "order_id"}      superset, scrambled order
@@ -22,63 +21,62 @@ cast=False -> ['order_id', 'amount']
 cast=True  -> ['order_id', 'amount']
 ```
 
-`column_schema_problems` agrees from the other side: it iterates the schema's columns, so a column present in the frame and absent from the schema is never read.
+`_column_schema_problems` iterates the schema's columns, so the check never reads a column the schema does not declare.
 
-What `cast=True` adds over `cast=False` is dtype coercion and nothing else.
-Any proposal that justifies itself by projection is answered here.
+So `cast=True` adds only dtype coercion, and projection does not justify a `cast` argument.
 
-### One flag buys the safe and the silent together
+### One flag enables lossless and lossy casts together
 
-Dataframely's `cast` is a `bool` over `casting="lenient"`.
-It is all or nothing.
-The widenings are exact:
+Dataframely's `cast` is a `bool` that selects `casting="lenient"`, so it enables every cast or none.
+Widening casts keep the value:
 
 ```text
 Int32          -> Int64      1 -> 1
 Decimal(18,3)  -> Float64    1.5 -> 1.5
 ```
 
-The narrowings pass through the same flag, and none of them reports anything:
+The same flag enables narrowing casts:
 
 ```text
-Float64 -> Int64      1.9 -> 1              truncated, no rule fires
-Int64   -> Int32      2**40 -> row dropped  valid frame comes back empty
+Float64 -> Int64      1.9 -> 1              truncated, no rule fails
+Int64   -> Int32      2**40 -> row dropped  the valid frame is empty
 Duration ns -> us     1500ns -> 1us         precision gone
 ```
 
-Only an unparsable value is handled honestly.
-`"abc"` into an `Int64` becomes an invalid row under a `<column>|dtype` rule that `cast=True` adds, carrying its original value into the failure info.
+A truncation or a loss of precision fails no rule.
+A value the cast cannot convert becomes null, and the `<column>|dtype` rule that `cast=True` adds makes its row invalid.
+That covers `2**40` above and `"abc"` cast to `Int64`, and the failure info keeps the original value.
 
-Restricting the flag to the widening direction means this package holding a dtype lattice over Polars.
-That is real surface, it drifts every time Polars adds a type, and `CONTEXT.md` says borrow rather than invent.
+Allowing only widening casts would require this package to keep its own lattice of Polars dtypes.
+That is new public API, and it goes out of date each time Polars adds a dtype.
+`CONTEXT.md` also has the package use Dagster's, Dataframely's and Polars' own terms, and the lattice would be its own.
 
-### The blocking check cannot be made to agree with a cast
+### The blocking check does not work with a cast
 
-The column-schema check runs before `Schema.filter` and aborts on a dtype mismatch, which is the thing a cast exists to fix.
-So casting cannot be added without deciding what that check means, and every answer measured badly.
+The column-schema check runs before `Schema.filter` and fails the run on a dtype mismatch, which is what a cast would fix.
+So adding a cast means changing what that check does, and every option failed when measured.
 
-Running the check after casting does not work.
-`collect_schema()` on the cast plan reports the target dtypes by construction, so the comparison passes for every input:
+Running the check after the cast does not work.
+`collect_schema()` on the cast plan reports the target dtypes by construction, so the check passes for every input:
 
 ```text
 Int32   -> Int64     pre-cast problems: [order_id]   post-cast problems: []
 Struct  -> Float64   pre-cast problems: [amount]     post-cast problems: []
 ```
 
-On the uncastable case it is worse than vacuous.
-Polars resolves a lenient `Struct` cast to the target dtype at plan time and produces a struct at collect time:
+For a cast that cannot succeed, the check passes a wrong frame.
+Polars resolves a lenient `Struct` cast to the target dtype at plan time, and produces a struct at collect time:
 
 ```text
 plan-time: {'amount': Float64}
 runtime  : {'amount': Struct({'a': Float64})}
 ```
 
-A check reading the plan would pass that frame, and the struct would reach storage under a schema declaring `Float64`.
-The cast plan also carries `__DATAFRAMELY_ORIGINAL__*` columns, so reading it needs two private upstream names, `_match_to_schema.match_to_schema` and `ORIGINAL_COLUMN_PREFIX`.
+A check that reads the plan would pass that frame, and the IO manager would write the struct to storage under a schema that declares `Float64`.
+The cast plan also has `__DATAFRAMELY_ORIGINAL__*` columns, so reading it needs two private Dataframely names: `_match_to_schema.match_to_schema` and `ORIGINAL_COLUMN_PREFIX`.
 
-The reason is structural rather than a detail of the implementation.
-Cast feasibility is not answerable from a column schema.
-It is known at collect, where Polars raises, or from the dtype lattice rejected above.
+This follows from the design, not from a detail of the implementation: a column schema does not show whether a cast will succeed.
+Only collecting the plan shows it, because Polars raises there, and the only other source is the lattice rejected above.
 
 ### What an impossible cast does today
 
@@ -91,22 +89,24 @@ List  -> Float64                      InvalidOperationError at collect
 Struct -> Float64                     InvalidOperationError at collect
 ```
 
-The last two stop the run as a raw Polars error out of `collect_all`, after the plan ran, and only the `List` case names the offending cast in its message.
+The last two fail the run with a raw Polars error from `collect_all`, after the plan has run.
+Only the `List` error names the failing cast.
 
 ## What is in scope
 
-Saying all of this in the user guide.
-The doctrine is right and its stated justification was wrong: a `Duration('ns')` widened to `Duration('us')` rescales correctly, so the "thousandfold error" it warns about does not happen.
-That correction, and the fact that projection is free, are [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88).
+`user_guide/the-failure-policy.qmd` documents the policy.
+The policy is right, but its first stated reason was wrong: casting `Duration('ns')` to `Duration('us')` rescales the value, so the "thousandfold error" it warned about does not happen.
+That correction, and the fact that projection needs no cast, are [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88).
 
-## If this is reconsidered
+## If someone proposes this again
 
-Adding `cast` later is purely additive, so nothing here is expensive to reverse and no ADR was written.
-The evidence that would reopen it is a user whose dtype mismatch is not a warehouse read.
-The DuckDB case that motivated the original proposal returns `DECIMAL` where a schema declares `Float64`, and that is a property of the reader rather than of the column, so it may belong to the IO manager instead.
+Adding `cast` later would change no existing behaviour, so this decision is easy to reverse, and the maintainer wrote no ADR.
+A user whose dtype mismatch does not come from a warehouse read would reopen it.
+In the DuckDB case behind the original proposal, the read returns `DECIMAL` where the schema declares `Float64`.
+That comes from the reader, not from the column, so the fix may belong in the IO manager.
 
 ## Prior requests
 
 - [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88), "Every one of my 21 assets ends in `Schema.cast(...)`, which makes the deliberate cast a ritual".
 
-The casting design came out of triage rather than the report, so #88 itself stays open for the README correction.
+The maintainer designed the `cast` argument in triage, and the report did not request it, so #88 covered only the README correction and closed with it.

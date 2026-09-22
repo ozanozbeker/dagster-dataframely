@@ -3,13 +3,45 @@
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
 Each release below carries the migration, not just the list.
 
+## Unreleased
+
+### Breaking in 0.9
+
+The floors move to `dagster>=1.13.24`, `dataframely>=3.1.2` and `polars>=1.44.2`.
+The tests and every measurement in this repo run against those versions.
+
+Two error classes are renamed.
+Each is raised in the same cases as before.
+
+| 0.8 | 0.9 |
+| --- | --- |
+| `dd.errors.NothingSurvivedError` | `dd.errors.NoValidRowsError` |
+| `dd.errors.UnnameableColumnError` | `dd.errors.InvalidColumnNameError` |
+
+Most error messages are reworded, so code that matches on message text needs updating.
+
+### Documentation in 0.9
+
+The documentation is a site now: <https://ozanozbeker.com/dagster-dataframely>.
+The guide is one page per topic, and every code cell runs when the site builds, so an example that stops being true fails the build.
+`USER_GUIDE.md` is gone.
+A demo code location backs the examples, and a prek hook keeps the README's code blocks in sync with the demo's modules.
+
+Every page, docstring, comment and error message is rewritten in plain language.
+The package used to explain itself with metaphors that no upstream library uses, and it now says what the code does in Dagster's, Dataframely's and Polars' own words.
+Nothing behaves differently.
+
+The decisions and the measurements the package was built on are in one file, [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md), which replaces `docs/adr/` and `docs/research/`.
+Every claim in it was re-checked against the code, and a claim the code no longer supports was deleted rather than corrected.
+`ARCHITECTURE.md` is gone, and its diagrams are in the guide.
+
 ## 0.8.0 - 2026-09-14
 
 ### Breaking in 0.8
 
 `temp_dir` and `DAGSTER_DATAFRAMELY_TEMP_DIR` are gone.
 A `LazyFrame` return is filtered in the engine, so there is no staging file to place: drop the argument and the variable, and nothing else changes.
-The measurements are in §12 of [`docs/research/lazyframe-end-to-end.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/lazyframe-end-to-end.md).
+The measurements are in [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#lazy-validation-and-lazy-storage).
 
 Two functions are renamed, and nothing about either changes but the name.
 A function here is named after what it returns, which [`CLAUDE.md`](CLAUDE.md) now writes down, and these two were the public exceptions.
@@ -76,7 +108,7 @@ Those agree only at `rule` granularity, so a reader at `column` or `schema` was 
 ### Breaking in 0.7
 
 The quarantine moves out of the graph and onto your own IO manager, and this package stops shipping storage.
-Both are ADRs: [0004](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/0004-the-quarantine-is-a-file-not-an-asset.md) and [0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/0006-the-quarantine-is-written-by-the-assets-own-io-manager.md).
+Both are decisions: [ADR-0004](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0004-the-quarantine-is-a-file-not-an-asset) and [ADR-0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0006-the-assets-own-io-manager-writes-the-quarantine).
 
 | 0.6 | 0.7 | note |
 | --- | --- | --- |

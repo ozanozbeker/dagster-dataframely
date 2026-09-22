@@ -15,11 +15,11 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Four things this package names rather than leaving to Dagster: the asset's description, each check's description, the op underneath the asset, and the namespaces its own keys sit under.
+This page covers four things this package sets: the asset's description, each check's description, the name of the asset's op, and the namespaces of the names and keys it generates.
 
 ## The description comes from the schema
 
-`@dd.asset` resolves the asset's description in order, most specific first: `description=` on the decorator, then the schema's own docstring, then Dagster's own fallback to the decorated function's docstring.
+`dd.asset` takes the asset's description from the first of these you set: the `description=` argument, the schema's docstring, and the decorated function's docstring, which is Dagster's own default.
 
 ```{python}
 #| label: naming-1
@@ -33,48 +33,41 @@ def orders() -> pl.DataFrame:
     ...
 ```
 
-`A customer order line: one row per product on one order.` is what the catalog reads.
-The schema outranks the function because the schema describes the table, whereas the function's docstring describes the code that fills it, and the two are rarely the same sentence.
-Passing `description=` still wins over both, and a schema with no docstring leaves the function's standing exactly as it did before.
+The catalog shows `A customer order line: one row per product on one order.` as the description.
+The schema's docstring takes precedence over the function's, because it describes the table, not the code.
+`dd.asset` reads the schema's own docstring only, and ignores one inherited from a parent class, including `dy.Schema`'s.
 
-The schema's own `__doc__` is read rather than `inspect.getdoc`, which walks the class hierarchy: a schema with no docstring would otherwise inherit `dy.Schema`'s and describe itself as a base class for schema definitions.
-
-A quarantine spec writes its own: `Invalid rows from <asset>, with a column per rule saying why.`
+The spec from `quarantine_spec` has its own description: `Invalid rows from <asset>, with one column per rule.`
 
 ## Where a check's text comes from
 
-A schema's constraints reach a data consumer as three kinds of text, and each falls back differently.
+The Dagster UI shows a schema's rules in three places, and each has its own fallback order.
 
 | place | first choice | then | then |
 | --- | --- | --- | --- |
 | Columns tab | the rendered column constraint | the rule name | never the docstring |
 | check name | always `dy_rule__<rule>` | | |
 | check description | the rule's docstring | `<column> <rendered constraint>` | the whole name Dataframely reports, column part included |
-| collapsed check description | each member's rendered constraint | that member's rule name | never the docstring |
+| collapsed check description | each rule's rendered constraint | the rule name | never the docstring |
 
-The docstring stays out of the Columns tab and out of a collapsed check's description.
-Two sibling rules must not read in different voices because one author wrote a docstring and the other did not.
-From the UI that is a change of register with no visible cause.
+The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dy_rule__expr` metadata, but never in the check name.
+So changing a bound does not rename the check or start a new check history.
 
-Values are rendered but never named.
-A bound is a parameter, so it belongs in a column constraint and in the per-evaluation `dy_rule__expr` metadata, never in a check name that tightening it would orphan.
+The package renders column constraints as operators: `>= 0.0`, `length <= 64 bytes`, `matches ^[a-z]+$`, `in (a, b)`, `aligned to 1h`.
+It omits `nullability` and `unique`, because Dagster has separate fields for them on the column.
+It omits `inf` and `nan` too, because Dataframely adds them to every float column by default.
+All four still appear in the check name and the check description.
 
-Column constraints render as operators: `>= 0.0`, `length <= 64 bytes`, `matches ^[a-z]+$`, `in (a, b)`, `aligned to 1h`.
-`nullability` and `unique` are omitted, because Dagster models them as their own fields on the column and a constraint would say it twice.
-`inf` and `nan` are omitted too: Dataframely generates them from a default, so allowing the value removes the rule rather than inverting it, and a constraint for either says nothing about intent.
-Both still reach the check name and the check description.
+A `check=` with a bare lambda has no name, so the package renders it as `custom check` everywhere.
+Name your checks with a dict, such as `check={"lowercase": ...}`, and the package shows the key instead.
 
-A `check=` given a bare lambda has no name to recover, so it renders as `custom check` wherever it appears.
-Name your checks, `check={"lowercase": ...}`, and the data consumer sees the key.
+## Dagster names the op after the whole asset key
 
-## The op is named after the whole asset key
+`@dd.asset(Orders, key_prefix="sales", name="orders")` creates an op named `sales__orders`, the same way `@dg.asset` names its op.
+An op name must be unique within a code location, and an asset name need not be.
+With the asset name alone, two assets named `orders` under different prefixes would have two ops with the same name.
 
-`@dd.asset(Orders, key_prefix="sales", name="orders")` builds an op called `sales__orders`, which is how `@dg.asset` names its own.
-The asset name alone will not do, because an op name has to be unique across a code location and an asset name is not.
-Two assets sharing a name under different prefixes would be two ops called the same thing.
-Dagster allows a repeated op name only where the two definitions compare equal, and two of these never are, since every check output name embeds its own asset key.
-
-The op name is the step key and the address run config resolves against, so both read the whole key:
+The op name is also the step key and the key under `ops:` in run config, so both use the whole asset key:
 
 ```yaml
 ops:
@@ -86,27 +79,35 @@ ops:
 ## The reserved namespaces
 
 There are three.
-The first two are namespaces Dagster forces apart.
 
-**`dy_`** covers every check name, every quarantine rule column and every key in check metadata bar one: the column-schema check `dy_schema__columns`, the rule checks `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
-A check name becomes an op output, which Dagster validates against `^[A-Za-z0-9_]+$`, so a slash is not available there.
+**`dy_`** starts every check name, every rule column in the quarantine, and every check metadata key except `dataframely/quarantine_address`.
+These are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
+A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
+So a check name cannot contain a slash.
 
-A rule name reaches a check name by rewriting `|` to `__`, so `amount|min` becomes `dy_rule__amount__min`.
-`check_name(rule)` is exported, so a test can name a check without doing that rewrite by hand.
+A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
+`dd.wiring.check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
 
-**`dataframely/`** covers every key on a materialization, which has no such limit.
-It is also the one namespace that reaches a check result: the outcomes that raise have no materialization to carry the quarantine address, so `dataframely/quarantine_address` rides the checks under the same spelling.
-It parallels Dagster's own `dagster/`, so everything this package writes sorts in one block apart from Dagster's keys and your IO manager's.
+**`dataframely/`** starts every materialization metadata key this package names.
+A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.
+This package's keys then sort together, apart from Dagster's keys and your IO manager's.
 
-A schema with a column of its own inside `dy_` raises `ReservedColumnError`, a column spelled in anything but `A-Za-z0-9_` raises `UnnameableColumnError`, and two rules that rewrite to one check name raise `CheckNameCollisionError`.
-Every public function that takes a schema raises all three, so the decorator refuses such a schema where it is declared and a hand-wired asset refuses one wherever it first hands the schema over (ADR-0008).
+`dataframely/quarantine_address` is the one `dataframely/` key that also appears on check results.
+When every row fails validation, the run raises `NoValidRowsError` and has no materialization.
+So each check result has the quarantine address under that key.
 
-An unnameable column is almost always a `dy.Column(alias=...)`, which Dataframely offers for a name that is not a Python identifier.
-An alias holding a `|` is the one worth naming twice: that is Dataframely's own rule delimiter, so before this error it surfaced as a `KeyError` on a column the schema never declared.
+Every public function that takes a schema raises three errors for names this package cannot use (ADR-0008).
+It raises `ReservedColumnError` for a column name that starts with `dy_`.
+It raises `InvalidColumnNameError` for a column name with characters Dagster does not allow in a check name, which is anything outside `A-Za-z0-9_`.
+It raises `CheckNameCollisionError` for two rules that produce the same check name.
+So `dd.asset` raises them where you declare the asset, and a hand-wired asset raises them in the first of these functions it calls.
 
-**`<name>_quarantine`** is the third, and it is unlike the other two.
-It is the asset key a quarantine is written under, and asset keys are yours as much as they are this package's, so it is the one reservation somebody else can take first.
-A run of a quarantined asset proves it is free before it runs the body, and fails with `QuarantineKeyCollisionError` if it is not.
+A column name with such characters almost always comes from `dy.Column(alias=...)`, which Dataframely provides for a name that is not a Python identifier.
+A `|` is one of them, and Dataframely also uses it to separate a column from its rule name.
 
-All three are hardcoded rather than configurable.
-Their whole value is being the same string in every project, so a setting would only let one project make its check names unrecognisable to the next.
+**`<name>_quarantine`** is the third: the asset key a writer writes the invalid rows under.
+You also choose asset keys in this key space, so another asset can already have this key.
+Before the decorated function runs, a run of an asset with `quarantine=True` checks that no other asset in the code location materializes this key.
+If one does, the run raises `QuarantineKeyCollisionError`.
+
+No setting changes any of the three, so they are the same in every project.

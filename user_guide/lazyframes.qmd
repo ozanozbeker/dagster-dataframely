@@ -15,9 +15,9 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Two places meet a `pl.LazyFrame`, and they read it differently on purpose.
-A read has no object yet, so the annotation is the only signal it has.
-Validation takes the plan and executes it, once, in `Schema.filter`.
+A `pl.LazyFrame` appears in two places: an input your asset reads, and the frame it returns.
+The IO manager returns a `LazyFrame` or a `DataFrame` for an input, depending on the parameter's annotation.
+Validation collects a returned `LazyFrame` once, in `Schema.filter`.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
@@ -29,15 +29,16 @@ flowchart TB
         V2 --> V3["Schema.filter, streaming engine"]
         V3 --> V4["valid rows and invalid rows, in memory"]
         V4 --> V5["per-rule checks"]
-        V5 --> V6["DataFrame handed to the IO manager"]
+        V5 --> V6["DataFrame passed to the IO manager"]
     end
 ```
 
-Six steps in a line: the `LazyFrame` is returned, the column-schema check runs, `Schema.filter` executes the plan on the streaming engine, the valid rows and the invalid rows land in memory, the per-rule checks report, and a `DataFrame` goes to the IO manager.
+In order: the decorated function returns a `LazyFrame`, the column-schema check runs, `Schema.filter` collects the plan on the streaming engine, the package holds the valid rows and the invalid rows in memory, the checks report, and the IO manager receives a `DataFrame`.
 
 ## Reads dispatch on the annotation
 
-Annotate an input `pl.LazyFrame` and the IO manager hands back an unexecuted scan, so a downstream `filter` or `select` prunes rows and columns before anything is decoded:
+Annotate an input `pl.LazyFrame` and the IO manager returns a scan that has not run yet.
+Polars then pushes a `filter` or `select` down into the scan, so it drops those rows and columns while it reads the file:
 
 ```{python}
 #| label: lazyframes-1
@@ -46,15 +47,16 @@ def recent(orders: pl.LazyFrame) -> pl.LazyFrame:
     return orders.filter(pl.col("amount") > 100)
 ```
 
-The read is the IO manager's, so this is a property of the one you bound rather than of this decorator, and the annotation works the same on a plain `@dg.asset`.
-Annotate `pl.DataFrame` instead and the file is read whole.
+The IO manager reads the input, not this package, so this depends on the IO manager you bound.
+The annotation works the same on a plain `@dg.asset`.
+Annotate `pl.DataFrame` instead and the IO manager reads the whole file.
 
-## Validation materializes
+## Validation collects the plan
 
-`Schema.filter` takes a plan and hands back two: the valid rows and the invalid rows.
-This package collects both, together, in one `collect_all` on the streaming engine, so the source is not read twice.
+`Schema.filter` takes a plan and returns two: one for the valid rows and one for the invalid rows.
+This package collects both in one `collect_all` call on the streaming engine, so Polars reads the source once.
 
-**A `LazyFrame` return executes there, once, and is validated exactly as a `DataFrame` return is.**
+**That call collects a returned `LazyFrame` once, and validates it the same way as a returned `DataFrame`.**
 
 ```{python}
 #| label: lazyframes-2
@@ -63,22 +65,21 @@ def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0)
 ```
 
-Your joins, filters and aggregations therefore run in the streaming engine, which the package's `collect_all` names rather than leaves to `auto`.
-Polars falls back to the in-memory engine for anything streaming cannot run, so naming it never fails a plan.
-An `auto` that chose to collect would keep the plan's own peak.
+So your joins, filters and aggregations run on the streaming engine.
+Polars falls back to the in-memory engine for any operation the streaming engine does not support, so the engine choice never makes a plan fail.
 
-What comes into memory is what the plan produced, not the plan.
-Peak memory is that frame plus one boolean column per rule, held once while the valid rows and the invalid rows are cut from it, rather than the plan's own high-water mark.
-That is the saving for a plan with a large intermediate: a join that fans out before filtering back down otherwise pays for the fan-out in memory.
-A `DataFrame` return takes the same call after a free `.lazy()`, so there is one path and nothing past `Schema.filter` can tell the two apart.
-The column-schema check runs before `Schema.filter`, off `collect_schema()`, so a frame whose columns disagree with the schema is refused before a single row is pulled through the plan.
+The streaming engine collects only the plan's output into memory, not its intermediate results.
+Peak memory is that output plus one boolean column per rule, held once while `Schema.filter` separates the valid rows from the invalid rows.
+This helps a plan with a large intermediate result, such as a join that multiplies rows before a filter removes most of them.
+The in-memory engine would hold every row that join produced.
+A returned `DataFrame` goes through the same call after `.lazy()`, which copies no data.
+The column-schema check runs first and reads only `collect_schema()`, which does not run the plan.
+So a frame whose columns or dtypes differ from the schema raises `ColumnSchemaError` before the plan runs.
 
-What stays eager is storage, not the computation.
-This package does not promise to write a table.
-It promises to write a table and report on it.
-Every outcome past `Schema.filter` counts, samples, writes or profiles the valid rows and the invalid rows, and validation cannot choose among its outcomes without counting both.
-So the outcomes whose whole purpose is that nothing gets written would have to execute the plan to learn that, and writing straight to storage would have written before it knew.
-A plain `@dg.asset` streams end to end with nothing read back, because it has none of those duties: no schema means no validation, no per-rule checks and no statistics pass, so nothing forces the result into memory.
-The measurements are in [`docs/research/lazyframe-end-to-end.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/lazyframe-end-to-end.md).
+The plan runs on the streaming engine, but the write does not stream: the IO manager receives a `DataFrame` in memory.
+The package counts the valid rows and the invalid rows to determine the outcome, and two outcomes do not write the table.
+Streaming straight to storage would write the table before the package counted the rows.
+A plain `@dg.asset` has no validation, checks or statistics, so it can stream end to end without collecting its result into memory.
+The measurements are in [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#lazy-validation-and-lazy-storage).
 
-This is the cost of schema on write, and it is paid at silver and gold scale rather than at ingestion scale.
+Schema on write needs the result in memory, so it suits silver and gold tables better than data at ingestion scale.

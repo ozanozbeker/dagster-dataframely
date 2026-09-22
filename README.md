@@ -1,8 +1,8 @@
 # `dagster-dataframely`
 
-[Dataframely](https://github.com/Quantco/dataframely) describes what a [Polars](https://pola.rs) frame should look like.
-[Dagster](https://dagster.io) has first-class places to show that: the Columns tab and asset checks.
-`dagster-dataframely` wires the two together, so you describe a table once and Dagster shows it everywhere.
+[Dataframely](https://github.com/Quantco/dataframely) validates [Polars](https://pola.rs) frames against a schema.
+[Dagster](https://dagster.io) has two built-in places to show a schema: the Columns tab and asset checks.
+`dagster-dataframely` attaches a Dataframely schema to a Dagster asset, so you declare a table once and Dagster shows it in both places.
 
 <!-- snippet: demo/src/dagster_dataframely_demo/defs/silver/customers.py -->
 ```python
@@ -27,55 +27,62 @@ def customers(raw_customers: pl.DataFrame) -> pl.DataFrame:
 ```
 
 That is the whole integration.
-Every block of code on this page is copied from [the demo pipeline](https://github.com/ozanozbeker/dagster-dataframely/tree/main/demo), and every image is a screenshot of it.
-The images show its `orders` table, whose thirteen-column schema gives each surface something to show.
+Every Python block on this page comes from [the demo pipeline](https://github.com/ozanozbeker/dagster-dataframely/tree/main/demo), and every image is a screenshot of it.
+The images show assets that use its thirteen-column `Orders` schema.
 From that one declaration you get:
 
-- **The catalog's Columns tab**, filled in before the asset has ever run: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and every remaining constraint listed beside it.
+- **The catalog's Columns tab**, filled in before the asset first runs: dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every other column constraint beside its column.
 
-  ![The catalog's Columns tab for `orders`, filled from the schema: all thirteen columns with their dtypes and descriptions, and the column tags `amount` declared through `metadata=`.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/columns-tab.png)
+  ![The catalog's Columns tab for `orders`, filled from the schema: all thirteen columns with their dtypes and descriptions, and the column tags on `amount`, declared through `metadata=`.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/columns-tab.png)
 
-- **One asset check per Dataframely rule**, each with its own pass/fail history.
+- **One asset check per Dataframely rule**, and each check has its own pass/fail history.
 
-  ![A clean run's Checks tab at the default granularity: one check per rule, each with its own history. The selected one is described by its rendered constraint, and carries the rule's name and expression as metadata.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/check-list.png)
+  ![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/check-list.png)
 
-- **A blocking column-schema check** that compares the frame's columns and dtypes against the schema, before a single row is filtered.
+- **A blocking column-schema check** that compares the frame's columns and dtypes with the schema's, before `Schema.filter` runs.
 
-  ![A run log where `quantity` arrived `Int64`. The failing `dy_schema__columns` check carries `dy_schema__errors` with the expected and actual dtype, and the step failure below it repeats the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
+  ![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
 
-- **Somewhere for the rows that do not fit**, if you want it.
-  Add `quarantine=True` and the rows that fail validation are written beside the table rather than failing the run, as long as something survives.
+- **A quarantine for invalid rows**, if you declare one.
+  With `quarantine=True`, a run with invalid rows writes them to a quarantine next to the table, writes the valid rows to the table, and succeeds.
+  The run still fails when every row is invalid.
 
-  ![The lineage view. The table materialized with 17 of its 24 checks passing, and its quarantine sits beside it as a node of its own, drawn dashed because nothing ever materializes it: the rejected rows were written inside the table's own step.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-lineage.png)
+  ![The lineage view. The table materialized with 17 of its 24 checks passing. Its quarantine is a separate node beside it, drawn with a dashed outline because nothing materializes it: the table's own step wrote the invalid rows.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-lineage.png)
 
-The decorated function is an ordinary Dagster asset body.
-Upstream assets bind as parameters, you declare `context` if you want it, and you can return any of five things: a frame, or a `dg.MaterializeResult` carrying one, eager or lazy, or `None`.
+The decorated function is a normal Dagster asset function.
+Dagster passes upstream assets to it as parameters.
+It can also declare a `context` parameter.
+It returns one of five things: a `pl.DataFrame`, a `pl.LazyFrame`, a `dg.MaterializeResult` of either, or `None`.
 
-`@dg.asset` is the mechanism underneath, and the vocabulary.
-Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar six parameters the decorator owns or rules out.
-A test asserts that in both directions, and [the user guide](https://ozanozbeker.com/dagster-dataframely/user-guide/declaring-an-asset.html) lists the six.
+`dd.asset` builds a `@dg.asset` and accepts its parameters under the same names.
+It leaves out six, which it sets itself or does not support.
+[The user guide](https://ozanozbeker.com/dagster-dataframely/user-guide/declaring-an-asset.html) lists them.
+A test fails if `@dg.asset` adds a parameter that `dd.asset` lacks, or removes one that `dd.asset` passes on.
 
 ## Package philosophy
 
 **Schema on write.**
-Validation happens when a table is written, never when it is read.
-The checks run before the IO manager sees the frame, so the rows that fail never reach the table.
+Validation happens when an asset writes a table, never when it reads one.
+The checks run before the IO manager receives the frame, so it never writes a failing row to the table.
 
-That puts this package after ingestion, at bronze to silver to gold, where the data is already on your side and the question is whether it is fit to publish.
-Land raw records with [`dlt`](https://dlthub.com), which has good reasons to be permissive, and declare a schema at the first table someone else would query.
-Ingestion-scale and larger-than-memory work belongs elsewhere.
+Use this package after ingestion, from bronze to silver to gold, to check that data is fit to publish.
+Load raw records with a permissive loader such as [`dlt`](https://dlthub.com), and declare a schema on the first table that other people query.
+Use another tool for ingestion-scale or larger-than-memory data.
 
-**The schema is the table's shape, and closing the gap is the asset's job.**
-A dtype that disagrees aborts the run rather than being coerced, because coercing quietly is how a wrong number reaches a table nobody re-reads.
-There is no lenient mode to turn on.
-Narrowing is free, though: `Schema.filter` drops the columns the schema never declared and returns the rest in the schema's order, so dtypes are the only thing ever yours to fix.
+**The decorated function must return the schema's dtypes.**
+A dtype that differs from the schema's fails the run, and the package never casts it.
+There is no lenient mode.
+Extra columns and column order need no extra work: `Schema.filter` drops the columns the schema does not declare and returns the rest in the schema's order.
+So dtypes are the only thing you have to fix.
 
-**Consent to partial data is a declaration, not a setting.**
-`quarantine=True` is the only dial, and no environment variable reaches it.
-Leave it off and one failing row stops the write, so your last-known-good table stays in place.
+**Partial data needs a declaration, not a setting.**
+The only parameter for it is `quarantine=True`.
+No environment variable sets it.
+Without it, one failing row fails the run and the package writes nothing, so your last-known-good table is unchanged.
 
-**The strictness belongs to the decorator, not to the package.**
-It is assembled from parts the package also exports under `dd.wiring`, and each one plugs a single feature into an asset the decorator does not fit: the Columns tab onto an asset that writes its own storage, or the checks onto a table something else already wrote.
+**The decorator is strict, but you can use its parts without it.**
+The package builds `dd.asset` from parts that it also exports under `dd.wiring`.
+Each part adds one feature to an asset that `dd.asset` cannot build: the Columns tab for an asset that writes its own storage, or the checks for a table that something else already wrote.
 
 ## Quick start
 
@@ -83,22 +90,22 @@ It is assembled from parts the package also exports under `dd.wiring`, and each 
 uv add dagster-dataframely
 ```
 
-You will need Python 3.12 or newer.
+You need Python 3.12 or newer.
 
-`dagster`, `dataframely` and `polars` are the dependencies, plus `universal-pathlib`, which already arrives with `dagster`.
+The dependencies are `dagster`, `dataframely` and `polars`, plus `universal-pathlib`, which `dagster` already installs.
 
-This package ships no IO manager, so bring one.
+This package does not include an IO manager.
 [`dagster-polars`](https://docs.dagster.io/integrations/libraries/polars) writes Polars frames to a filesystem or object store, and [`dagster-duckdb-polars`](https://docs.dagster.io/integrations/libraries/duckdb) writes them to a warehouse.
-Anything addressed by asset key works, because nothing here learns which manager you bound.
+Any IO manager that stores by asset key works.
 
 > **Pre-1.0.**
-> The public surface is covered by a characterization test rather than held by convention, so it will not move quietly.
-> It can still move: a `0.x` minor release is where a breaking change lands.
-> Pin to one minor if that matters to you: `>=` the version you installed, `<` the next minor.
-> Coming from 0.6 or 0.7, read [the changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) first.
+> A characterization test covers the public surface, so it never changes by accident.
+> It can still change: a `0.x` minor release can include breaking changes.
+> If that matters to you, pin to one minor version: `>=` the version you installed, `<` the next minor.
+> If you are upgrading from 0.6 or 0.7, read [the changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) first.
 
 Declare the schema and the asset as above, then bind an IO manager.
-In a `dg` project every module under `defs/` loads on its own, so that is one more file:
+In a `dg` project, Dagster loads every module under `defs/` automatically, so the IO manager needs one more file:
 
 <!-- snippet: demo/src/dagster_dataframely_demo/defs/resources.py -->
 ```python
@@ -114,26 +121,28 @@ def resources() -> dg.Definitions:
     )
 ```
 
-`customers` reads `raw_customers`, so whatever lands that table goes under `defs/` too.
+`customers` reads `raw_customers`, so the asset that produces `raw_customers` goes under `defs/` too.
 Run `dg dev` and materialize both from the UI.
 
 Four things now exist that did not before:
 
 - The catalog's Columns tab, filled from `Customers`, before the first run.
 - One asset check per rule, each with its own history, evaluated on every run.
-- A materialization carrying the row count, a row sample and per-dtype-group statistics.
-- A table wherever your IO manager puts one.
+- A materialization that has the row count, a row sample and statistics for each dtype group.
+- A table, written by your IO manager.
 
-To keep the rows that fail rather than failing the run, declare `@dd.asset(Customers, quarantine=True)`.
-The invalid rows go through the same IO manager, under the asset's own key with `_quarantine` on the end, carrying one column per rule saying why.
-The checks then fail at `WARN` and the run succeeds, so downstream proceeds on the rows that are fine.
+To write the rows that fail to a quarantine instead of failing the run, declare `@dd.asset(Customers, quarantine=True)`.
+The same IO manager writes them, under the asset's key with `_quarantine` appended.
+Each of those rows has one added column per rule, which shows whether the row failed that rule.
+The checks then fail at `WARN` and the run succeeds, so downstream assets read the valid rows.
 
-![The Checks tab for a quarantined asset. Seven of the twenty-four checks failed at `WARN`, and the selected one carries the rendered constraint, the rule's expression, and the two rows it rejected.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-checks.png)
+![The Checks tab for an asset with `quarantine=True` has seven of its twenty-four checks failing at `WARN`. The selected check shows its rendered constraint, the rule's expression, and the two rows that failed the rule.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-checks.png)
 
 ## Documentation
 
-[**https://ozanozbeker.com/dagster-dataframely**](https://ozanozbeker.com/dagster-dataframely/) is the guide, the API reference and the upgrade log.
-The site publishes what a user needs; what a contributor needs stays in the repo: [`CONTEXT.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CONTEXT.md) is the glossary, [`docs/adr/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/adr/) holds the decisions and [`docs/research/`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/research/) the measurements behind them.
+[**https://ozanozbeker.com/dagster-dataframely**](https://ozanozbeker.com/dagster-dataframely/) has the guide, the API reference and the changelog.
+The site is for users.
+Contributor documentation stays in the repository: [`CONTEXT.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CONTEXT.md) is the glossary, and [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md) records the decisions and the measurements the package was built on.
 
 ## License
 

@@ -5,17 +5,19 @@ Guidance for agents working in this repo.
 ## Writing
 
 Prose here follows ISO 24495-1.
-One idea per sentence, active voice, common words, the point first.
+Write one idea per sentence, in the active voice, with common words and the point first.
 This covers docstrings, comments, the docs, config comments and error messages.
 
 Docstrings follow [numpydoc](https://numpydoc.readthedocs.io/en/latest/format.html), enforced by `convention = "numpy"` in `ruff.toml`.
 
 ### Say what happens, without figures of speech
 
-No metaphors, analogies or personification.
+Do not use metaphors, analogies or personification.
 Code does not refuse, decide, know, learn, ask, answer or promise: it raises, sets, reads, receives, returns and guarantees.
-Rows do not land, arrive, ride or survive: they are written, passed, copied and kept.
+Rows do not land, arrive, ride or survive: the package writes, passes, copies and keeps them.
 `CONTEXT.md` lists the words to avoid and what to write instead.
+
+Give every sentence a verb, including a heading's description or a caption: "The decorator, and the spec that puts a quarantine in the graph" becomes "`dd.asset` builds an asset, and `quarantine_spec` adds its quarantine to the asset graph".
 
 Use the word Dagster, Polars or Dataframely already uses, in the meaning it has there.
 A step is Dagster's, a member is Dataframely's, and Polars collects a plan.
@@ -31,7 +33,7 @@ Across `src/`, docstrings and comments stay under 40% of the characters.
 - A comment is one line, and only for a reason the code does not show.
   No history, and no restating the code.
 - A test's docstring is one sentence naming the behaviour under test.
-- A measurement goes in `docs/research/`, and a declined design goes in `docs/out-of-scope/` or an ADR.
+- A declined design goes in `docs/out-of-scope/`, and a measurement taken before 1.0 is in `docs/pre-1.0.md`.
   The docstring links to it in one sentence.
 
 ### Examples use markdown fences, not doctest prompts
@@ -56,7 +58,7 @@ Ruff formats a chunk but does not lint it, so nothing reports an unused import o
 
 Do not add a `# 'value'` comment to an example: Quarto prints the real return value, so the comment would repeat it.
 
-Hovering a fence in Zed shows `&nbsp;` wherever the code is indented.
+Hovering a fence in Zed shows `&nbsp;` in front of every indented line.
 That is a pyrefly bug, so do not work around it.
 Pyrefly's `textDocument/hover` converts the whole docstring to markdown and replaces leading whitespace with `&nbsp;`, including inside fences.
 Doctest prompts avoid the bug because they start with a non-space character, but that is not a reason to go back to them.
@@ -64,11 +66,11 @@ Doctest prompts avoid the bug because they start with a non-space character, but
 ## Naming
 
 `CONTEXT.md` lists the word for each thing.
-These two rules set how an identifier is built.
+These two rules set the shape of an identifier.
 
 ### Name a function for what it returns
 
-A function that returns a value is named after the value, not after what it does.
+Name a function that returns a value after the value, not after what it does.
 `check_specs` returns check specs, `quarantine_frame` returns the quarantine frame, `delegating_writer` returns a writer, `frame_and_result` returns a frame and a returned result.
 
 Where the value has no name, give it one instead of using a verb: `described_rules` returns `DescribedRule`s, so the function is the record's name in snake case.
@@ -81,7 +83,7 @@ Avoid `get_*`, `build_*`, `make_*`, `compute_*`.
 
 ### Name a transformer with a participle
 
-A function that takes a value and returns it changed is named by the participle of the change.
+Use the participle of the change to name a function that takes a value and returns it changed.
 `_addressed` returns check results with the quarantine address added, `_suffixed` returns key parts with a suffix on the last one, `_checked` returns a value the setting allows.
 
 Where only part of the value changes, a participle is misleading.
@@ -96,7 +98,7 @@ ADR-0001 records the last of these: hand-wiring never changes the decorator's de
 
 ## Agent skills
 
-Per-repo configuration for the mattpocock engineering skills.
+This section configures the mattpocock engineering skills for this repo.
 
 The user-level skills: dagster-expert, polars, dataframely and the polars MCP are also relevant.
 
@@ -112,7 +114,7 @@ See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md`, `docs/adr/` and `docs/out-of-scope/` at the repo root.
+This repo is single-context: `CONTEXT.md`, `docs/pre-1.0.md` and `docs/out-of-scope/` sit at the repo root.
 See `docs/agents/domain.md`.
 
 ## Where prose goes
@@ -123,10 +125,11 @@ Four places, and each sentence goes in exactly one.
   What the package is, the one example, install, and links out.
   Its code blocks are copies of `demo/` modules that a prek hook keeps in sync, so edit the demo module and let the hook rewrite the README.
 - `user_guide/` is how to use the package, one `.qmd` page per topic.
-  Every behaviour, every setting, every error, with worked examples.
+  It covers every behaviour, every setting and every error, with worked examples.
   Every code cell runs when the site builds, so an example that no longer works fails the build.
 - Docstrings and comments give the reason the code is the way it is, within the limits in "Keep prose short".
-- `docs/adr/` records a decision that was hard to reverse, and `docs/research/` records the measurement behind one.
+- `docs/pre-1.0.md` records the decisions and the measurements the package was built on.
+  It is closed at 1.0, so a new decision goes in the module that implements it.
 
 So a docstring does not explain how to use a feature, and the guide does not explain the implementation.
 Write a numpydoc `Parameters` entry only when the name and the annotation do not already explain the parameter.

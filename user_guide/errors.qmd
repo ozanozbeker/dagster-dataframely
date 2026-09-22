@@ -15,57 +15,60 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
-Every message names the schema, the culprit and the fix.
+Every error this package raises is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
+Catch one by name, or catch `DagsterDataframelyError` to catch every one.
+Every message names what failed and how to fix it.
 
 | error | raised | what to do |
 | --- | --- | --- |
-| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member |
-| `ReservedColumnError` | at decoration, and from every public function taking a schema | rename the column that starts with `dy_` |
-| `UnnameableColumnError` | the same | spell the column in `A-Za-z0-9_`, renaming the `alias=` that named it |
-| `CheckNameCollisionError` | the same | rename one of the two rules that rewrite alike |
-| `InvalidSettingError` | on resolve, from whichever source supplied the value | fix the value at the source the message names |
-| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame, or use `context.add_asset_metadata`, or write a plain `@dg.asset` |
-| `MaterializeResultFieldError` | the same | drop `asset_key=` or `check_results=`; the decorator owns both |
-| `ColumnSchemaError` | after the column-schema check fails | fix the producing function, or cast deliberately in the asset body |
-| `ValidationAbortError` | after the filter, with no quarantine declared | fix the rows upstream, add `quarantine=True`, or drop them deliberately |
-| `NothingSurvivedError` | after the filter, with a quarantine declared and nothing left | read the quarantine at the address in the message |
-| `QuarantineKeyCollisionError` | before the body, on every run of a quarantined asset | rename the colliding asset, or use `quarantine_spec` |
-| `QuarantineDirError` | where the rows are handed over, under direct invocation only | set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or run the asset |
+| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema |
+| `ReservedColumnError` | at decoration, and by every public function that takes a schema | rename the column that starts with `dy_` |
+| `InvalidColumnNameError` | the same | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
+| `CheckNameCollisionError` | the same | rename one of the two rules that produce the same check name |
+| `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
+| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
+| `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
+| `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body |
+| `ValidationAbortError` | after `Schema.filter`, when rows failed and the asset declares no quarantine | fix the rows upstream, write them to a quarantine with `quarantine=True`, or drop them in the asset body |
+| `NoValidRowsError` | after `Schema.filter`, when every row failed validation and the asset declares a quarantine | read the invalid rows at the quarantine address in the message |
+| `QuarantineKeyCollisionError` | before the decorated function runs, on every run of an asset with `quarantine=True` | rename the other asset, or remove `quarantine=True`; if the other asset is your quarantine table, delete it and use `quarantine_spec` |
+| `QuarantineDirError` | under direct invocation only, when there are invalid rows to write | set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or run the asset |
 
-`ColumnSchemaError` names every offending column at once, with its expected and actual dtype, and the same list feeds the failing check's `dy_schema__errors` table, so the two cannot disagree.
+`ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
+The failing check's `dy_schema__errors` table lists the same columns.
 
-![A run log where `quantity` arrived `Int64`. The failing `dy_schema__columns` check carries `dy_schema__errors` with the expected and actual dtype, and the step failure below it repeats the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
+![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
 
-`ValidationAbortError` and `NothingSurvivedError` both state the damage per rule.
-The counts can sum past the invalid-row count, because one row can break several rules.
+`ValidationAbortError` and `NoValidRowsError` both give the failure count per rule.
+The counts can add up to more than the number of invalid rows, because one row can fail several rules.
 
 ## Three ways to get this wrong
 
-**Do not declare an asset keyed `<name>_quarantine` beside a quarantined `<name>`.**
+**Do not declare an asset keyed `<name>_quarantine` if `<name>` has `quarantine=True`.**
 `orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
-An asset of your own keyed `orders_quarantine` resolves to that same address, so the two writes land on one table or one file and whichever ran last wins.
-Every run of the quarantined asset checks first and fails before its body:
+An asset of your own keyed `orders_quarantine` has the same address.
+Both assets would write to the same table or file, and the second write would replace the first.
+So every run of `orders` checks for such an asset before the decorated function runs, and raises:
 
 ```text
-QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows go to
-'orders_quarantine', which another asset in this code location already materializes.
+QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows are written
+to 'orders_quarantine', which another asset in this code location already materializes. Rename
+that asset, or remove `quarantine=True` from 'orders'. If that asset is your own quarantine table,
+delete it and use `quarantine_spec` instead, which adds the quarantine itself to the asset graph.
 ```
 
-Rename your asset, or drop `quarantine=True` from `orders`.
-If that asset *is* your quarantine table, `quarantine_spec` is how you put the quarantine in the graph, and a spec stands for the quarantine rather than competing with it.
-
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
-Under PEP 563 every annotation reaches Dagster as a string.
-Its check on the `context` parameter compares against the real classes, so it refuses `context: dg.AssetExecutionContext` and `context: AssetExecutionContext` alike:
+Under PEP 563, Dagster receives every annotation as a string.
+Dagster compares the `context` annotation with the real classes, so it raises this error for both `context: dg.AssetExecutionContext` and `context: AssetExecutionContext`:
 
 ```text
 DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.AssetExecutionContext.
 `context` must be annotated with AssetExecutionContext, AssetCheckExecutionContext, OpExecutionContext, or left blank.
 ```
 
-That is Dagster's restriction rather than one this package imposes.
-`@dg.asset` refuses the same annotation with the same message, and both accept the parameter left blank, which is the one option in that message PEP 563 leaves standing:
+The restriction is Dagster's, not this package's.
+`@dg.asset` raises the same error for the same annotation.
+Both accept an unannotated `context`, which is the only option in that message that still works under PEP 563:
 
 ```{python}
 #| label: errors-1
@@ -76,7 +79,7 @@ def orders(context) -> pl.DataFrame:
 ```
 
 **A `@dy.rule()` body needs its class parameter.**
-Write one without it and the class still builds and the asset still defines.
+Without it, Python still defines the schema class and the asset, and raises no error.
 The run then fails when this package reads the rule's expression for the check metadata:
 
 ```text
@@ -97,4 +100,4 @@ class Orders(dy.Schema):
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 ```
 
-The docstring is not decoration: it becomes that check's description in the catalog.
+The docstring becomes that check's description in the catalog.

@@ -1,43 +1,48 @@
 # Expression-Based Metadata
 
 This package writes the statistics it derives from the schema, and takes no expression from a user.
-There is no way to say "profile these columns with this aggregate", and no way to put a revenue total, a ratio between two columns, or a count matching a predicate on a materialization.
+There is no way to ask for an aggregate over chosen columns, and no way to put a revenue total, a ratio or a predicate count on a materialization.
 
 The `statistics` setting is on or off.
-What it writes is one table per dtype group present, under `dataframely/valid_statistics/<group>`, and the groups are fixed.
+When it is on, the package writes one table per dtype group present, under `dataframely/valid_statistics/<group>`, and no setting changes the groups.
 
 ## Why this is out of scope
 
-Deferred from #15 when the statistics pass was designed, and closed on 2026-09-10 with no user having asked in the year since.
+The maintainer deferred it from #15 while designing the statistics, and closed it on 2026-09-10.
+No user asked for it in the month #47 was open.
 
-### The two features answer different questions
+### The two features report different things
 
-The group tables answer "what does this table look like", which is why a data consumer opens an asset.
-Every aggregate in them is typed and total, so the pass has no failure mode at all.
+The group tables show what the table looks like, which is why a data consumer opens an asset.
+Polars defines every aggregate in them for every value of its column's dtype, so computing them cannot fail.
 
-A named derived metric answers "how is the business doing", which is a question about the data rather than about the table.
-Dagster already has a place for that: a metric asset, with its own key, its own history, and its own checks.
-A number smuggled into a validated table's materialization metadata gets none of those.
+A named derived metric shows how the business is doing.
+That is a question about the data, not about the table.
+Dagster already has a place for it: a metric asset, with its own key, its own history, and its own checks.
+A number added to a validated table's materialization metadata has none of those.
 
-### The knob turns into a query language
+### The setting becomes a query language
 
-The moment a user supplies an expression, this package owns three decisions it has no basis for:
+Accepting an expression from a user requires three decisions, and nothing gives a basis for any of them:
 
-- Where the result lands, alongside `stats/*` or in a namespace of its own.
+- Where the package writes the result: beside `dataframely/valid_statistics/<group>`, or in a namespace of its own.
 - What happens when a metric fails to evaluate.
-  The statistics pass cannot fail, so there is no precedent to follow, and either answer is bad: taking the materialization down means a typo in a nice-to-have number fails a valid table, and dropping it with a warning means a metric can silently stop existing.
-- Whether the result is plottable, which is most of the value for a numeric metric over time and is a property of the metadata type rather than of the expression.
+  The statistics cannot fail, so there is no precedent, and both options are bad.
+  Failing the materialization lets a typo in an optional number fail a valid table.
+  Dropping the metric with a warning lets it stop appearing while every run succeeds.
+- Whether Dagster can plot the result.
+  For a numeric metric over time, the plot is most of the value, and it depends on the metadata type, not the expression.
 
 None of those has a right answer without a user to ask.
-Guessing them and freezing the guess into the surface is worse than not having the feature.
+Guessing the answers and fixing them in the public API is worse than not having the feature.
 
-## If this is reconsidered
+## If someone proposes this again
 
-The evidence that reopens it is a user who names a metric they cannot get any other way, and says why a separate asset is the wrong home for it.
-That request will also answer the failure-mode question, which is the one this package cannot decide alone.
+A user would reopen it by naming a metric they cannot get any other way, and explaining why a separate asset is the wrong place for it.
+That request would also settle the failure-mode question, which the maintainer cannot settle alone.
 
-Selector aggregates are the smaller half and may arrive first.
-They need no failure mode, since a selector over columns that are already typed stays total, so they could land without settling the derived-metric questions at all.
+Selector aggregates are the smaller of the two features, and the maintainer could add them first.
+They need no failure mode, because a selector picks columns whose dtypes the column-schema check already verifies, so adding them needs no answer to the derived-metric questions.
 
 ## Prior requests
 

@@ -15,10 +15,10 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-The schema is the only argument you have to pass, and it is positional.
-Everything else either forwards to Dagster under the name Dagster already uses, or resolves through [Settings](settings.qmd).
+The schema is the only required argument, and it is positional.
+Every other argument is `quarantine`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
 
-The decorated function is the part you write, so it is where parity with `@dg.asset` matters most:
+You write the decorated function as you would for `@dg.asset`:
 
 ```{python}
 #| label: declaring-an-asset-1
@@ -28,11 +28,11 @@ def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.Da
     return raw_orders
 ```
 
-Upstream assets bind by parameter name, just as they do on a plain `@dg.asset`, and `ins=` and `deps=` cover the cases a name cannot express.
-Declare `context` when you want to reach the run itself: the partition key, the log, resources and configuration all hang off it.
-Nothing rewrites your signature, so what you decorate stays a function you can read.
+Dagster passes upstream assets to it by parameter name, as it does for a plain `@dg.asset`.
+Use `ins=` and `deps=` where a parameter name is not enough.
+Declare a `context` parameter to use the partition key, the log, resources or configuration.
 
-This package does its work at two moments: when the module imports, and when the asset runs.
+This package does its work at two times: when the module imports, and when the asset runs.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
@@ -53,45 +53,46 @@ flowchart TB
     load --> run
 ```
 
-Two things exist as soon as the module imports, before you run anything:
+Two things exist as soon as the module imports, before any run:
 
 - **The Columns tab**, built from the schema.
-  Dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every remaining column constraint beside its column.
-- **A check spec per rule set**, so the catalog lists the checks an asset will report and a failing one has a name before it ever fails.
+  The tab shows dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every other column constraint beside its column.
+- **A check spec per rule set**, so the catalog lists the asset's checks by name before the first run.
 
-![A clean run's Checks tab at the default granularity: one check per rule, each with its own history. The selected one is described by its rendered constraint, and carries the rule's name and expression as metadata.](../assets/images/check-list.png)
+![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
 
-The asset's description comes from the schema's docstring, which [Naming](naming.qmd) covers.
+The asset's description comes from the schema's docstring, as [Naming](naming.qmd) describes.
 
 A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
-The asset's IO manager writes the valid rows, the writer writes the invalid rows to the quarantine, and each check reports a result.
-Not every run writes both tables: [The failure policy](the-failure-policy.qmd) has the six outcomes and what each one writes.
+The asset's IO manager writes the valid rows.
+A writer writes the invalid rows to the quarantine.
+Each check reports a result.
+Not every run writes both the valid and the invalid rows: [The failure policy](the-failure-policy.qmd) lists the six outcomes and what each one writes.
 
-`@dg.asset` is the mechanism underneath, and the vocabulary.
-Anything `@dg.asset` lets you say about one asset, you can say here under the same name, bar the six parameters below, and a test asserts that in both directions.
-`config_schema` is narrowed rather than absent: it takes a mapping, not Dagster's six-member union, so a type checker refuses the five legacy forms.
-Nothing refuses them at run time.
+`dd.asset` builds a `@dg.asset` and accepts its parameters under the same names, except the six below.
+A test fails if `@dg.asset` adds a parameter that `dd.asset` lacks, or removes one that `dd.asset` passes on.
+`config_schema` is narrower than Dagster's: it takes only a mapping, not the union of six types that `@dg.asset` accepts.
+A type checker rejects the five legacy forms, but nothing rejects them at run time.
 
 | `@dg.asset` parameter | why it is not here | what to write instead |
 | --- | --- | --- |
-| `check_specs` | the schema decides them, so nothing contests them | nothing |
-| `key` | `key_prefix` and `name` already say it, once | `key_prefix=` plus `name=` |
-| `output_required` | the outcomes that write nothing have to end the step without yielding | nothing |
-| `dagster_type` | ruled out ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and carries no severity dial, so it cannot state the failure policy | the schema, which is what this package checks against |
-| `is_virtual` | a virtual asset has no compute, so there is nothing to decorate | nothing |
-| `io_manager_def` | the forwarded `resource_defs` covers it, keyed rather than positional | `resource_defs={"io_manager": ...}` |
+| `check_specs` | they come from the schema's rules | nothing |
+| `key` | `key_prefix` and `name` set it | `key_prefix=` plus `name=` |
+| `output_required` | the outcomes that write nothing must end the step without an output | nothing |
+| `dagster_type` | declined ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and cannot set a severity, so it cannot apply the failure policy | the schema, which this package validates against |
+| `is_virtual` | a virtual asset has no function to decorate | nothing |
+| `io_manager_def` | `resource_defs` already sets it | `resource_defs={"io_manager": ...}` |
 
 ## The schema is a single `dy.Schema`, never a `dy.Collection`
 
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.
 Declare one asset per member instead, each with the member's own schema.
 
-The parts under [Hand-wiring](hand-wiring.qmd) are no route to one either, because `validation_results` is single-schema by signature.
-Assembling a Collection means reimplementing the hardest part of this package rather than composing it.
+The parts under [Hand-wiring](hand-wiring.qmd) cannot validate a Collection either, because `validation_results` takes a single schema.
 
 ## What the decorated function returns
 
-Five things are accepted:
+It can return five things:
 
 ```text
 pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
@@ -99,20 +100,21 @@ pl.LazyFrame                dg.MaterializeResult[pl.LazyFrame]
 None
 ```
 
-**What you return decides what happens, not how you annotated it.**
-A `LazyFrame` is filtered by the same call as a `DataFrame` whichever way the signature reads it, and a `dg.MaterializeResult` is unwrapped the same way.
+**The returned value determines what happens, not the annotation.**
+The same `Schema.filter` call filters a `LazyFrame` and a `DataFrame`.
+A `dg.MaterializeResult` is unwrapped first.
 
-`@dg.asset` does hold you to its annotation, by inferring the output's `dagster_type` from it.
-This decorator cannot, because `Schema.filter` materializes the valid rows and the invalid rows, so the asset always stores a `DataFrame` however the decorated function arrived at one.
-Annotate it anyway and a type checker will hold you to it instead.
-Parameterize a returned result when you do, since a bare `dg.MaterializeResult` is an implicit `Any` that a strict checker refuses.
+`@dg.asset` enforces its return annotation, because it infers the output's `dagster_type` from it.
+`dd.asset` does not.
+The asset always stores a `DataFrame`, because this package collects the valid rows even when the function returns a `LazyFrame`.
+Annotate the function anyway, so that a type checker enforces the annotation.
+Parameterize a returned result, because a strict type checker rejects a bare `dg.MaterializeResult` as an implicit `Any`.
 
-Return a result rather than a bare frame as soon as you have something to say about the materialization.
-It is the route this package prefers over the context, and the only one that survives a direct call.
-[Attaching your own metadata](what-a-run-produces.qmd#attaching-your-own-metadata) has both routes.
+Return a `dg.MaterializeResult` instead of a bare frame when you want to add metadata, tags or a data version to the materialization.
+Prefer it to `context.add_asset_metadata`: it is the only one of the two that works when you call the asset directly.
+[Attaching your own metadata](what-a-run-produces.qmd#attaching-your-own-metadata) describes both.
 
-Return `None` to skip, which [A partition with no data](where-invalid-rows-go.qmd#a-partition-with-no-data) covers.
-`dg.MaterializeResult(value=None)` is refused rather than read as the skip: a returned result exists to put metadata, tags or a data version on a materialization, and a skipped run has none.
+Return `None` to skip, as [A partition with no data](where-invalid-rows-go.qmd#a-partition-with-no-data) describes.
+To skip, return `None` itself: `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`.
 
 Return anything else and the run fails with `dg.DagsterInvariantViolationError` before the column-schema check.
-Dagster calls the decorated function dynamically, so it cannot enforce the return annotation, and without this guard a forgotten `return` surfaced two frames down as `'NoneType' object has no attribute 'collect_schema'`.
