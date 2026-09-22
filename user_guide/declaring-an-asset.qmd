@@ -5,20 +5,14 @@ title: "Declaring an asset"
 ```{python}
 #| label: setup-declaring-an-asset
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 The schema is the only argument you have to pass, and it is positional.
@@ -31,7 +25,7 @@ The decorated function is the part you write, so it is where parity with `@dg.as
 @dd.asset(Orders, quarantine=True, group_name="sales")
 def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
     context.log.info("%d rows arrived", raw_orders.height)
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 ```
 
 Upstream assets bind by parameter name, just as they do on a plain `@dg.asset`, and `ins=` and `deps=` cover the cases a name cannot express.

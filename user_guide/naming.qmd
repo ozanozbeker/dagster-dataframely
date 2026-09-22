@@ -5,20 +5,14 @@ title: "Naming"
 ```{python}
 #| label: setup-naming
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 Four things this package names rather than leaving to Dagster: the asset's description, each check's description, the op underneath the asset, and the namespaces its own keys sit under.
@@ -30,7 +24,7 @@ Four things this package names rather than leaving to Dagster: the asset's descr
 ```{python}
 #| label: naming-1
 class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
+    """A customer order line: one row per product on one order."""
 
 
 @dd.asset(Orders)
@@ -39,7 +33,7 @@ def orders() -> pl.DataFrame:
     ...
 ```
 
-`Customer orders, one row per order line.` is what the catalog reads.
+`A customer order line: one row per product on one order.` is what the catalog reads.
 The schema outranks the function because the schema describes the table, whereas the function's docstring describes the code that fills it, and the two are rarely the same sentence.
 Passing `description=` still wins over both, and a schema with no docstring leaves the function's standing exactly as it did before.
 

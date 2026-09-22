@@ -5,20 +5,14 @@ title: "Settings"
 ```{python}
 #| label: setup-settings
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 Every setting resolves in order, each overriding the one before: the package default, then an environment variable, then the argument on the asset.
@@ -104,7 +98,7 @@ Per asset:
 #| label: settings-1
 @dd.asset(Orders, max_failure_samples=0, row_sample=0)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 ```
 
 Or once for a whole code location, in the deployment's environment:

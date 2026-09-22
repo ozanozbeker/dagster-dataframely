@@ -43,8 +43,9 @@ Every Python fence in the README executes, because the README has no example tha
 A block that must stay static would need the script to learn an exception, and the honest move then is to ask whether it belongs in the README at all.
 
 **The gate proves less for the README than for the guide.**
-Its three blocks declare a schema, decorate two assets and construct a `dg.Definitions`; none runs a materialization.
+Its blocks declare a schema, decorate assets and bind an IO manager; none runs a materialization.
 So this catches an import break or a decorator signature change, and says nothing about what a run emits.
+Amended 2026-09-21: the README's blocks are now copies of `demo/` modules, synced by a prek hook, so the demo's tests assert what they do when run.
 
 **Losing the key degrades silently, so the script checks its own work.**
 `pre_render` appears in the template `great-docs config` generates and in the repository's own feature list, but not in the published configuration reference, and Great Docs is 0.17.0.

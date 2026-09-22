@@ -5,20 +5,14 @@ title: "Partitioning"
 ```{python}
 #| label: setup-partitioning
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 `partitions_def` forwards to the underlying `dg.asset` verbatim, so partitioning needed no code here and has no setting of its own.
@@ -37,7 +31,7 @@ daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     day = context.partition_key  # "2026-01-02"
     raw = pl.read_parquet(f"raw/orders/{day}.parquet")
-    return raw.select("order_id", "amount")
+    return raw
 ```
 
 That is how a partitioned `@dg.asset` does it, and this decorator is no different.
@@ -106,7 +100,7 @@ grid = dg.MultiPartitionsDefinition({
 def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     cell = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
     raw = pl.read_parquet(f"raw/orders/{cell['region']}/{cell['day']}.parquet")
-    return raw.select("order_id", "amount")
+    return raw
 
 
 @dd.asset(Orders, partitions_def=grid, quarantine=True)

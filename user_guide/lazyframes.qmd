@@ -5,20 +5,14 @@ title: "`LazyFrame`s"
 ```{python}
 #| label: setup-lazyframes
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 Two places meet a `pl.LazyFrame`, and they read it differently on purpose.
@@ -64,7 +58,7 @@ This package collects both, together, in one `collect_all` on the streaming engi
 #| label: lazyframes-2
 @dd.asset(Orders)
 def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
-    return raw_orders.filter(pl.col("amount") > 0).select("order_id", "amount")
+    return raw_orders.filter(pl.col("amount") > 0)
 ```
 
 Your joins, filters and aggregations therefore run in the streaming engine, which the package's `collect_all` names rather than leaves to `auto`.

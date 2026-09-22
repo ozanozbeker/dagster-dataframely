@@ -1,17 +1,15 @@
-"""Plumbing: the five frames this demo feeds its assets.
+"""Sample extracts standing in for the source systems the bronze assets read."""
 
-Underscored because a reader is meant to skip it. It answers "where do the rows come from", which has nothing to do with this package. `defs/` is where the library is.
-
-The rows are literal rather than generated. A demo you screenshot has to produce the same numbers every run, and someone chasing a red check has to be able to point at the row that caused it. Each frame's docstring says which rules it breaks and why that case is worth having.
-"""
+# demo: the rows are literal rather than generated, so every run and every screenshot
+# shows the same numbers, and a red check always points at a row you can find here.
 
 import datetime as dt
 from decimal import Decimal
 
 import polars as pl
 
-#: The dtypes restated by hand rather than derived from `Orders`. A frame that drifts from the schema then trips the gate loudly, which is a case this demo wants, instead of being quietly rebuilt to match.
-POLARS_SCHEMA: dict[str, pl.DataType] = {
+#: The dtypes the source systems deliver.
+SOURCE_SCHEMA: dict[str, pl.DataType] = {
     "order_id": pl.String(),
     "line_no": pl.Int32(),
     "email": pl.String(),
@@ -26,6 +24,9 @@ POLARS_SCHEMA: dict[str, pl.DataType] = {
     "tags": pl.List(pl.String()),
     "note": pl.String(),
 }
+
+#: The day the APAC storefront opened. Before it, APAC customers ordered from the US store.
+APAC_LAUNCH = dt.date(2026, 8, 4)
 
 
 def _line(  # noqa: PLR0913 - a row of a thirteen-column table, and naming each field is the readable spelling
@@ -43,10 +44,7 @@ def _line(  # noqa: PLR0913 - a row of a thirteen-column table, and naming each 
     tags: list[str] | None = None,
     note: str | None = None,
 ) -> dict[str, object]:
-    """Build one order line, defaulting the columns a given frame does not vary.
-
-    `tracking_id` derives from the key rather than being passed, so the `unique` rule holds for free as long as the key does.
-    """
+    """Return one order line, defaulting the columns a feed does not vary."""
     return {
         "order_id": order_id,
         "line_no": line_no,
@@ -65,19 +63,15 @@ def _line(  # noqa: PLR0913 - a row of a thirteen-column table, and naming each 
 
 
 def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
-    return pl.DataFrame(rows, schema=POLARS_SCHEMA)
+    return pl.DataFrame(rows, schema=SOURCE_SCHEMA)
 
 
 def _at(day: int, hour: int, minute: int) -> dt.datetime:
     return dt.datetime(2026, 8, day, hour, minute)  # noqa: DTZ001 - the schema declares no time zone
 
 
-def clean_orders() -> pl.DataFrame:
-    """Twelve lines across ten orders, every one of them valid.
-
-    Spread on purpose so the statistics tables have something to say: amounts from 0 to 1250, nulls in four columns, three gifts against nine, and five days of `ordered_at`.
-    """
-    # One call per line, because these rows are a table and reading them as one is the point. E501 is off in this repo, so the width costs nothing.
+def storefront_orders() -> pl.DataFrame:
+    """Return the storefront's order lines for the first week of August."""
     # fmt: off
     return _frame(
         [
@@ -98,30 +92,47 @@ def clean_orders() -> pl.DataFrame:
     # fmt: on
 
 
-def defective_orders() -> pl.DataFrame:
-    """Return the twelve clean lines plus eight that break a rule, one rule per row bar two.
+def storefront_customers() -> pl.DataFrame:
+    """Return the storefront's customer accounts."""
+    return pl.DataFrame({
+        "customer_id": ["CUS-001", "CUS-002", "CUS-003", "CUS-004", "CUS-005"],
+        "email": [
+            "ada@example.com",
+            "bo@example.com",
+            "cyd@example.com",
+            "dev@example.com",
+            "eli@example.com",
+        ],
+        "lifetime_value": [143.50, 340.00, 12.99, 89.95, 0.00],
+    })
 
-    `ORD-0015` trips three rules at once, which is what makes the quarantine's `cooccurrence` table read as one broken row rather than three unrelated counts. `ORD-0016` skips line 2, so `line_numbers_are_dense` rejects both of that order's lines: the case where a rule takes down a group rather than a row.
-    """
+
+def marketplace_orders() -> pl.DataFrame:
+    """Return the marketplace's order lines, which arrive with the defects its sellers leave in."""
     # fmt: off
     return _frame(
         [
-            *clean_orders().to_dicts(),
-            _line("ORD-0011", 1, "kim@example.com", "-4.00", ordered_at=_at(6, 8, 0)),  # amount|min
-            _line("ORD-0012", 1, "Lee@example.com", "22.00", ordered_at=_at(6, 9, 0)),  # email|check__lowercase
-            _line("ORD-0013", 1, "mo@example.com", "60.00", quantity=5000, ordered_at=_at(6, 10, 0)),  # quantity|max
-            _line("ORD-9", 1, "nia@example.com", "31.00", ordered_at=_at(6, 11, 0)),  # order_id|regex
-            _line("ORD-0014", 1, "ned@example.com", "77.00", priority=9, ordered_at=_at(6, 12, 0)),  # priority|is_in
-            _line("ORD-0015", 1, "Ora@example.com", "-1.00", status="paid", ordered_at=_at(6, 13, 0)),  # amount|min, email|check__lowercase and paid_orders_have_amount at once
-            _line("ORD-0016", 1, "pat@example.com", "14.00", ordered_at=_at(6, 14, 0)),  # line_numbers_are_dense: line 2 is missing,
-            _line("ORD-0016", 3, "pat@example.com", "16.00", ordered_at=_at(6, 14, 0)),  # so both of these go
+            *storefront_orders().to_dicts(),
+            _line("ORD-0011", 1, "kim@example.com", "-4.00", ordered_at=_at(6, 8, 0)),  # negative amount
+            _line("ORD-0012", 1, "Lee@example.com", "22.00", ordered_at=_at(6, 9, 0)),  # uppercase email
+            _line("ORD-0013", 1, "mo@example.com", "60.00", quantity=5000, ordered_at=_at(6, 10, 0)),  # quantity out of range
+            _line("ORD-9", 1, "nia@example.com", "31.00", ordered_at=_at(6, 11, 0)),  # malformed order id
+            _line("ORD-0014", 1, "ned@example.com", "77.00", priority=9, ordered_at=_at(6, 12, 0)),  # unknown priority
+            _line("ORD-0015", 1, "Ora@example.com", "-1.00", status="paid", ordered_at=_at(6, 13, 0)),  # negative, uppercase, and paid for nothing
+            _line("ORD-0016", 1, "pat@example.com", "14.00", ordered_at=_at(6, 14, 0)),  # line 2 never arrived,
+            _line("ORD-0016", 3, "pat@example.com", "16.00", ordered_at=_at(6, 14, 0)),  # so this order's lines have a gap
         ]
     )
     # fmt: on
 
 
-def hopeless_orders() -> pl.DataFrame:
-    """Three lines, every one of them negative, so nothing survives the filter."""
+def partner_orders() -> pl.DataFrame:
+    """Return the B2B partner's order lines, whose export writes `quantity` as `Int64`."""
+    return storefront_orders().with_columns(pl.col("quantity").cast(pl.Int64))
+
+
+def legacy_orders() -> pl.DataFrame:
+    """Return the old platform's order lines, which stored refunds as negative amounts."""
     # fmt: off
     return _frame(
         [
@@ -133,30 +144,21 @@ def hopeless_orders() -> pl.DataFrame:
     # fmt: on
 
 
-def mistyped_orders() -> pl.DataFrame:
-    """Return the clean lines with `quantity` arriving `Int64`: a pipeline defect, not a data one."""
-    return clean_orders().with_columns(pl.col("quantity").cast(pl.Int64))
-
-
 def orders_on(orders: pl.DataFrame, day: dt.date) -> pl.DataFrame:
-    """Return the lines of `orders` placed on one day, for the partitioned asset.
-
-    Takes the table rather than building it, because the partitioned assets read the whole of `raw_orders` and take their own slice out of it. That is what a partition mapping does in a real project, and it is why those assets have a parent at all.
-
-    A slice rather than a restamp, so the five partitions hold disjoint orders and a fan-in over all of them is still a valid table. Restamping every line onto each day would duplicate the primary key the moment anything concatenated two partitions.
-
-    Whole orders stay together, because `line_numbers_are_dense` looks across an order's lines: splitting `ORD-0001` across two days would reject both halves.
-    """
+    """Return the lines of `orders` placed on one day, whole orders together."""
     return orders.filter(pl.col("ordered_at").dt.date() == day)
 
 
-def orders_for(orders: pl.DataFrame, day: dt.date, region: str) -> pl.DataFrame:
-    """One cell of the day-by-region grid.
+def orders_in(orders: pl.DataFrame, day: dt.date, region: str) -> pl.DataFrame:
+    """Return the lines of `orders` one region took on one day.
 
-    The schema has no region column, so the split is by order number: `eu` takes the even ones and `us` the odd. Whole orders again, for the density rule, and every cell of the grid holds at least one line so no partition materializes empty.
+    Orders route by number: every third to APAC once it launched, the rest even to the EU and odd to the US.
     """
-    wanted = 0 if region == "eu" else 1
-    numbered = orders_on(orders, day).with_columns(
-        pl.col("order_id").str.slice(4).cast(pl.Int32).alias("_number")
-    )
-    return numbered.filter(pl.col("_number") % 2 == wanted).drop("_number")
+    number = pl.col("order_id").str.slice(4).cast(pl.Int32)
+    apac = (number % 3 == 0) & pl.lit(day >= APAC_LAUNCH)
+    routed = {
+        "apac": apac,
+        "eu": ~apac & (number % 2 == 0),
+        "us": ~apac & (number % 2 == 1),
+    }
+    return orders_on(orders, day).filter(routed[region])

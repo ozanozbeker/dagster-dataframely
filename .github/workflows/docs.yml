@@ -60,9 +60,10 @@ jobs:
         with:
           version: "1.10.18"
       # `--group docs` on top of the default groups: `great-docs` needs the package itself
-      # importable, because it introspects it rather than parsing it, and two executed
-      # cells import `dagster-polars`, which lives in `dev`.
-      - run: uv sync --locked --group docs
+      # importable, because it introspects it rather than parsing it. `--all-packages` because
+      # every guide page imports the demo's schema and data, and the demo is a workspace
+      # member a root sync leaves out.
+      - run: uv sync --locked --all-packages --group docs
       # The changelog page is fetched from the GitHub API. Unauthenticated, that is 60
       # requests an hour per shared runner IP, and great-docs answers a 403 by warning and
       # shipping a site with no changelog page rather than by failing.

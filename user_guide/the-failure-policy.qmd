@@ -5,20 +5,14 @@ title: "The failure policy"
 ```{python}
 #| label: setup-the-failure-policy
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 There is no lenient mode and no strict flag, and that is deliberate.
@@ -81,7 +75,7 @@ What comes back is the schema's columns, in the schema's order, however they arr
 @dd.asset(Orders)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     # `net` is working state, and `raw_orders` carries columns `Orders` never declared.
-    # Both are dropped. What materializes is `order_id` then `amount`.
+    # Both are dropped. What materializes is the schema's thirteen columns, in its order.
     return raw_orders.with_columns(net=pl.col("amount") * 0.8)
 ```
 

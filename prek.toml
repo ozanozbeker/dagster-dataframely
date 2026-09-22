@@ -106,6 +106,18 @@ language = "system"
 files = '\.(md|qmd)$'
 require_serial = true
 
+# The README's code blocks are copies of demo modules, because GitHub and PyPI render it as
+# plain markdown and cannot include a file. This rewrites any copy that drifted and fails the
+# commit, like a formatter. It also runs when only the demo changed, since that is how a copy
+# drifts without the README being touched.
+[[repos.hooks]]
+id = "sync-demo-snippets"
+name = "sync demo snippets"
+entry = "uv run python scripts/sync-demo-snippets.py"
+language = "system"
+files = '^(README\.md|user_guide/.*\.qmd|demo/src/.*\.py)$'
+pass_filenames = false
+
 [[repos.hooks]]
 id = "uv-lock"
 name = "uv lock --check"

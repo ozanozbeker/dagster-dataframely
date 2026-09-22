@@ -5,20 +5,14 @@ title: "Errors"
 ```{python}
 #| label: setup-errors
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 Every error this package raises lives in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`, so you can catch one by name or catch the whole family.
@@ -78,7 +72,7 @@ That is Dagster's restriction rather than one this package imposes.
 @dd.asset(Orders)
 def orders(context) -> pl.DataFrame:
     context.log.info("run %s", context.run_id)
-    return pl.read_parquet("raw/orders.parquet").select("order_id", "amount")
+    return pl.read_parquet("raw/orders.parquet")
 ```
 
 **A `@dy.rule()` body needs its class parameter.**
@@ -94,12 +88,12 @@ TypeError: Orders.amount_is_positive() takes 0 positional arguments but 1 was gi
 ```{python}
 #| label: errors-2
 class Orders(dy.Schema):
-    status = dy.String(nullable=False)
-    amount = dy.Float64(nullable=False)
+    status = dy.Enum(["new", "paid", "shipped", "cancelled"], nullable=False)
+    amount = dy.Decimal(10, 2, nullable=False)
 
     @dy.rule()
     def paid_orders_have_amount(cls) -> pl.Expr:
-        """Paid orders must carry a positive amount."""
+        """Require a positive amount on a paid line."""
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 ```
 

@@ -88,6 +88,7 @@ Five homes, and a sentence belongs in exactly one.
 
 - `README.md` is a landing page and a quick start, and it is also PyPI's long description and the docs site's landing page.
   What the package is, the one example, install, and links out.
+  Its code blocks are copies of `demo/` modules that a prek hook keeps in sync, so edit the demo module and let the hook rewrite the README.
 - `user_guide/` is how to use it, one `.qmd` page per topic.
   Every behaviour, every setting, every error, with worked examples.
   Every code cell executes when the site builds, so an example that stopped being true fails the build.

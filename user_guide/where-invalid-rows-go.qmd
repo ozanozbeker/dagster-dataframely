@@ -5,7 +5,7 @@ title: "Where invalid rows go"
 ```{python}
 #| label: setup-where-invalid-rows-go
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 from pathlib import Path
 
@@ -14,13 +14,8 @@ import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely_demo._data import storefront_orders
 
 
 from dagster_polars import PolarsParquetIOManager
@@ -28,7 +23,7 @@ from dagster_polars import PolarsParquetIOManager
 
 @dg.asset
 def raw_orders() -> pl.DataFrame:
-    return pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
+    return storefront_orders()
 
 
 # The monthly-by-distributor grid the skip example below is written against.
@@ -61,7 +56,7 @@ That means one declaration and two outcomes, rather than two integrations:
 #| label: where-invalid-rows-go-1
 @dd.asset(Orders, quarantine=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 ```
 
 | what you bound | where the invalid rows land |

@@ -5,20 +5,14 @@ title: "What a run produces"
 ```{python}
 #| label: setup-what-a-run-produces
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
 ```
 
 Launching is Dagster's business and works the way it always does: materialize from the UI, from a schedule or a sensor, or call `dg.materialize([orders], resources={...})`.
@@ -116,7 +110,7 @@ It is what `@dg.asset` accepts, it is the only supported route to a materializat
 @dd.asset(Orders)
 def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
     return dg.MaterializeResult(
-        value=raw_orders.select("order_id", "amount"),
+        value=raw_orders,
         metadata={"source": "stripe", "extracted_at": "2026-08-13"},
         data_version=dg.DataVersion("2026-08-13"),
         tags={"run/flavour": "backfill"},
@@ -147,7 +141,7 @@ Nothing here blocks it, and since the decorator builds one asset with one key, t
 @dd.asset(Orders)
 def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
     context.add_asset_metadata({"source": "stripe"})
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 ```
 
 Two things about it are worth knowing, and one neighbouring call is worth avoiding.

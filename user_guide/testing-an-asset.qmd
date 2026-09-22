@@ -5,20 +5,15 @@ title: "Testing an asset"
 ```{python}
 #| label: setup-testing-an-asset
 #| code-fold: true
-#| code-summary: "Setup: what every example on this page assumes"
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-
-
-class Orders(dy.Schema):
-    """Customer orders, one row per order line."""
-
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely_demo._data import marketplace_orders, storefront_orders
 
 
 from pathlib import Path
@@ -26,9 +21,7 @@ from pathlib import Path
 daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
 Path("raw/orders").mkdir(parents=True, exist_ok=True)
-pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]}).write_parquet(
-    "raw/orders/2026-01-02.parquet"
-)
+storefront_orders().write_parquet("raw/orders/2026-01-02.parquet")
 ```
 
 To test an asset, call it.
@@ -48,13 +41,11 @@ def quarantine_dir(tmp_path, monkeypatch):
 
 @dd.asset(Orders, quarantine=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 
 
-def test_orders_quarantines_the_negative_amount(quarantine_dir):
-    raw_orders = pl.DataFrame({"order_id": ["a", "b", "c"], "amount": [1.0, 2.0, -3.0]})
-
-    events = list(orders(dg.build_asset_context(), raw_orders))
+def test_orders_quarantines_the_bad_lines(quarantine_dir):
+    events = list(orders(dg.build_asset_context(), marketplace_orders()))
     tables = {
         event.asset_key: event.value
         for event in events
@@ -66,9 +57,9 @@ def test_orders_quarantines_the_negative_amount(quarantine_dir):
         if isinstance(event, dg.AssetCheckResult)
     }
 
-    assert tables[dg.AssetKey(["orders"])].height == 2
+    assert tables[dg.AssetKey(["orders"])].height == 12
     assert not checks["dy_rule__amount__min"]
-    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 1
+    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 8
 ```
 
 ```{python}
@@ -83,7 +74,7 @@ import tempfile
 
 with tempfile.TemporaryDirectory() as tmp:
     os.environ["DAGSTER_DATAFRAMELY_QUARANTINE_DIR"] = tmp
-    test_orders_quarantines_the_negative_amount(Path(tmp))
+    test_orders_quarantines_the_bad_lines(Path(tmp))
 ```
 
 Two things about that call are worth reading twice.
@@ -102,10 +93,10 @@ An asset without a quarantine needs neither:
 #| label: testing-an-asset-2
 @dd.asset(Orders)
 def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
+    return raw_orders
 
 
-clean = pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
+clean = storefront_orders()
 events = list(plain_orders(clean))
 ```
 

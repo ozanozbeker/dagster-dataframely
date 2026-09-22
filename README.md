@@ -4,30 +4,36 @@
 [Dagster](https://dagster.io) has first-class places to show that: the Columns tab and asset checks.
 `dagster-dataframely` wires the two together, so you describe a table once and Dagster shows it everywhere.
 
+<!-- snippet: demo/src/dagster_dataframely_demo/defs/silver/customers.py -->
 ```python
-import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
 
 
-class Orders(dy.Schema):
-    order_id = dy.String(primary_key=True)
-    amount = dy.Float64(nullable=False, min=0.0)
+class Customers(dy.Schema):
+    """A storefront customer account."""
+
+    customer_id = dy.String(primary_key=True, description="Account identifier.")
+    email = dy.String(nullable=False, description="Where receipts are sent.")
+    lifetime_value = dy.Float64(nullable=False, min=0.0, description="Spend to date.")
 
 
-@dd.asset(Orders)
-def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
+@dd.asset(Customers)
+def customers(raw_customers: pl.DataFrame) -> pl.DataFrame:
+    """Validate the storefront's customer accounts."""
+    return raw_customers
 ```
 
 That is the whole integration.
+Every block of code on this page is copied from [the demo pipeline](https://github.com/ozanozbeker/dagster-dataframely/tree/main/demo), and every image is a screenshot of it.
+The images show its `orders` table, whose thirteen-column schema gives each surface something to show.
 From that one declaration you get:
 
 - **The catalog's Columns tab**, filled in before the asset has ever run: dtypes, descriptions, nullability, uniqueness, the primary key stated once at table level, and every remaining constraint listed beside it.
 
-  ![The catalog's Columns tab, filled from the schema: each column's dtype and description, `tracking_id` marked unique, the composite primary key stated once at table level, and the column tags `amount` declared through `metadata=`.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/columns-tab.png)
+  ![The catalog's Columns tab for `orders`, filled from the schema: all thirteen columns with their dtypes and descriptions, and the column tags `amount` declared through `metadata=`.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/columns-tab.png)
 
 - **One asset check per Dataframely rule**, each with its own pass/fail history.
 
@@ -91,43 +97,36 @@ Anything addressed by asset key works, because nothing here learns which manager
 > Pin to one minor if that matters to you: `>=` the version you installed, `<` the next minor.
 > Coming from 0.6 or 0.7, read [the changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) first.
 
-Declare the schema and the asset as above, then tell the code location where to write:
+Declare the schema and the asset as above, then bind an IO manager.
+In a `dg` project every module under `defs/` loads on its own, so that is one more file:
 
+<!-- snippet: demo/src/dagster_dataframely_demo/defs/resources.py -->
 ```python
+import dagster as dg
 from dagster_polars import PolarsParquetIOManager
 
 
-@dg.asset
-def raw_orders() -> pl.DataFrame:
-    return pl.DataFrame({"order_id": ["a", "b"], "amount": [1.0, 2.0]})
-
-
-defs = dg.Definitions(
-    assets=[raw_orders, orders],
-    resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
-)
+@dg.definitions
+def resources() -> dg.Definitions:
+    """Bind the Parquet IO manager the pipeline writes through."""
+    return dg.Definitions(
+        resources={"io_manager": PolarsParquetIOManager(base_dir="storage")}
+    )
 ```
 
-`orders` binds `raw_orders`, so whatever produces that goes in the list too.
-Point `dg dev` at that module and materialize `orders` from the UI, or call `dg.materialize([orders], resources=...)` from a script.
+`customers` reads `raw_customers`, so whatever lands that table goes under `defs/` too.
+Run `dg dev` and materialize both from the UI.
 
 Four things now exist that did not before:
 
-- The catalog's Columns tab, filled from `Orders`, before the first run.
+- The catalog's Columns tab, filled from `Customers`, before the first run.
 - One asset check per rule, each with its own history, evaluated on every run.
 - A materialization carrying the row count, a row sample and per-dtype-group statistics.
 - A table wherever your IO manager puts one.
 
-To keep the rows that fail rather than failing the run, add `quarantine=True`:
-
-```python
-@dd.asset(Orders, quarantine=True)
-def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders.select("order_id", "amount")
-```
-
+To keep the rows that fail rather than failing the run, declare `@dd.asset(Customers, quarantine=True)`.
 The invalid rows go through the same IO manager, under the asset's own key with `_quarantine` on the end, carrying one column per rule saying why.
-The checks then fail at `WARN` and the run succeeds, so downstream proceeds on the data that is fine.
+The checks then fail at `WARN` and the run succeeds, so downstream proceeds on the rows that are fine.
 
 ![The Checks tab for a quarantined asset. Seven of the twenty-four checks failed at `WARN`, and the selected one carries the rendered constraint, the rule's expression, and the two rows it rejected.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-checks.png)
 
