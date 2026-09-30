@@ -1,5 +1,5 @@
-<!-- rumdl-disable-next-line MD033 -->
-# `dagster-dataframely` <img src="https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/dagster-dataframely-hex-dark-433.png" align="right" height="138" alt="dagster-dataframely logo" />
+<!-- rumdl-disable-next-line MD033 MD041 -->
+<picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/dagster-dataframely-social-card-dark.png"><img src="https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/dagster-dataframely-social-card-light.png" alt="dagster-dataframely: Dataframely integration for Dagster." width="100%"></picture>
 
 [Dataframely](https://github.com/Quantco/dataframely) validates [Polars](https://pola.rs) frames against a schema.
 [Dagster](https://dagster.io) has two built-in places to show a schema: the Columns tab and asset checks.
