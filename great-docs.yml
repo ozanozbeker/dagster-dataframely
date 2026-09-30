@@ -27,9 +27,6 @@ site:
   css: assets/theme.css
   highlight-style: nord
 
-# The landing page is `README.md`, which opens with the social card, so a hero would show the logo twice.
-hero: false
-
 # The image is a URL into `assets/`, because great-docs copies a local path to the build root, which Quarto does not publish.
 social_cards:
   image: https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-social-card-dark.png
@@ -42,10 +39,7 @@ seo:
   title_template: "{page_title}"
 
 # Adds braces to the Python fences in the build directory's copies, so `README.md` and docstrings keep plain fences for GitHub, PyPI and ruff (ADR-0009).
-# Splits the README's `<picture>` into a light and a dark image, because the site's theme toggle does not change `prefers-color-scheme`.
-pre_render:
-  - scripts/brace-example-fences.py
-  - scripts/split-light-dark-pictures.py
+pre_render: scripts/brace-example-fences.py
 
 # No `freeze:` key, so Quarto runs every page on every build, which the build check needs: a change in `src/` can break a page nobody edited. `freeze: false` would have no effect, because great-docs omits it. Keeping `_freeze/` out of git and the CI cache makes every page run again.
 
