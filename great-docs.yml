@@ -38,6 +38,8 @@ social_cards:
 seo:
   canonical:
     base_url: https://ozanozbeker.com/dagster-dataframely/
+  # great-docs 0.17.0 adds the site name a second time (posit-dev/great-docs#327). Delete this once a release includes #335.
+  title_template: "{page_title}"
 
 # Adds braces to the Python fences in the build directory's copies, so `README.md` and docstrings keep plain fences for GitHub, PyPI and ruff (ADR-0009).
 # Splits the README's `<picture>` into a light and a dark image, because the site's theme toggle does not change `prefers-color-scheme`.
