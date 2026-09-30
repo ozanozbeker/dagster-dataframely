@@ -89,6 +89,13 @@ body.quarto-dark {
     }
 }
 
+/* great-docs highlights a hovered navbar link in orange. This uses the light-mode link blue, which has 5.5:1 contrast with white text. */
+#navbarCollapse > ul.navbar-nav.navbar-nav-scroll.me-auto > li > a:hover,
+body.quarto-dark #navbarCollapse > ul.navbar-nav.navbar-nav-scroll.me-auto > li > a:hover {
+    background-color: #0264D7;
+    color: #FFFFFF;
+}
+
 /* great-docs draws the navbar logo 24px tall, and the hex needs twice that for its grid to show. */
 .navbar-logo {
     height: 48px;
