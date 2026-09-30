@@ -10,14 +10,22 @@ authors:
     role: Maintainer
     email: github@ozanozbeker.com
 
-# The navbar shows the square mark, because the hex's text is too small to read at navbar height.
 logo:
-  light: assets/dagster-dataframely-favicon-dark.svg
-  show_title: true
+  light: assets/dagster-dataframely-hex-dark.svg
 
-# Leaving out `favicon` makes great-docs copy the logo SVG as the favicon. great-docs' own PNG icons blur the mark, and with `cairosvg` they also shrink it.
+# The favicon is an SVG, because great-docs copies an SVG unchanged. great-docs' own PNG icons blur the mark, and with `cairosvg` they also shrink it.
+favicon: assets/dagster-dataframely-favicon-dark.svg
 # great-docs reads no pre-made icon sizes, so this links the exported Apple touch icon. The URL is absolute, because Quarto does not rewrite paths in header HTML.
 include_in_header: '<link rel="apple-touch-icon" href="https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-favicon-dark-180.png">'
+
+# The site uses Nord colors. `assets/theme.css` sets everything except the accent.
+accent_color:
+  light: "#0075FF"
+  dark: "#5CA5FF"
+
+site:
+  css: assets/theme.css
+  highlight-style: nord
 
 # The landing page is `README.md`, which shows the hex beside its title, so a hero would show it twice.
 hero: false

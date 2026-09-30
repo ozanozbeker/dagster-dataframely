@@ -1,0 +1,381 @@
+/* The docs site's colors: Nord, the logo's navy and Polars' blue. great-docs reads its palette from these --gd-* variables. */
+
+:root {
+    --gd-bg-primary: #FFFFFF;
+    --gd-bg-secondary: #ECEFF4;
+    --gd-bg-tertiary: #E5E9F0;
+    --gd-text-primary: #2E3440;
+    --gd-text-secondary: #3B4252;
+    --gd-text-muted: #4C566A;
+    --gd-border-color: #D8DEE9;
+    --gd-border-light: #E5E9F0;
+    /* Polars' hover blue, because its main blue #0075FF has 4.2:1 contrast on white, under WCAG AA's 4.5:1. */
+    --gd-link-color: #0264D7;
+    --gd-code-bg: #ECEFF4;
+    --gd-code-color: #2E3440;
+    --gd-blockquote-bg: #ECEFF4;
+    --gd-sidebar-bg: #FFFFFF;
+    --gd-footer-text: #4C566A;
+    --gd-navbar-bg: rgba(255, 255, 255, 0.8);
+    --gd-navbar-text: #2E3440;
+    --gd-highlight-color: rgba(235, 203, 139, 0.4);
+    --gd-active-link: #0264D7;
+    --gd-citation-color: #0264D7;
+    --bs-body-color: #2E3440;
+    --bs-body-color-rgb: 46, 52, 64;
+    --bs-secondary-color: #4C566A;
+    --bs-code-color: #2E3440;
+}
+
+/* Quarto's `nord` highlight style colors code blocks in light mode. great-docs reads these variables in dark mode and for signatures. */
+:root,
+html.quarto-dark,
+body.quarto-dark {
+    --gd-syn-keyword: #81A1C1;
+    --gd-syn-operator: #81A1C1;
+    --gd-syn-none: #81A1C1;
+    --gd-syn-bool: #81A1C1;
+    --gd-syn-string: #A3BE8C;
+    --gd-syn-number: #B48EAD;
+    --gd-syn-function: #88C0D0;
+    --gd-syn-builtin: #88C0D0;
+    --gd-syn-name: #88C0D0;
+    --gd-syn-class: #8FBCBB;
+    --gd-syn-comment: #75829D;
+}
+
+/* Dark mode follows the docs of uv and ruff: the page is the darkest color, surfaces sit one step lighter, borders are white at low opacity, and links use one bright color. */
+html.quarto-dark,
+body.quarto-dark {
+    /* The navy of the hex's outline, one step darker than the code blocks, as uv's page is one step darker than its code. */
+    --gd-bg-primary: #06101C;
+    --gd-bg-secondary: #11243C;
+    --gd-bg-tertiary: #172E4A;
+    --gd-text-primary: #ECEFF4;
+    --gd-text-secondary: #D8DEE9;
+    /* #ECEFF4 at 75% opacity over the page. */
+    --gd-text-muted: #B2B7BE;
+    --gd-border-color: rgba(255, 255, 255, 0.12);
+    --gd-border-light: rgba(255, 255, 255, 0.06);
+    /* The logo's blue #2F8CFF, lightened to 7.5:1 contrast on the page. */
+    --gd-link-color: #5CA5FF;
+    --gd-code-bg: #0B1A2C;
+    --gd-code-color: #ECEFF4;
+    --gd-blockquote-bg: #11243C;
+    --gd-sidebar-bg: #06101C;
+    --gd-footer-text: #D8DEE9;
+    /* At 85% opacity over the page, this color renders as the code blocks' navy #0B1A2C, and the frosted navbar still shows content that scrolls under it. */
+    --gd-navbar-bg: rgba(12, 28, 47, 0.85);
+    --gd-navbar-text: #ECEFF4;
+    --gd-highlight-color: rgba(235, 203, 139, 0.25);
+    --gd-active-link: #5CA5FF;
+    --gd-citation-color: #5CA5FF;
+    --bs-body-color: #ECEFF4;
+    --bs-body-color-rgb: 236, 239, 244;
+    --bs-secondary-color: #B2B7BE;
+    --bs-code-color: #ECEFF4;
+}
+
+/* The navbar is fixed and semi-transparent, so the blur frosts the page as it scrolls under. */
+.navbar {
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    backdrop-filter: blur(12px) saturate(180%);
+}
+
+/* Bootstrap pads the navbar 1rem at the top and bottom, and Quarto pads it 1em at the sides. This rule applies from 992px up, because great-docs sets its own padding for the narrower two-row navbar. */
+@media (min-width: 992px) {
+    #quarto-header > nav {
+        padding: 5px;
+    }
+}
+
+/* great-docs draws the navbar logo 24px tall, and the hex needs twice that for its grid to show. */
+.navbar-logo {
+    height: 48px;
+}
+
+.navbar-brand img {
+    max-height: 48px;
+}
+
+/* Code blocks use the logo's navy in both modes, because Nord's token colors have more contrast on it than on Nord's own #2E3440. */
+div.sourceCode,
+div.sourceCode pre.sourceCode {
+    background-color: #0B1A2C;
+}
+
+div.sourceCode code,
+body.quarto-dark div.sourceCode code {
+    color: #D8DEE9;
+}
+
+/* great-docs maps code tokens to its own colors in dark mode, and forces them with `!important` in signatures. These rules restore the `nord` style's colors from light mode. Tokens that great-docs leaves alone already keep them. */
+[data-bs-theme="dark"] .doc-signature code {
+    color: #D8DEE9 !important;
+}
+
+body.quarto-dark .sourceCode :is(span.kw, span.cf, span.op, span.dt) {
+    color: #81A1C1 !important;
+}
+
+body.quarto-dark .sourceCode :is(span.st, span.im) {
+    color: #A3BE8C !important;
+}
+
+body.quarto-dark .sourceCode :is(span.dv, span.fl, span.bn) {
+    color: #B48EAD !important;
+}
+
+body.quarto-dark .sourceCode :is(span.fu, span.bu) {
+    color: #88C0D0 !important;
+}
+
+body.quarto-dark .sourceCode :is(span.at, span.ex) {
+    color: #8FBCBB !important;
+}
+
+body.quarto-dark .sourceCode :is(span.an, span.ss) {
+    color: #D08770 !important;
+}
+
+body.quarto-dark .sourceCode :is(span.sc, span.in) {
+    color: #EBCB8B !important;
+}
+
+body.quarto-dark .sourceCode :is(span.va, span.pp, span.do) {
+    color: #5E81AC !important;
+}
+
+body.quarto-dark .sourceCode :is(span.al, span.er, span.wa) {
+    color: #BF616A !important;
+}
+
+body.quarto-dark .sourceCode span.cn {
+    color: #ECEFF4 !important;
+}
+
+body.quarto-dark .sourceCode :is(span.co, span.do) {
+    font-style: inherit;
+}
+
+/* Nord's comment color #616E88 has 3.4:1 contrast on the navy, so this is the same hue at 4.5:1. */
+code span.co {
+    color: var(--gd-syn-comment);
+}
+
+/* great-docs sets these signature colors for a light background, and the code blocks are navy. */
+code span.sig-name {
+    color: var(--gd-syn-name);
+}
+
+code span.sig-class {
+    color: var(--gd-syn-class);
+}
+
+code span.cn-none {
+    color: var(--gd-syn-none);
+}
+
+code span.cn-bool {
+    color: var(--gd-syn-bool);
+}
+
+#cb1 code span.op {
+    color: var(--gd-syn-operator);
+}
+
+/* Quarto gives inline code the dark background of the `nord` style, and great-docs colors it pink in dark mode. */
+:not(pre) > code:not(.sourceCode) {
+    color: #2E3440;
+    background-color: #ECEFF4;
+}
+
+body.quarto-dark :not(pre) > code:not(.sourceCode) {
+    color: #ECEFF4;
+    background-color: var(--gd-code-bg);
+}
+
+a code:not(.sourceCode),
+body.quarto-dark a code:not(.sourceCode) {
+    color: inherit;
+}
+
+/* Quarto colors image captions and folded-code summaries with fixed grays, which are too dark on the dark page. */
+body.quarto-dark figcaption,
+body.quarto-dark details > summary {
+    color: var(--gd-text-muted);
+}
+
+/* flatly colors code in the sidebars purple, and great-docs resets it only in dark mode. */
+.sidebar nav li > a > code {
+    color: inherit;
+    background-color: transparent;
+}
+
+/* The `nord` token colors need a dark background, so inline code in light mode uses one color. */
+html.quarto-light :not(pre) > code span[class] {
+    color: inherit;
+}
+
+/* great-docs colors these links black in light mode, and flatly colors the active contents entry teal. */
+p a,
+li a {
+    color: var(--gd-link-color);
+}
+
+#quarto-sidebar a.sidebar-item-text.sidebar-link.active {
+    color: var(--gd-active-link);
+}
+
+.sidebar nav[role="doc-toc"] ul > li > a.active,
+.sidebar nav[role="doc-toc"] ul > li > ul > li > a.active {
+    border-left-color: var(--gd-link-color);
+    color: var(--gd-link-color) !important;
+}
+
+/* great-docs draws the pinned sidebar as a box with a background, a border and a shadow, so this removes them and the links sit on the page. */
+@media (min-width: 992px) {
+    #quarto-sidebar.gd-sidebar-float,
+    body.quarto-dark #quarto-sidebar.gd-sidebar-float {
+        background: transparent;
+        border-color: transparent;
+        box-shadow: none;
+    }
+}
+
+/* great-docs sets these dark-mode surfaces to fixed grays, which show as gray patches on the navy page. */
+
+body.quarto-dark .gd-sidebar-scroll-top {
+    background: linear-gradient(to bottom, rgba(6, 16, 28, 0.92) 0%, transparent 100%);
+}
+
+body.quarto-dark .gd-sidebar-scroll-bottom {
+    background: linear-gradient(to top, rgba(6, 16, 28, 0.92) 0%, transparent 100%);
+}
+
+body.quarto-dark .sidebar-filter-input {
+    background-color: var(--gd-bg-secondary);
+    border-color: var(--gd-border-color);
+    color: var(--gd-text-primary);
+}
+
+[data-bs-theme="dark"] .doc-signature div.sourceCode {
+    background-color: #0B1A2C !important;
+}
+
+/* `[class^="doc-"]` matches the specificity of great-docs' rule for the parameter headings, so this rule wins by coming later. */
+[data-bs-theme="dark"] [class^="doc-"] dt code {
+    background-color: var(--gd-bg-secondary) !important;
+    color: var(--gd-text-primary) !important;
+}
+
+/* Callouts use Nord's Frost and Aurora colors instead of flatly's and great-docs' own. */
+div.callout.callout-note,
+body.quarto-dark .callout-note {
+    border-left-color: #5E81AC;
+}
+
+div.callout.callout-tip,
+body.quarto-dark .callout-tip {
+    border-left-color: #A3BE8C;
+}
+
+div.callout.callout-warning,
+body.quarto-dark .callout-warning {
+    border-left-color: #EBCB8B;
+}
+
+div.callout.callout-important,
+body.quarto-dark .callout-important {
+    border-left-color: #BF616A;
+}
+
+div.callout.callout-caution,
+body.quarto-dark .callout-caution {
+    border-left-color: #D08770;
+}
+
+div.callout-note.callout-style-default > .callout-header {
+    background-color: rgba(94, 129, 172, 0.12);
+}
+
+div.callout-tip.callout-style-default > .callout-header {
+    background-color: rgba(163, 190, 140, 0.15);
+}
+
+div.callout-warning.callout-style-default > .callout-header {
+    background-color: rgba(235, 203, 139, 0.2);
+}
+
+div.callout-important.callout-style-default > .callout-header {
+    background-color: rgba(191, 97, 106, 0.12);
+}
+
+div.callout-caution.callout-style-default > .callout-header {
+    background-color: rgba(208, 135, 112, 0.15);
+}
+
+/* Mermaid draws yellow clusters and purple nodes. great-docs' mermaid-renderer.js sets those colors in dark mode through ID selectors with `!important`, so these rules need an ID too. */
+#quarto-content svg .cluster rect {
+    fill: #ECEFF4 !important;
+    stroke: #D8DEE9 !important;
+}
+
+#quarto-content svg .node rect,
+#quarto-content svg .node polygon,
+#quarto-content svg .node circle,
+#quarto-content svg .node ellipse,
+#quarto-content svg .node path {
+    fill: #FFFFFF !important;
+    stroke: #5E81AC !important;
+}
+
+/* In dark mode the diagrams sit on the lighter surface, not on great-docs' light box. */
+html.quarto-dark .cell-output-display:has(.mermaid-js) {
+    background: var(--gd-bg-secondary);
+    border-color: var(--gd-border-color);
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .cluster rect {
+    fill: #0B1A2C !important;
+    stroke: rgba(255, 255, 255, 0.12) !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .node rect,
+html.quarto-dark #quarto-content svg.mermaid-js .node polygon,
+html.quarto-dark #quarto-content svg.mermaid-js .node circle,
+html.quarto-dark #quarto-content svg.mermaid-js .node ellipse,
+html.quarto-dark #quarto-content svg.mermaid-js .node path {
+    fill: #172E4A !important;
+    stroke: #81A1C1 !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .flowchart-link,
+html.quarto-dark #quarto-content svg.mermaid-js .edgePath .path {
+    stroke: #929AA4 !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .marker,
+html.quarto-dark #quarto-content svg.mermaid-js .arrowheadPath {
+    fill: #929AA4 !important;
+    stroke: #929AA4 !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .edgeLabel,
+html.quarto-dark #quarto-content svg.mermaid-js .edgeLabel p {
+    background-color: var(--gd-bg-secondary) !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js .edgeLabel rect,
+html.quarto-dark #quarto-content svg.mermaid-js .labelBkg {
+    fill: var(--gd-bg-secondary) !important;
+}
+
+html.quarto-dark #quarto-content svg.mermaid-js :is(text, tspan) {
+    fill: #ECEFF4 !important;
+}
+
+/* mermaid-renderer.js sets `color: #333 !important` inline on every label, which no stylesheet can override, so this sets the fill color instead. */
+html.quarto-dark #quarto-content svg.mermaid-js :is(p, span, div) {
+    -webkit-text-fill-color: #ECEFF4;
+}
