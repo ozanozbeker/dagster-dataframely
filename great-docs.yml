@@ -10,6 +10,27 @@ authors:
     role: Maintainer
     email: github@ozanozbeker.com
 
+# The navbar shows the square mark, because the hex's text is too small to read at navbar height.
+logo:
+  light: assets/dagster-dataframely-favicon-dark.svg
+  show_title: true
+
+# Leaving out `favicon` makes great-docs copy the logo SVG as the favicon. great-docs' own PNG icons blur the mark, and with `cairosvg` they also shrink it.
+# great-docs reads no pre-made icon sizes, so this links the exported Apple touch icon. The URL is absolute, because Quarto does not rewrite paths in header HTML.
+include_in_header: '<link rel="apple-touch-icon" href="https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-favicon-dark-180.png">'
+
+# The landing page is `README.md`, which shows the hex beside its title, so a hero would show it twice.
+hero: false
+
+# The image is a URL into `assets/`, because great-docs copies a local path to the build root, which Quarto does not publish.
+social_cards:
+  image: https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-social-card.png
+
+# Without `base_url`, great-docs sets the canonical URL and `og:url` to the github.io address, which redirects to `site_url`.
+seo:
+  canonical:
+    base_url: https://ozanozbeker.com/dagster-dataframely/
+
 # Adds braces to the Python fences in the build directory's copies, so `README.md` and docstrings keep plain fences for GitHub, PyPI and ruff (ADR-0009).
 pre_render: scripts/brace-example-fences.py
 
