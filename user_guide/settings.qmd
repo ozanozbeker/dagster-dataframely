@@ -30,7 +30,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 
 The package resolves the settings once, when you declare the asset, and the check specs and the validation both use those values.
 
-`quarantine_dir` has two sources, not three, because `dd.asset` takes no argument for it (ADR-0006).
+`quarantine_dir` has two sources, not three, because `dd.asset` takes no argument for it ([ADR-0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0006-the-assets-own-io-manager-writes-the-quarantine)).
 The package reads its value when the writer writes the rows, not when you declare the asset.
 An empty value still raises `InvalidSettingError` when you declare the asset, not on the first call with invalid rows.
 For example, `DAGSTER_DATAFRAMELY_QUARANTINE_DIR=${SCRATCH}` is empty when `SCRATCH` is unset.
@@ -67,7 +67,7 @@ Nothing moves the old history to the new checks, so choose the granularity befor
 
 ## Statistics and both samples are on by default
 
-Each materialization has `skimr`-style statistics for the rows it wrote.
+Each materialization has summary statistics for the rows it wrote.
 [The statistics tables](what-a-run-produces.qmd#the-statistics-tables) lists their columns.
 
 ::: {.callout-important}

@@ -53,7 +53,7 @@ From that one declaration you get:
 The decorated function is a normal Dagster asset function.
 Dagster passes upstream assets to it as parameters.
 It can also declare a `context` parameter.
-It returns one of five things: a `pl.DataFrame`, a `pl.LazyFrame`, a `dg.MaterializeResult` of either, or `None`.
+It returns a `pl.DataFrame` or a `pl.LazyFrame`, a `dg.MaterializeResult` whose `value` is one of those, or `None`.
 
 `dd.asset` builds a `@dg.asset` and accepts its parameters under the same names.
 It leaves out six, which it sets itself or does not support.
@@ -103,7 +103,7 @@ Any IO manager that stores by asset key works.
 > A characterization test covers the public surface, so it never changes by accident.
 > It can still change: a `0.x` minor release can include breaking changes.
 > If that matters to you, pin to one minor version: `>=` the version you installed, `<` the next minor.
-> If you are upgrading from 0.6 or 0.7, read [the changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) first.
+> If you are upgrading from 0.8 or earlier, read [the changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) first.
 
 Declare the schema and the asset as above, then bind an IO manager.
 In a `dg` project, Dagster loads every module under `defs/` automatically, so the IO manager needs one more file:

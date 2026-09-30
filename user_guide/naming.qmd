@@ -46,7 +46,7 @@ The Dagster UI shows a schema's rules in three places, and each has its own fall
 | place | first choice | then | then |
 | --- | --- | --- | --- |
 | Columns tab | the rendered column constraint | the rule name | never the docstring |
-| check name | always `dy_rule__<rule>` | | |
+| check name | `dy_rule__<rule>` at `rule` granularity, `dy_col__<column>` or `dy_schema__rules` at the others | never the docstring | |
 | check description | the rule's docstring | `<column> <rendered constraint>` | the whole name Dataframely reports, column part included |
 | collapsed check description | each rule's rendered constraint | the rule name | never the docstring |
 
@@ -96,7 +96,7 @@ This package's keys then sort together, apart from Dagster's keys and your IO ma
 When every row fails validation, the run raises `NoValidRowsError` and has no materialization.
 So each check result has the quarantine address under that key.
 
-Every public function that takes a schema raises three errors for names this package cannot use (ADR-0008).
+Every public function that takes a schema raises three errors for names this package cannot use ([ADR-0008](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it)).
 It raises `ReservedColumnError` for a column name that starts with `dy_`.
 It raises `InvalidColumnNameError` for a column name with characters Dagster does not allow in a check name, which is anything outside `A-Za-z0-9_`.
 It raises `CheckNameCollisionError` for two rules that produce the same check name.

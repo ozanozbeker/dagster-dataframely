@@ -59,8 +59,6 @@ Two things exist as soon as the module imports, before any run:
   The tab shows dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every other column constraint beside its column.
 - **A check spec per rule set**, so the catalog lists the asset's checks by name before the first run.
 
-![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
-
 The asset's description comes from the schema's docstring, as [Naming](naming.qmd) describes.
 
 A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
@@ -68,6 +66,8 @@ The asset's IO manager writes the valid rows.
 A writer writes the invalid rows to the quarantine.
 Each check reports a result.
 Not every run writes both the valid and the invalid rows: [The failure policy](the-failure-policy.qmd) lists the six outcomes and what each one writes.
+
+![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
 
 `dd.asset` builds a `@dg.asset` and accepts its parameters under the same names, except the six below.
 A test fails if `@dg.asset` adds a parameter that `dd.asset` lacks, or removes one that `dd.asset` passes on.
@@ -114,7 +114,7 @@ Return a `dg.MaterializeResult` instead of a bare frame when you want to add met
 Prefer it to `context.add_asset_metadata`: it is the only one of the two that works when you call the asset directly.
 [Attaching your own metadata](what-a-run-produces.qmd#attaching-your-own-metadata) describes both.
 
-Return `None` to skip, as [A partition with no data](where-invalid-rows-go.qmd#a-partition-with-no-data) describes.
+Return `None` to skip, as [A partition with no data](partitioning.qmd#a-partition-with-no-data) describes.
 To skip, return `None` itself: `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`.
 
 Return anything else and the run fails with `dg.DagsterInvariantViolationError` before the column-schema check.

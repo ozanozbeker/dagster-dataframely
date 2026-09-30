@@ -161,6 +161,58 @@ To depend on one dimension only, use a partition mapping.
 An asset partitioned by `day` alone can depend on the multi-partitioned asset through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`.
 It then receives only that day's regions: two entries instead of four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
 
+## A partition with no data
+
+Some partitions have no source data and never will.
+For example, take a monthly-by-distributor grid where one distributor left the marketplace two years ago.
+Its old partitions have real data and must stay, and its recent ones have no source file.
+
+Such a partition is neither a failure nor an empty table.
+Return `None` and the asset skips: the package validates nothing, nothing materializes, and the run succeeds.
+The partition stays unmaterialized, instead of materializing zero rows or failing.
+
+```{python}
+#| label: partitioning-8
+from pathlib import Path
+
+
+class SupplierReport(dy.Schema):
+    supplier_id = dy.String(primary_key=True)
+    reported_on = dy.Date(nullable=False)
+
+
+monthly = dg.MultiPartitionsDefinition({
+    "month": dg.MonthlyPartitionsDefinition(start_date="2026-01-01"),
+    "distributor": dg.StaticPartitionsDefinition(["acme", "globex"]),
+})
+
+
+def source_path(key: dg.MultiPartitionKey) -> Path:
+    cell = key.keys_by_dimension
+    return Path(f"raw/supplier_reports/{cell['distributor']}/{cell['month']}.parquet")
+
+
+@dd.asset(SupplierReport, partitions_def=monthly)
+def supplier_reports(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
+    path = source_path(context.partition_key)
+    if not path.exists():
+        return None
+    return pl.read_parquet(path)
+```
+
+**You write the check for whether the source exists.**
+The decorator never catches `FileNotFoundError`, or any other exception, to skip for you.
+A file that is absent on purpose and a misconfigured path raise the same error, so the decorator cannot distinguish them.
+Return `None` for the first, and let the error propagate for the second.
+
+A forgotten `return` also returns `None`, so it skips the asset.
+The run succeeds, and the missing materialization is the only sign of the mistake.
+
+**Every check still reports on a skipped run, and passes.**
+Dagster requires a result for every check spec, so the package runs the rules over `Schema.create_empty()`.
+Each rule then runs over zero rows, so none fails.
+Dagster records these results with no `target_materialization_data`, so it never links a passing check on a skipped partition to the last materialization that had data.
+
 ## Automation
 
 `dd.asset` passes `automation_condition` and `freshness_policy` to `dg.asset` unchanged, and they apply to the asset only.
