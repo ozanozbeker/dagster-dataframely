@@ -819,77 +819,75 @@ class TestCollapsedChecks:
         assert not [name for name in quarantine.columns if name.startswith("dy_col__")]
 
 
-class TestOutcomeSelection:
-    """The six outcomes, asserted on what `validation_results` yields, writes and raises, with no run.
+_ADDRESS = "orders_quarantine"
 
-    The writer is a stub; `tests/test_quarantine.py` tests the real writers.
+
+def _drained(
+    frame: pl.DataFrame | None, *, quarantine: bool
+) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
+    """Return what `validation_results` yielded and wrote, and the error it raised, if any.
+
+    Three outcomes raise after yielding, so `list()` alone would lose the results.
     """
+    written: list[pl.DataFrame] = []
 
-    VALID = dg.AssetKey(["orders"])
-    ADDRESS = "orders_quarantine"
+    # A stub, because `tests/test_quarantine.py` tests the real writers.
+    def writer(invalid: pl.DataFrame) -> str:
+        written.append(invalid)
+        return _ADDRESS
 
-    @classmethod
-    def _drained(
-        cls, frame: pl.DataFrame | None, *, quarantine: bool
-    ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
-        """Return what `validation_results` yielded and wrote, and the error it raised, if any.
+    yielded: Yielded = []
+    results = validation_results(
+        Orders,
+        frame,
+        valid_key=_GOOD_KEY,
+        quarantine_writer=writer if quarantine else None,
+    )
+    try:
+        for result in results:
+            yielded.append(result)
+    except DagsterDataframelyError as error:
+        return yielded, written, error
+    return yielded, written, None
 
-        Three outcomes raise after yielding, so `list()` alone would lose the results.
-        """
-        written: list[pl.DataFrame] = []
 
-        def writer(invalid: pl.DataFrame) -> str:
-            written.append(invalid)
-            return cls.ADDRESS
+def _metadata(yielded: Yielded) -> Mapping[str, Any]:
+    materializations = [r for r in yielded if isinstance(r, dg.MaterializeResult)]
+    if not materializations:
+        return {}
+    (materialization,) = materializations
+    return materialization.metadata or {}
 
-        yielded: Yielded = []
-        results = validation_results(
-            Orders,
-            frame,
-            valid_key=cls.VALID,
-            quarantine_writer=writer if quarantine else None,
-        )
-        try:
-            for result in results:
-                yielded.append(result)
-        except DagsterDataframelyError as error:
-            return yielded, written, error
-        return yielded, written, None
 
-    @staticmethod
-    def _metadata(yielded: Yielded) -> Mapping[str, Any]:
-        materializations = [r for r in yielded if isinstance(r, dg.MaterializeResult)]
-        if not materializations:
-            return {}
-        (materialization,) = materializations
-        return materialization.metadata or {}
+def _checks(yielded: Yielded) -> list[dg.AssetCheckResult]:
+    return [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
 
-    @staticmethod
-    def _checks(yielded: Yielded) -> list[dg.AssetCheckResult]:
-        return [result for result in yielded if isinstance(result, dg.AssetCheckResult)]
 
-    @classmethod
-    def _rules(cls, yielded: Yielded) -> list[dg.AssetCheckResult]:
-        """Return the check results except the column-schema check's, whose severity the outcome does not set."""
-        return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__columns"]
+def _rules(yielded: Yielded) -> list[dg.AssetCheckResult]:
+    """Return the check results except the column-schema check's, whose severity the outcome does not set."""
+    return [c for c in _checks(yielded) if c.check_name != "dy_schema__columns"]
+
+
+class TestOutcomeSelection:
+    """The six outcomes, asserted on what `validation_results` yields, writes and raises, with no run."""
 
     def test_a_clean_frame_writes_an_empty_quarantine_with_every_column(self):
-        yielded, written, error = self._drained(clean_orders(), quarantine=True)
-        _, dirty, _ = self._drained(mixed_orders(), quarantine=True)
+        yielded, written, error = _drained(clean_orders(), quarantine=True)
+        _, dirty, _ = _drained(mixed_orders(), quarantine=True)
 
         assert error is None
-        assert list(results(yielded)) == [self.VALID]
+        assert list(results(yielded)) == [_GOOD_KEY]
         (empty,) = written
         assert empty.is_empty()
         assert empty.schema == dirty[0].schema
 
     def test_a_clean_frame_says_nothing_about_invalid_rows(self):
         """A clean run omits the four invalid-row keys instead of setting them to zero."""
-        clean, _, _ = self._drained(clean_orders(), quarantine=True)
-        partial, _, _ = self._drained(mixed_orders(), quarantine=True)
+        clean, _, _ = _drained(clean_orders(), quarantine=True)
+        partial, _, _ = _drained(mixed_orders(), quarantine=True)
 
         # A difference, not a prefix, because the valid rows' sample is under `dataframely/` too.
-        assert set(self._metadata(partial)) - set(self._metadata(clean)) == {
+        assert set(_metadata(partial)) - set(_metadata(clean)) == {
             "dataframely/quarantine_address",
             "dataframely/invalid_count",
             "dataframely/invalid_by_rules",
@@ -897,35 +895,35 @@ class TestOutcomeSelection:
         }
 
     def test_a_wrong_column_schema_reports_the_check_and_writes_nothing(self):
-        yielded, written, error = self._drained(wrong_dtype_orders(), quarantine=True)
+        yielded, written, error = _drained(wrong_dtype_orders(), quarantine=True)
 
         assert isinstance(error, ColumnSchemaError)
         assert list(results(yielded)) == []
         assert written == []
-        assert [c.check_name for c in self._checks(yielded)] == ["dy_schema__columns"]
+        assert [c.check_name for c in _checks(yielded)] == ["dy_schema__columns"]
 
     def test_invalid_rows_with_no_writer_write_nothing_but_still_report(self):
-        yielded, written, error = self._drained(mixed_orders(), quarantine=False)
+        yielded, written, error = _drained(mixed_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
         assert list(results(yielded)) == []
         assert written == []
-        assert any(not c.passed for c in self._checks(yielded))
+        assert any(not c.passed for c in _checks(yielded))
 
     def test_invalid_rows_with_a_writer_write_the_table_and_the_quarantine(self):
-        yielded, written, error = self._drained(mixed_orders(), quarantine=True)
+        yielded, written, error = _drained(mixed_orders(), quarantine=True)
         (invalid,) = written
 
         assert error is None
-        assert list(results(yielded)) == [self.VALID]
+        assert list(results(yielded)) == [_GOOD_KEY]
         assert len(invalid) == 3
         assert "dy_rule__amount__min" in invalid.columns
 
     def test_a_partial_run_reports_the_invalid_rows_on_the_materialization(self):
-        yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
-        metadata = self._metadata(yielded)
+        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
+        metadata = _metadata(yielded)
 
-        assert metadata["dataframely/quarantine_address"] == self.ADDRESS
+        assert metadata["dataframely/quarantine_address"] == _ADDRESS
         assert metadata["dataframely/invalid_count"] == 3
         assert isinstance(
             metadata["dataframely/invalid_by_rules"], dg.TableMetadataValue
@@ -933,15 +931,15 @@ class TestOutcomeSelection:
         assert isinstance(metadata["dataframely/invalid_sample"], dg.TableMetadataValue)
 
     def test_the_invalid_sample_is_bounded_by_the_row_sample_setting(self):
-        yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
-        sample = self._metadata(yielded)["dataframely/invalid_sample"]
+        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
+        sample = _metadata(yielded)["dataframely/invalid_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
         bounded = validation_results(
             Orders,
             mixed_orders(),
-            valid_key=self.VALID,
-            quarantine_writer=lambda _: self.ADDRESS,
+            valid_key=_GOOD_KEY,
+            quarantine_writer=lambda _: _ADDRESS,
             row_sample=1,
         )
         (materialization,) = [r for r in bounded if isinstance(r, dg.MaterializeResult)]
@@ -952,7 +950,7 @@ class TestOutcomeSelection:
         assert len(narrowed.records) == 1
 
     def test_no_valid_rows_writes_the_rows_and_yields_no_table(self):
-        yielded, written, error = self._drained(no_valid_orders(), quarantine=True)
+        yielded, written, error = _drained(no_valid_orders(), quarantine=True)
         (invalid,) = written
 
         assert isinstance(error, NoValidRowsError)
@@ -961,24 +959,24 @@ class TestOutcomeSelection:
 
     def test_an_abort_puts_the_address_on_every_check_instead(self):
         """When no rows are valid, every check result has the quarantine address (ADR-0004)."""
-        yielded, _, _ = self._drained(no_valid_orders(), quarantine=True)
-        checks = self._checks(yielded)
+        yielded, _, _ = _drained(no_valid_orders(), quarantine=True)
+        checks = _checks(yielded)
 
         assert checks
         # `_addressed` wraps the address, because `_replace` skips normalization.
         assert all(
             (c.metadata or {})["dataframely/quarantine_address"]
-            == dg.MetadataValue.text(self.ADDRESS)
+            == dg.MetadataValue.text(_ADDRESS)
             for c in checks
         )
 
     def test_the_abort_names_the_address_the_writer_returned(self):
-        _, _, error = self._drained(no_valid_orders(), quarantine=True)
+        _, _, error = _drained(no_valid_orders(), quarantine=True)
 
-        assert self.ADDRESS in str(error)
+        assert _ADDRESS in str(error)
 
     def test_no_valid_rows_without_a_writer_aborts_instead(self):
-        yielded, written, error = self._drained(no_valid_orders(), quarantine=False)
+        yielded, written, error = _drained(no_valid_orders(), quarantine=False)
 
         assert isinstance(error, ValidationAbortError)
         assert list(results(yielded)) == []
@@ -986,29 +984,27 @@ class TestOutcomeSelection:
 
     def test_check_results_are_yielded_standalone(self):
         """Direct invocation needs standalone check results (ADR-0002)."""
-        yielded, _, _ = self._drained(mixed_orders(), quarantine=True)
+        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
 
         assert not [
             result
             for result in yielded
             if isinstance(result, dg.MaterializeResult) and result.check_results
         ]
-        assert self._checks(yielded)
+        assert _checks(yielded)
 
     def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
         """The same invalid rows are `WARN` with a quarantine and `ERROR` without one."""
-        warned, _, _ = self._drained(mixed_orders(), quarantine=True)
-        errored, _, _ = self._drained(mixed_orders(), quarantine=False)
+        warned, _, _ = _drained(mixed_orders(), quarantine=True)
+        errored, _, _ = _drained(mixed_orders(), quarantine=False)
 
-        assert {c.severity for c in self._rules(warned)} == {dg.AssetCheckSeverity.WARN}
-        assert {c.severity for c in self._rules(errored)} == {
-            dg.AssetCheckSeverity.ERROR
-        }
+        assert {c.severity for c in _rules(warned)} == {dg.AssetCheckSeverity.WARN}
+        assert {c.severity for c in _rules(errored)} == {dg.AssetCheckSeverity.ERROR}
 
-    # --- the sixth outcome: the decorated function returned `None` ---
+    # The sixth outcome: the decorated function returned `None`.
     @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
     def test_a_skip_writes_no_table_and_raises_nothing(self, quarantine: bool):
-        yielded, written, error = self._drained(None, quarantine=quarantine)
+        yielded, written, error = _drained(None, quarantine=quarantine)
 
         assert error is None
         assert list(results(yielded)) == []
@@ -1016,17 +1012,15 @@ class TestOutcomeSelection:
 
     def test_a_skip_still_answers_every_check(self):
         """A skip yields a result for every check, because each check spec is a non-optional op output."""
-        skipped, _, _ = self._drained(None, quarantine=False)
-        clean, _, _ = self._drained(clean_orders(), quarantine=False)
+        skipped, _, _ = _drained(None, quarantine=False)
+        clean, _, _ = _drained(clean_orders(), quarantine=False)
 
-        assert {c.check_name for c in self._checks(skipped)} == {
-            c.check_name for c in self._checks(clean)
+        assert {c.check_name for c in _checks(skipped)} == {
+            c.check_name for c in _checks(clean)
         }
 
     def test_a_skips_checks_pass_because_the_rules_ran_over_an_empty_frame(self):
-        yielded, _, _ = self._drained(None, quarantine=False)
+        yielded, _, _ = _drained(None, quarantine=False)
 
-        assert all(c.passed for c in self._checks(yielded))
-        assert {c.severity for c in self._rules(yielded)} == {
-            dg.AssetCheckSeverity.WARN
-        }
+        assert all(c.passed for c in _checks(yielded))
+        assert {c.severity for c in _rules(yielded)} == {dg.AssetCheckSeverity.WARN}
