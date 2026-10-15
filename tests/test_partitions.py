@@ -43,184 +43,197 @@ def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | No
     return {key: m.partition for key, m in materializations(result).items()}
 
 
-def test_the_asset_carries_its_partitioning():
-    """The only spec is the asset's, so the quarantine has no partitioning of its own."""
-    assert {spec.key: spec.partitions_def for spec in _orders.specs} == {
-        _GOOD_KEY: _PARTITIONS
-    }
+class TestPartitionsDef:
+    """The `partitions_def` on the asset spec and every check spec."""
+
+    def test_the_asset_carries_its_partitioning(self):
+        """The only spec is the asset's, so the quarantine has no partitioning of its own."""
+        assert {spec.key: spec.partitions_def for spec in _orders.specs} == {
+            _GOOD_KEY: _PARTITIONS
+        }
+
+    def test_every_check_has_the_assets_partitioning(self):
+        assert all(spec.partitions_def == _PARTITIONS for spec in _orders.check_specs)
 
 
-def test_every_check_has_the_assets_partitioning():
-    assert all(spec.partitions_def == _PARTITIONS for spec in _orders.check_specs)
+class TestPartitionRuns:
+    """Runs of a partitioned asset."""
 
+    def test_each_partition_materializes_its_own_frame(self, tmp_path: Path):
+        assert materialize(tmp_path, _orders, partition_key="clean").success
+        assert materialize(tmp_path, _orders, partition_key="mixed").success
 
-def test_each_partition_materializes_its_own_frame(tmp_path: Path):
-    assert materialize(tmp_path, _orders, partition_key="clean").success
-    assert materialize(tmp_path, _orders, partition_key="mixed").success
+        assert_frame_equal(
+            pl.read_parquet(tmp_path / "orders" / "clean.parquet"), clean_orders()
+        )
+        assert pl.read_parquet(tmp_path / "orders" / "mixed.parquet").height == 3
 
-    assert_frame_equal(
-        pl.read_parquet(tmp_path / "orders" / "clean.parquet"), clean_orders()
+    def test_the_quarantine_is_written_under_the_partition_that_produced_it(
+        self, tmp_path: Path
+    ):
+        result = materialize(tmp_path, _orders, partition_key="mixed")
+
+        assert _partitions(result) == {_GOOD_KEY: "mixed"}
+        assert (
+            pl.read_parquet(tmp_path / "orders_quarantine" / "mixed.parquet").height
+            == 3
+        )
+
+    def test_a_clean_rerun_empties_only_its_own_partitions_quarantine(
+        self, tmp_path: Path
+    ):
+        days = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
+
+        def orders(frame: Callable[[], pl.DataFrame]) -> dg.AssetsDefinition:
+            @dd.asset(Orders, name="orders", quarantine=True, partitions_def=days)
+            def orders() -> pl.DataFrame:
+                return frame()
+
+            return orders
+
+        materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-02")
+        materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-03")
+        result = materialize(tmp_path, orders(clean_orders), partition_key="2026-01-03")
+        quarantine = tmp_path / "orders_quarantine"
+
+        assert _partitions(result) == {_GOOD_KEY: "2026-01-03"}
+        assert pl.read_parquet(quarantine / "2026-01-02.parquet").height == 3
+        assert pl.read_parquet(quarantine / "2026-01-03.parquet").height == 0
+
+    # No row-count test: `dagster-polars` overwrites `dagster/row_count`, so `test_asset_runtime.py` tests it.
+
+    def test_a_drifting_partition_aborts_at_the_column_schema_check_before_any_row_check_reports(
+        self,
+        tmp_path: Path,
+    ):
+        result = materialize(
+            tmp_path, _orders, partition_key="wrong", raise_on_error=False
+        )
+        evaluations = check_evaluations(result)
+
+        assert not result.success
+        assert set(evaluations) == {"dy_schema__columns"}
+        assert not evaluations["dy_schema__columns"].passed
+        assert not result.get_asset_materialization_events()
+
+    def test_a_drifting_partition_leaves_every_other_partition_alone(
+        self, tmp_path: Path
+    ):
+        materialize(tmp_path, _orders, partition_key="clean")
+        materialize(tmp_path, _orders, partition_key="wrong", raise_on_error=False)
+
+        assert [path.name for path in sorted((tmp_path / "orders").iterdir())] == [
+            "clean.parquet"
+        ]
+        assert_frame_equal(
+            pl.read_parquet(tmp_path / "orders" / "clean.parquet"), clean_orders()
+        )
+
+    @pytest.mark.parametrize(
+        ("partition_key", "failing"),
+        [
+            ("clean", set()),
+            (
+                "mixed",
+                {
+                    "dy_rule__amount__min",
+                    "dy_rule__email__check__lowercase",
+                    "dy_rule__paid_orders_have_amount",
+                },
+            ),
+            ("wrong", {"dy_schema__columns"}),
+        ],
     )
-    assert pl.read_parquet(tmp_path / "orders" / "mixed.parquet").height == 3
+    def test_every_partition_reports_its_own_checks_under_its_partition(
+        self, tmp_path: Path, partition_key: str, failing: set[str]
+    ):
+        result = materialize(
+            tmp_path, _orders, partition_key=partition_key, raise_on_error=False
+        )
+        evaluations = check_evaluations(result)
 
+        assert {name for name, e in evaluations.items() if not e.passed} == failing
+        assert all(e.partition == partition_key for e in evaluations.values())
 
-def test_the_quarantine_is_written_under_the_partition_that_produced_it(tmp_path: Path):
-    result = materialize(tmp_path, _orders, partition_key="mixed")
+    def test_a_clean_partition_run_last_keeps_the_dirty_partitions_failure(
+        self,
+        tmp_path: Path,
+    ):
+        with dg.DagsterInstance.ephemeral() as instance:
+            materialize(tmp_path, _orders, partition_key="mixed", instance=instance)
+            materialize(tmp_path, _orders, partition_key="clean", instance=instance)
 
-    assert _partitions(result) == {_GOOD_KEY: "mixed"}
-    assert pl.read_parquet(tmp_path / "orders_quarantine" / "mixed.parquet").height == 3
+            # Private Dagster API: the only way to read check history without a webserver, newest first.
+            history = instance.event_log_storage.get_asset_check_execution_history(
+                check_key=_AMOUNT_MIN, limit=10
+            )
+            evaluations = [
+                record.evaluation
+                for record in history
+                if isinstance(record.evaluation, dg.AssetCheckEvaluation)
+            ]
 
+            assert [(e.partition, e.passed) for e in evaluations] == [
+                ("clean", True),
+                ("mixed", False),
+            ]
 
-def test_a_clean_rerun_empties_only_its_own_partitions_quarantine(tmp_path: Path):
-    days = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
+    def test_a_time_window_partition_resolves_its_planned_check_row(
+        self, tmp_path: Path
+    ):
+        """Dagster updates the planned row in place, because the planned row and the result have the same partition."""
+        daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
-    def orders(frame: Callable[[], pl.DataFrame]) -> dg.AssetsDefinition:
-        @dd.asset(Orders, name="orders", quarantine=True, partitions_def=days)
-        def orders() -> pl.DataFrame:
-            return frame()
+        @dd.asset(Orders, name="daily_orders", partitions_def=daily)
+        def daily_orders() -> pl.DataFrame:
+            return clean_orders()
 
-        return orders
+        check_key = dg.AssetCheckKey(
+            dg.AssetKey(["daily_orders"]), "dy_rule__amount__min"
+        )
 
-    materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-02")
-    materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-03")
-    result = materialize(tmp_path, orders(clean_orders), partition_key="2026-01-03")
-    quarantine = tmp_path / "orders_quarantine"
+        with dg.DagsterInstance.ephemeral() as instance:
+            materialize(
+                tmp_path, daily_orders, partition_key="2026-01-01", instance=instance
+            )
+            history = instance.event_log_storage.get_asset_check_execution_history(
+                check_key=check_key, limit=10
+            )
 
-    assert _partitions(result) == {_GOOD_KEY: "2026-01-03"}
-    assert pl.read_parquet(quarantine / "2026-01-02.parquet").height == 3
-    assert pl.read_parquet(quarantine / "2026-01-03.parquet").height == 0
+        assert [record.partition for record in history] == ["2026-01-01"]
+        assert isinstance(history[0].evaluation, dg.AssetCheckEvaluation)
 
+    def test_a_single_run_backfill_is_rejected_by_the_io_manager(self, tmp_path: Path):
+        """`UPathIOManager` raises on a partition range, before it writes anything."""
 
-# No row-count test: `dagster-polars` overwrites `dagster/row_count`, so `test_asset_runtime.py` tests it.
+        @dd.asset(
+            Orders,
+            name="ranged",
+            partitions_def=_PARTITIONS,
+            backfill_policy=dg.BackfillPolicy.single_run(),
+        )
+        def ranged() -> pl.DataFrame:
+            return clean_orders()
 
+        job = dg.Definitions(
+            assets=[ranged],
+            resources=storage(tmp_path),
+        ).resolve_implicit_global_asset_job_def()
 
-def test_a_drifting_partition_aborts_at_the_column_schema_check_before_any_row_check_reports(
-    tmp_path: Path,
-):
-    result = materialize(tmp_path, _orders, partition_key="wrong", raise_on_error=False)
-    evaluations = check_evaluations(result)
-
-    assert not result.success
-    assert set(evaluations) == {"dy_schema__columns"}
-    assert not evaluations["dy_schema__columns"].passed
-    assert not result.get_asset_materialization_events()
-
-
-def test_a_drifting_partition_leaves_every_other_partition_alone(tmp_path: Path):
-    materialize(tmp_path, _orders, partition_key="clean")
-    materialize(tmp_path, _orders, partition_key="wrong", raise_on_error=False)
-
-    assert [path.name for path in sorted((tmp_path / "orders").iterdir())] == [
-        "clean.parquet"
-    ]
-    assert_frame_equal(
-        pl.read_parquet(tmp_path / "orders" / "clean.parquet"), clean_orders()
-    )
-
-
-@pytest.mark.parametrize(
-    ("partition_key", "failing"),
-    [
-        ("clean", set()),
-        (
-            "mixed",
-            {
-                "dy_rule__amount__min",
-                "dy_rule__email__check__lowercase",
-                "dy_rule__paid_orders_have_amount",
+        result = job.execute_in_process(
+            tags={
+                "dagster/asset_partition_range_start": "clean",
+                "dagster/asset_partition_range_end": "mixed",
             },
-        ),
-        ("wrong", {"dy_schema__columns"}),
-    ],
-)
-def test_every_partition_reports_its_own_checks_under_its_partition(
-    tmp_path: Path, partition_key: str, failing: set[str]
-):
-    result = materialize(
-        tmp_path, _orders, partition_key=partition_key, raise_on_error=False
-    )
-    evaluations = check_evaluations(result)
-
-    assert {name for name, e in evaluations.items() if not e.passed} == failing
-    assert all(e.partition == partition_key for e in evaluations.values())
-
-
-def test_a_clean_partition_run_last_keeps_the_dirty_partitions_failure(
-    tmp_path: Path,
-):
-    with dg.DagsterInstance.ephemeral() as instance:
-        materialize(tmp_path, _orders, partition_key="mixed", instance=instance)
-        materialize(tmp_path, _orders, partition_key="clean", instance=instance)
-
-        # Private Dagster API: the only way to read check history without a webserver, newest first.
-        history = instance.event_log_storage.get_asset_check_execution_history(
-            check_key=_AMOUNT_MIN, limit=10
+            raise_on_error=False,
         )
-        evaluations = [
-            record.evaluation
-            for record in history
-            if isinstance(record.evaluation, dg.AssetCheckEvaluation)
-        ]
+        failure = result.failure_data_for_node("ranged")
 
-        assert [(e.partition, e.passed) for e in evaluations] == [
-            ("clean", True),
-            ("mixed", False),
-        ]
-
-
-def test_a_time_window_partition_resolves_its_planned_check_row(tmp_path: Path):
-    """Dagster updates the planned row in place, because the planned row and the result have the same partition."""
-    daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
-
-    @dd.asset(Orders, name="daily_orders", partitions_def=daily)
-    def daily_orders() -> pl.DataFrame:
-        return clean_orders()
-
-    check_key = dg.AssetCheckKey(dg.AssetKey(["daily_orders"]), "dy_rule__amount__min")
-
-    with dg.DagsterInstance.ephemeral() as instance:
-        materialize(
-            tmp_path, daily_orders, partition_key="2026-01-01", instance=instance
-        )
-        history = instance.event_log_storage.get_asset_check_execution_history(
-            check_key=check_key, limit=10
-        )
-
-    assert [record.partition for record in history] == ["2026-01-01"]
-    assert isinstance(history[0].evaluation, dg.AssetCheckEvaluation)
-
-
-def test_a_single_run_backfill_is_rejected_by_the_io_manager(tmp_path: Path):
-    """`UPathIOManager` raises on a partition range, before it writes anything."""
-
-    @dd.asset(
-        Orders,
-        name="ranged",
-        partitions_def=_PARTITIONS,
-        backfill_policy=dg.BackfillPolicy.single_run(),
-    )
-    def ranged() -> pl.DataFrame:
-        return clean_orders()
-
-    job = dg.Definitions(
-        assets=[ranged],
-        resources=storage(tmp_path),
-    ).resolve_implicit_global_asset_job_def()
-
-    result = job.execute_in_process(
-        tags={
-            "dagster/asset_partition_range_start": "clean",
-            "dagster/asset_partition_range_end": "mixed",
-        },
-        raise_on_error=False,
-    )
-    failure = result.failure_data_for_node("ranged")
-
-    assert not result.success
-    assert failure is not None
-    assert "multiple partitions" in str(failure.error)
-    assert "multi-run backfill policy" in str(failure.error)
-    assert not list(tmp_path.rglob("*.parquet"))
+        assert not result.success
+        assert failure is not None
+        assert "multiple partitions" in str(failure.error)
+        assert "multi-run backfill policy" in str(failure.error)
+        assert not list(tmp_path.rglob("*.parquet"))
 
 
 # A distributor that left: `departed` has source data for 2026-01 and none for 2026-02.
@@ -240,67 +253,76 @@ def _reports() -> pl.DataFrame | None:
     return clean_orders()
 
 
-def test_a_partition_with_no_source_data_stays_unmaterialized(tmp_path: Path):
-    result = materialize(
-        tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
-    )
+class TestSkippedPartition:
+    """A run of one partition whose decorated function returns `None`."""
 
-    assert result.success
-    assert _partitions(result) == {}
-    assert not list(tmp_path.rglob("*.parquet"))
-
-
-def test_a_skipped_partition_leaves_every_other_partition_alone(tmp_path: Path):
-    kept = dg.MultiPartitionKey({"month": "2026-01", "distributor": "departed"})
-
-    assert materialize(
-        tmp_path, _reports, partition_key=kept, raise_on_error=False
-    ).success
-    assert materialize(
-        tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
-    ).success
-
-    written = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*.parquet"))
-
-    assert written == ["reports/departed/2026-01.parquet"]
-
-
-def test_a_skipped_partition_still_reports_its_checks(tmp_path: Path):
-    """Every check has a result after a skip, because Dagster fails a step that leaves a check spec without one."""
-    result = materialize(
-        tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
-    )
-    evaluations = check_evaluations(result)
-
-    assert set(evaluations) == {spec.name for spec in _reports.check_specs}
-    assert all(e.passed for e in evaluations.values())
-
-
-def test_a_skip_does_not_stamp_a_later_check_onto_an_earlier_partitions_table(
-    tmp_path: Path,
-):
-    """After a skip, `target_materialization_data` is `None`, not the earlier partition's materialization."""
-    with dg.DagsterInstance.ephemeral() as instance:
-        traded = dg.MultiPartitionKey({"month": "2026-01", "distributor": "trading"})
-        materialize(
-            tmp_path,
-            _reports,
-            partition_key=traded,
-            instance=instance,
-            raise_on_error=False,
-        )
-        materialize(
-            tmp_path,
-            _reports,
-            partition_key=_DEPARTED,
-            instance=instance,
-            raise_on_error=False,
+    def test_a_partition_with_no_source_data_stays_unmaterialized(self, tmp_path: Path):
+        result = materialize(
+            tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
         )
 
-        latest = instance.event_log_storage.get_asset_check_execution_history(
-            check_key=dg.AssetCheckKey(_REPORTS_KEY, "dy_rule__amount__min"), limit=1
-        )[0].evaluation
+        assert result.success
+        assert _partitions(result) == {}
+        assert not list(tmp_path.rglob("*.parquet"))
 
-        assert isinstance(latest, dg.AssetCheckEvaluation)
-        assert latest.passed
-        assert latest.target_materialization_data is None
+    def test_a_skipped_partition_leaves_every_other_partition_alone(
+        self, tmp_path: Path
+    ):
+        kept = dg.MultiPartitionKey({"month": "2026-01", "distributor": "departed"})
+
+        assert materialize(
+            tmp_path, _reports, partition_key=kept, raise_on_error=False
+        ).success
+        assert materialize(
+            tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
+        ).success
+
+        written = sorted(
+            str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*.parquet")
+        )
+
+        assert written == ["reports/departed/2026-01.parquet"]
+
+    def test_a_skipped_partition_still_reports_its_checks(self, tmp_path: Path):
+        """Every check has a result after a skip, because Dagster fails a step that leaves a check spec without one."""
+        result = materialize(
+            tmp_path, _reports, partition_key=_DEPARTED, raise_on_error=False
+        )
+        evaluations = check_evaluations(result)
+
+        assert set(evaluations) == {spec.name for spec in _reports.check_specs}
+        assert all(e.passed for e in evaluations.values())
+
+    def test_a_skip_does_not_stamp_a_later_check_onto_an_earlier_partitions_table(
+        self,
+        tmp_path: Path,
+    ):
+        """After a skip, `target_materialization_data` is `None`, not the earlier partition's materialization."""
+        with dg.DagsterInstance.ephemeral() as instance:
+            traded = dg.MultiPartitionKey({
+                "month": "2026-01",
+                "distributor": "trading",
+            })
+            materialize(
+                tmp_path,
+                _reports,
+                partition_key=traded,
+                instance=instance,
+                raise_on_error=False,
+            )
+            materialize(
+                tmp_path,
+                _reports,
+                partition_key=_DEPARTED,
+                instance=instance,
+                raise_on_error=False,
+            )
+
+            latest = instance.event_log_storage.get_asset_check_execution_history(
+                check_key=dg.AssetCheckKey(_REPORTS_KEY, "dy_rule__amount__min"),
+                limit=1,
+            )[0].evaluation
+
+            assert isinstance(latest, dg.AssetCheckEvaluation)
+            assert latest.passed
+            assert latest.target_materialization_data is None
