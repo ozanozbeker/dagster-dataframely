@@ -1,6 +1,6 @@
 """The statistics tables of a materialization, one per dtype group.
 
-`_metadata` holds what an asset declares before it runs, and this module summarizes the valid rows a run writes.
+`_metadata` holds what an asset declares before it runs, and this module summarizes the rows a run writes to the table.
 Nothing here uses Polars' `describe()`, because it formats values per source dtype, and nothing can cast them back.
 """
 
@@ -158,7 +158,7 @@ def statistics_metadata(
         if group is not None:
             groups.setdefault(group, {})[name] = dtype
     return {
-        f"dataframely/valid_statistics/{group}": _group_table(
+        f"dataframely/table_statistics/{group}": _group_table(
             frame, columns, _AGGREGATES[group]
         )
         for group, columns in groups.items()

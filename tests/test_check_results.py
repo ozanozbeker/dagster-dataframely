@@ -1,6 +1,6 @@
-"""Tests for `check_results`, mostly called directly, with no run.
+"""Tests for `asset_check_results`, mostly called directly, with no run.
 
-`test_asset_runtime.py` asserts the result contents, which come from the same functions `validation_results` uses. This file asserts the check names, the severity and the asset key.
+`test_asset_runtime.py` asserts the result contents, which come from the same functions `validation_results` uses. This file asserts the check names, the severity and the asset key, and `test_severity_outcomes.py` asserts each rule's severity.
 """
 
 from collections.abc import Callable, Iterator
@@ -14,7 +14,11 @@ import pytest
 from dagster_dataframely._rules import described_rules
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import ColumnSchemaError, InvalidSettingError
-from dagster_dataframely.wiring import check_results, check_specs, schema_metadata
+from dagster_dataframely.wiring import (
+    asset_check_results,
+    asset_check_specs,
+    schema_metadata,
+)
 from tests.scenario import (
     Orders,
     clean_orders,
@@ -49,16 +53,13 @@ _CHECKS: dict[Granularity, list[str]] = {
 
 
 def _results(
-    frame: pl.DataFrame | pl.LazyFrame,
-    severity: dg.AssetCheckSeverity = WARN,
-    **settings: object,
+    frame: pl.DataFrame | pl.LazyFrame, **settings: object
 ) -> list[dg.AssetCheckResult]:
     return list(
-        check_results(
+        asset_check_results(
             Orders,
             frame,
             asset_key=KEY,
-            severity=severity,
             **settings,  # pyrefly: ignore[bad-argument-type]
         )
     )
@@ -72,12 +73,12 @@ def _before_the_raise(frame: pl.DataFrame) -> list[dg.AssetCheckResult]:
     """Return the results yielded before `ColumnSchemaError`, which `list()` would discard."""
     results: list[dg.AssetCheckResult] = []
     with pytest.raises(ColumnSchemaError):
-        results.extend(check_results(Orders, frame, asset_key=KEY, severity=WARN))
+        results.extend(asset_check_results(Orders, frame, asset_key=KEY))
     return results
 
 
 class TestDirectCall:
-    """The results `check_results` yields when called directly, with no run."""
+    """The results `asset_check_results` yields when called directly, with no run."""
 
     @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
     def test_the_results_answer_exactly_the_specs_at_every_granularity(
@@ -85,7 +86,7 @@ class TestDirectCall:
         granularity: Granularity,
     ):
         """The specs and the results name the same checks, in the schema's rule order."""
-        specs = check_specs(Orders, asset=KEY, check_granularity=granularity)
+        specs = asset_check_specs(Orders, asset=KEY, check_granularity=granularity)
         results = _results(mixed_orders(), check_granularity=granularity)
         expected = [COLUMN_SCHEMA, *_CHECKS[granularity]]
 
@@ -95,7 +96,7 @@ class TestDirectCall:
     def test_schema_rules_reach_the_results_too(self):
         """The results match the specs with `schema_rules` set, which only `column` granularity reads."""
         settings = {"check_granularity": "column", "schema_rules": "per_rule"}
-        specs = check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type, open-unpacking]
+        specs = asset_check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type, open-unpacking]
         results = _results(mixed_orders(), **settings)
 
         assert [result.check_name for result in results] == [
@@ -106,7 +107,7 @@ class TestDirectCall:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A hand-wired call has no definition time, so `check_results` raises on iteration."""
+        """A hand-wired call has no definition time, so `asset_check_results` raises on iteration."""
         monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "five")
 
         with pytest.raises(InvalidSettingError) as raised:
@@ -121,9 +122,7 @@ class TestDirectCall:
         class Blob(dy.Schema):
             payload = dy.String(nullable=True)
 
-        results = list(
-            check_results(Blob, Blob.create_empty(), asset_key=KEY, severity=WARN)
-        )
+        results = list(asset_check_results(Blob, Blob.create_empty(), asset_key=KEY))
 
         assert [result.check_name for result in results] == [COLUMN_SCHEMA]
         assert results[0].passed
@@ -132,17 +131,14 @@ class TestDirectCall:
         """A standalone result has no materialization to infer it from."""
         assert all(result.asset_key == KEY for result in _results(clean_orders()))
 
-    @pytest.mark.parametrize("severity", [WARN, ERROR])
-    def test_every_rule_result_has_the_severity_the_caller_passed(
-        self,
-        severity: dg.AssetCheckSeverity,
-    ):
-        assert all(
-            result.severity == severity
-            for result in _rules(_results(mixed_orders(), severity))
-        )
+    def test_every_failing_rule_result_is_an_error_because_every_rule_is(self):
+        assert {
+            result.severity
+            for result in _rules(_results(mixed_orders()))
+            if not result.passed
+        } == {ERROR}
 
-    def test_the_column_schema_failure_is_an_error_whatever_the_caller_passed(self):
+    def test_the_column_schema_failure_is_an_error(self):
         """A blocking check stops downstream assets only at `ERROR`."""
         assert _before_the_raise(wrong_dtype_orders())[0].severity == ERROR
 
@@ -151,10 +147,10 @@ class TestDirectCall:
         self,
         frame: Callable[[], pl.DataFrame],
     ):
-        """`check_results` writes no rows, so it raises neither `ValidationAbortError` nor `NoValidRowsError`."""
+        """`asset_check_results` writes no rows, so it raises neither `ValidationAbortError` nor `NoValidRowsError`."""
         results = _results(frame())
 
-        assert len(results) == len(check_specs(Orders, asset=KEY))
+        assert len(results) == len(asset_check_specs(Orders, asset=KEY))
 
     def test_no_valid_rows_is_not_a_special_case(self):
         results = _results(no_valid_orders())
@@ -173,27 +169,35 @@ def _orders() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dg.multi_asset_check(specs=check_specs(Orders, asset=KEY))
+@dg.multi_asset_check(specs=asset_check_specs(Orders, asset=KEY))
 def _orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
-    yield from check_results(Orders, orders, asset_key=KEY, severity=WARN)
+    yield from asset_check_results(Orders, orders, asset_key=KEY)
 
 
 class TestHandWiringExample:
     """A run of the multi-asset check from the hand-wiring guide."""
 
     def test_a_multi_asset_check_yields_a_result_for_every_spec(self, tmp_path: Path):
-        """A missing result fails the step, so the run succeeding is the main assertion."""
         result = dg.materialize(
             [_orders, _orders_checks], resources=storage(tmp_path), raise_on_error=False
         )
         evaluations = {e.check_name: e for e in result.get_asset_check_evaluations()}
 
-        assert result.success
         assert set(evaluations) == {
-            spec.name for spec in check_specs(Orders, asset=KEY)
+            spec.name for spec in asset_check_specs(Orders, asset=KEY)
         }
         assert not evaluations["dy_rule__amount__min"].passed
-        assert evaluations["dy_rule__amount__min"].severity == WARN
+        assert evaluations["dy_rule__amount__min"].severity == ERROR
+
+    def test_a_failing_error_rule_fails_the_check_step(self, tmp_path: Path):
+        """The spec of an `"error"` rule is blocking, so Dagster fails the step after the table is written."""
+        result = dg.materialize(
+            [_orders, _orders_checks], resources=storage(tmp_path), raise_on_error=False
+        )
+        (failure,) = [e for e in result.all_events if e.is_step_failure]
+
+        assert failure.step_key == "_orders_checks"
+        assert "blocking asset check" in str(failure.event_specific_data)
 
     def test_the_table_is_written_whatever_the_checks_report(self, tmp_path: Path):
         """The IO manager writes the table before the checks run."""

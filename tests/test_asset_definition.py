@@ -330,15 +330,9 @@ class TestCheckSpecs:
 
         assert list(_specs_by_name(orders)) == expected
 
-    def test_only_the_column_schema_check_is_blocking(self):
-        specs = _specs_by_name(orders)
-
-        assert specs["dy_schema__columns"].blocking
-        assert not any(
-            spec.blocking
-            for name, spec in specs.items()
-            if name != "dy_schema__columns"
-        )
+    def test_every_check_is_blocking_because_every_rule_is_error(self):
+        """`test_severity_outcomes.py` covers a schema that declares `"warn"`."""
+        assert all(spec.blocking for spec in _specs_by_name(orders).values())
 
     def test_a_rules_docstring_becomes_its_check_description(self):
         specs = _specs_by_name(orders)
@@ -486,14 +480,7 @@ class TestCheckSpecs:
         self,
         asset: dg.AssetsDefinition,
     ):
-        specs = _specs_by_name(asset)
-
-        assert specs["dy_schema__columns"].blocking
-        assert not any(
-            spec.blocking
-            for name, spec in specs.items()
-            if name != "dy_schema__columns"
-        )
+        assert _specs_by_name(asset)["dy_schema__columns"].blocking
 
     def test_a_collapsed_check_names_the_rules_it_reports_for(self):
         specs = _specs_by_name(by_column)
@@ -716,17 +703,17 @@ class TestColumnConstraints:
         )
 
 
-class TestQuarantine:
-    """The asset graph and resources of an asset with `quarantine=True`."""
+class TestErrorRows:
+    """The asset graph and resources of an asset with `filter=True`."""
 
-    def test_a_quarantine_adds_nothing_to_the_graph(self):
-        """The quarantine is not an asset (ADR-0004, ADR-0006)."""
+    def test_a_error_rows_adds_nothing_to_the_graph(self):
+        """The error rows are not an asset (ADR-0004, ADR-0006)."""
 
-        @dd.asset(Orders, quarantine=True)
+        @dd.asset(Orders, filter=True)
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
-        @dd.asset(Orders, quarantine=False)
+        @dd.asset(Orders, filter=False)
         def plain() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -736,10 +723,10 @@ class TestQuarantine:
             spec.name for spec in plain.check_specs
         }
 
-    def test_a_quarantine_needs_no_resource_declared(self):
+    def test_a_error_rows_needs_no_resource_declared(self):
         """The IO manager comes from the step, so a direct invocation does not have to pass one."""
 
-        @dd.asset(Orders, quarantine=True)
+        @dd.asset(Orders, filter=True)
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -816,25 +803,25 @@ class TestDefinitionTimeErrors:
 
         assert "check_granularity" in str(raised.value)
 
-    @pytest.mark.parametrize("quarantine", [False, True], ids=["plain", "quarantined"])
-    def test_a_malformed_quarantine_dir_raises_at_definition_time(
-        self, monkeypatch: pytest.MonkeyPatch, quarantine: bool
+    @pytest.mark.parametrize("filtering", [False, True], ids=["plain", "filtered"])
+    def test_a_malformed_error_rows_dir_raises_at_definition_time(
+        self, monkeypatch: pytest.MonkeyPatch, filtering: bool
     ):
-        monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", "   ")
+        monkeypatch.setenv("DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR", "   ")
 
         with pytest.raises(InvalidSettingError) as raised:
 
-            @dd.asset(Orders, name="misconfigured", quarantine=quarantine)
+            @dd.asset(Orders, name="misconfigured", filter=filtering)
             def _misconfigured() -> pl.DataFrame:
                 return pl.DataFrame()
 
-        assert "quarantine_dir" in str(raised.value)
+        assert "error_rows_dir" in str(raised.value)
 
 
-def _shipments(prefix: str, *, quarantine: bool = False) -> dg.AssetsDefinition:
+def _shipments(prefix: str, *, filtering: bool = False) -> dg.AssetsDefinition:
     """Return an asset named `shipments` under `prefix`."""
 
-    @dd.asset(Orders, key_prefix=prefix, name="shipments", quarantine=quarantine)
+    @dd.asset(Orders, key_prefix=prefix, name="shipments", filter=filtering)
     def shipments() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -855,15 +842,15 @@ class TestUnderlyingOp:
 
         assert attached.op.name == plain.op.name
 
-    @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
+    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
     def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
-        self, quarantine: bool
+        self, filtering: bool
     ):
         """Dagster allows a repeated op name only for equal definitions, and these differ because each check output name contains the asset key."""
         definitions = dg.Definitions(
             assets=[
-                _shipments("alpha", quarantine=quarantine),
-                _shipments("beta", quarantine=quarantine),
+                _shipments("alpha", filtering=filtering),
+                _shipments("beta", filtering=filtering),
             ]
         )
 
@@ -898,7 +885,7 @@ class TestUnderlyingOp:
 
 _NO_DG_ASSET_COUNTERPART = {
     "schema",
-    "quarantine",
+    "filter",
     "check_granularity",
     "schema_rules",
     "max_failure_samples",

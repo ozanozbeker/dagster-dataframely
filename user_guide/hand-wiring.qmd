@@ -21,7 +21,7 @@ def orders_frame() -> pl.LazyFrame:
 ```
 
 Use `dd.asset` where you can.
-One declaration fills the Columns tab, reports every rule as an asset check, filters the rows and writes the invalid rows to the quarantine.
+One declaration fills the Columns tab, reports every rule as an asset check, filters the rows and, with `filter=True`, writes the error rows.
 `dd.asset` calls functions that `dd.wiring` also exports.
 Use them where `dd.asset` cannot build the asset: to attach a schema to an asset declared some other way, or to report checks in a way `dd.asset` does not offer.
 
@@ -49,20 +49,22 @@ Dataframely checks a primary key with one schema-level rule and does not set the
 For a composite key, marking each column unique would show a constraint that no rule checks.
 
 **The checks.**
-`check_specs(schema, asset=key)` returns a spec for every check the schema defines, including the column-schema check.
+`asset_check_specs(schema, asset=key)` returns a spec for every check the schema defines, including the column-schema check.
 For a partitioned asset, also pass its `partitions_def`, so Dagster records each check evaluation under its partition.
-`check_results(schema, frame, asset_key=key, severity=...)` yields a result for each of those checks and writes nothing.
-Pass the same `check_granularity` and `schema_rules` to `check_specs` and to the function that yields the results, or to neither.
+Pass `filter=True` when the asset writes error rows, as `dd.asset(filter=True)` does, so that no rule's check is blocking.
+`asset_check_results(schema, frame, asset_key=key)` yields a result for each of those checks and writes nothing.
+Each failing check has its rule's severity, as in `dd.asset`.
+Pass the same `check_granularity` and `schema_rules` to `asset_check_specs` and to the function that yields the results, or to neither.
 Those settings determine the check names.
 Dagster matches each result to its spec by name, so different values fail the step.
 
 **Validation and the write.**
-An asset built with `dd.asset` runs `validation_results(schema, frame, valid_key=key, quarantine_writer=...)` after its decorated function.
-It runs the column-schema check and `Schema.filter`, writes the quarantine, and yields the materialization and every check result.
+An asset built with `dd.asset` runs `validation_results(schema, frame, valid_key=key, error_rows_writer=...)` after its decorated function.
+It runs the column-schema check and `Schema.filter`, writes the error rows, and yields the materialization and every check result.
 Its return type is `dd.wiring.AssetYield`.
-The writer writes the quarantine, and `validation_results` yields no result for it.
-You make one choice: whether to pass `quarantine_writer`.
-The data determines which of the six outcomes a run has.
+The writer writes the error rows, and `validation_results` yields no result for them.
+You make one choice: whether to pass `error_rows_writer`.
+The data determines which outcome a run has.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
@@ -73,37 +75,38 @@ flowchart TD
     N -- no --> CS{"column schema matches?"}
     CS -- no --> DRIFT["nothing written<br/>dy_schema__columns fails, ERROR<br/>rules never evaluated<br/>run fails, ColumnSchemaError"]
     CS -- yes --> FILTER["Schema.filter"]
-    FILTER --> ANY{"any invalid rows?"}
-    ANY -- no --> CLEAN["table written<br/>quarantine written empty, if passed<br/>every check passes<br/>run succeeds"]
-    ANY -- yes --> Q{"quarantine_writer passed?"}
-    Q -- no --> ABORT["nothing written<br/>failing checks ERROR<br/>run fails, ValidationAbortError"]
-    Q -- yes --> SURV{"any valid rows left?"}
-    SURV -- no --> NONE["quarantine written, table not written<br/>failing checks ERROR<br/>run fails, NoValidRowsError"]
-    SURV -- yes --> PARTIAL["table and quarantine written<br/>failing checks WARN<br/>run succeeds"]
+    FILTER --> ANY{"a row failed an 'error' rule?"}
+    ANY -- no --> CLEAN["every row written<br/>error rows written empty, if a writer was passed<br/>run succeeds"]
+    ANY -- yes --> Q{"error_rows_writer passed?"}
+    Q -- no --> ABORT["nothing written<br/>run fails, ValidationAbortError"]
+    Q -- yes --> SURV{"any other rows?"}
+    SURV -- no --> NONE["error rows written, table not written<br/>run fails, NoValidRowsError"]
+    SURV -- yes --> PARTIAL["table and error rows written<br/>run succeeds"]
 ```
 
-[The failure policy](the-failure-policy.qmd) lists the same six outcomes as a table, with what each one writes.
+Every failing check has its rule's severity, in every outcome.
+[Validation](validation.qmd) and [Advanced: `filter=True`](filtering-error-rows.qmd) list the same outcomes as tables, with what each one writes.
 
-**The quarantine.**
-`validation_results` takes a `QuarantineWriter`: a function that receives the invalid rows, writes them and returns the quarantine address.
+**The error rows.**
+`validation_results` takes an `ErrorRowsWriter`: a function that receives the rows that failed an `"error"` rule, writes them and returns the error-rows address.
 The address is a string, not a path, because it can name a database table.
-When no row fails, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's invalid rows.
+When no row fails an `"error"` rule, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's error rows.
 
 In a run, `dd.asset` uses `delegating_writer(context)`.
-It passes the rows to the asset's own IO manager, under the asset key `<name>_quarantine`.
+It passes the rows to the asset's own IO manager, under the asset key `<name>_error_rows`.
 That IO manager writes them as it writes any asset with that key.
 The IO manager receives a copy of the step's output context with only the asset key changed, so a database IO manager still reads its connection settings from it.
-Nothing records the metadata the IO manager adds during that write, so the package reports the quarantine address itself.
+Nothing records the metadata the IO manager adds during that write, so the package reports the error-rows address itself.
 
-`file_writer(key, quarantine_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
+`file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
 
-`validate_quarantine_key(context)` fails the run with `QuarantineKeyCollisionError` when another asset in the code location already materializes `<name>_quarantine`.
+`validate_error_rows_key(context)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes `<name>_error_rows`.
 
 `dd.wiring` also exports two lower-level functions.
-`quarantine_frame(schema, failure)` returns the frame every writer receives: the invalid rows, then one `String` rule column per rule, named in the reserved namespace.
+`error_rows_frame(schema, failure)` returns the frame every writer receives: the rows that failed an `"error"` rule, then one `String` rule column per rule, named in the reserved namespace.
 Use it in an asset that runs `Schema.filter` itself, to write the same frame `dd.asset` would.
-`quarantine_path(key, quarantine_dir, partition_key)` returns the path `file_writer` writes to, so a test can check the path without writing a file.
+`error_rows_path(key, error_rows_dir, partition_key)` returns the path `file_writer` writes to, so a test can check the path without writing a file.
 
 ## The decorator is a `@dg.asset`, a writer and `validation_results`
 
@@ -113,20 +116,20 @@ Pass the schema's metadata and check specs to `@dg.asset`, and call `validation_
 #| label: hand-wiring-1
 @dg.asset(
     metadata=dd.wiring.schema_metadata(Orders),
-    check_specs=dd.wiring.check_specs(Orders, asset="orders"),
+    check_specs=dd.wiring.asset_check_specs(Orders, asset="orders", filter=True),
     output_required=False,
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
-    dd.wiring.validate_quarantine_key(context)
+    dd.wiring.validate_error_rows_key(context)
     yield from dd.wiring.validation_results(
         Orders,
         orders_frame(),
         valid_key=context.asset_key,
-        quarantine_writer=dd.wiring.delegating_writer(context),
+        error_rows_writer=dd.wiring.delegating_writer(context),
     )
 ```
 
-This gives the asset the Columns tab, one check per rule, the row filter and the quarantine.
+This gives the asset the Columns tab, one check per rule, the row filter and the error rows.
 For a single-output asset, `context.asset_key` is the only key you need.
 
 When the frame matches the schema, a run of that asset makes these calls:
@@ -139,12 +142,12 @@ sequenceDiagram
     participant V as validation_results
     participant W as delegating_writer
     participant D as Dagster
-    A->>V: Orders, frame, valid_key, quarantine_writer
+    A->>V: Orders, frame, valid_key, error_rows_writer
     V->>V: column-schema check
     V->>V: Schema.filter
-    opt some rows failed
-        V->>W: quarantine frame
-        W-->>V: quarantine address
+    opt a writer was passed
+        V->>W: error rows
+        W-->>V: error-rows address
     end
     opt the table was written
         V-->>D: MaterializeResult
@@ -153,20 +156,20 @@ sequenceDiagram
 ```
 
 `orders` passes the frame and the writer to `validation_results`.
-If rows failed, `validation_results` calls the writer with the quarantine frame.
-The writer returns the quarantine address.
+`validation_results` calls the writer with the error rows, which have zero rows when no row failed an `"error"` rule.
+The writer returns the error-rows address.
 `validation_results` then yields the `MaterializeResult` if it wrote the asset's table, and one result for each check.
 `orders` passes each one to Dagster with `yield from`.
 
 `output_required=False` lets the step end without yielding the materialization, which happens on a column-schema mismatch, on `ValidationAbortError`, on `NoValidRowsError` and on the skip.
 Without it, every path that does not raise has to yield the output.
 
-Without a `quarantine_writer`, any invalid row fails the run with `ValidationAbortError`, as in an asset built with `dd.asset` and `quarantine=False`.
+Without an `error_rows_writer`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, as in an asset built with `dd.asset` and `filter=False`.
 
 `delegating_writer` needs a step, so it raises `dagster._core.errors.DagsterInvalidPropertyError` under direct invocation.
-There, `dd.asset` uses `file_writer(context.asset_key, quarantine_dir, partition_key)`, and you can do the same.
+There, `dd.asset` uses `file_writer(context.asset_key, error_rows_dir, partition_key)`, and you can do the same.
 
-Call `validate_quarantine_key(context)` before the rest of the body, as `dd.asset` does on every run.
+Call `validate_error_rows_key(context)` before the rest of the body, as `dd.asset` does on every run.
 Under direct invocation it does nothing, because there is no asset graph to check.
 
 ## Split the checks off entirely
@@ -186,51 +189,49 @@ def orders() -> pl.LazyFrame:
     return orders_frame()
 
 
-@dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=KEY))
+@dg.multi_asset_check(specs=dd.wiring.asset_check_specs(Orders, asset=KEY))
 def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
-    yield from dd.wiring.check_results(
-        Orders, orders, asset_key=KEY, severity=dg.AssetCheckSeverity.WARN
-    )
+    yield from dd.wiring.asset_check_results(Orders, orders, asset_key=KEY)
 ```
 
-![The asset's Checks tab. The checks ran in their own `@dg.multi_asset_check`, against a table the IO manager had already written. The failing checks have the `WARN` severity passed to `check_results`, and the rows that failed them are in that table, not in a quarantine.](../assets/images/split-checks.png)
+![The asset's Checks tab. The checks ran in their own `@dg.multi_asset_check`, against a table the IO manager had already written. The failing checks have their rules' severities, and the rows that failed them are in that table, not in the error rows.](../assets/images/split-checks.png)
 
 Use this when the write must not depend on the check results.
 The IO manager writes whatever the asset returns, lazy or eager, and the checks run afterwards against the written table.
-Unlike with `dd.asset`, the IO manager writes the table before validation, so it can contain invalid rows.
+Unlike with `dd.asset`, the IO manager writes the table before validation, so it can contain rows that failed an `"error"` rule.
 Only a failing check reports them.
 
-`check_results` does what `validation_results` does, without writing anything.
-It yields no materialization, writes no quarantine, and never raises `ValidationAbortError` or `NoValidRowsError`.
+`asset_check_results` does what `validation_results` does, without writing anything.
+It yields no materialization, writes no error rows, and never raises `ValidationAbortError` or `NoValidRowsError`.
 
-`dd.asset` sets two things that you pass to `check_results` yourself:
+Two things work differently from `dd.asset`:
 
-- **`severity`.**
-  `validation_results` sets it from whether it wrote the table: `WARN` if it did, `ERROR` if it did not.
-  Here the IO manager always writes the table, but with the invalid rows in it, which is worse than the outcomes `validation_results` reports as `ERROR`.
-  So pass `WARN` to report failures on a table the IO manager wrote anyway, or `ERROR` to give them the severity of a failed run.
-  Every rule's check in the step gets that severity.
+- **A failing `"error"` rule's check stops the assets downstream, not the write.**
+  `asset_check_specs` makes each `"error"` rule's check blocking, as it does for `dd.asset` with `filter=False`.
+  So when an `"error"` rule fails, Dagster fails the check step and does not run the assets downstream.
+  The IO manager has already written the table, with the failing rows in it.
+  A `"warn"` rule's check only reports.
 - **Use the same settings as the specs.**
   Pass `check_granularity` and `schema_rules` to both calls, or to neither.
 
-`check_results` still raises `ColumnSchemaError` when the column schema does not match.
-The column-schema check fails, the step fails on the error, and `check_results` yields no result for any rule, because it evaluated no rule.
+`asset_check_results` still raises `ColumnSchemaError` when the column schema does not match.
+The column-schema check fails, the step fails on the error, and `asset_check_results` yields no result for any rule, because it evaluated no rule.
 
 ## Without the package at all
 
 Every example above uses `dd.wiring`.
-This is the same asset without this package: the Columns tab, one check per rule, the column-schema check, the row filter and the quarantine, all written by hand.
+This is the same asset without this package: the Columns tab, one check per rule, the column-schema check, the row filter and the error rows, all written by hand.
 
 ```{python}
 #| label: hand-wiring-3
 VALID = dg.AssetKey(["orders"])
-QUARANTINE = dg.AssetKey(["orders_quarantine"])
+ERROR_ROWS = dg.AssetKey(["orders_error_rows"])
 COLUMNS = Orders.columns()
 # Private in Dataframely: nothing public lists a schema's rules before it runs.
 RULES = list(Orders._validation_rules(with_cast=False))
 
 
-def check_name(rule: str) -> str:
+def asset_check_name(rule: str) -> str:
     return f"dy_rule__{rule.replace('|', '__')}"
 
 
@@ -254,11 +255,14 @@ COLUMN_SCHEMA = dg.TableSchema(
         "orders": dg.AssetOut(
             metadata={"dagster/column_schema": COLUMN_SCHEMA}, is_required=False
         ),
-        "orders_quarantine": dg.AssetOut(is_required=False),
+        "orders_error_rows": dg.AssetOut(is_required=False),
     },
     check_specs=[
         dg.AssetCheckSpec(name="dy_schema__columns", asset=VALID, blocking=True),
-        *(dg.AssetCheckSpec(name=check_name(rule), asset=VALID) for rule in RULES),
+        *(
+            dg.AssetCheckSpec(name=asset_check_name(rule), asset=VALID)
+            for rule in RULES
+        ),
     ],
 )
 def orders():
@@ -286,10 +290,10 @@ def orders():
             asset_key=VALID, value=valid, metadata={"dagster/row_count": len(valid)}
         )
     if len(failure):
-        rule_columns = {rule: check_name(rule) for rule in RULES}
+        rule_columns = {rule: asset_check_name(rule) for rule in RULES}
         invalid = failure.details().rename(rule_columns)
         yield dg.MaterializeResult(
-            asset_key=QUARANTINE,
+            asset_key=ERROR_ROWS,
             value=invalid.with_columns(
                 pl.col(name).cast(pl.String) for name in rule_columns.values()
             ),
@@ -297,7 +301,7 @@ def orders():
         )
     for rule in RULES:
         yield dg.AssetCheckResult(
-            check_name=check_name(rule),
+            check_name=asset_check_name(rule),
             asset_key=VALID,
             passed=not counts.get(rule),
             severity=dg.AssetCheckSeverity.ERROR
@@ -316,13 +320,14 @@ It differs from `dd.asset` in these ways:
 - The Columns tab shows dtypes, descriptions, nullability and uniqueness.
   The rest of what `Orders` declares is missing: no `>= 0`, no regex, no length bound, no table-level primary key, no column tags.
 - The checks have no descriptions, so a failing check shows the rule's name but not what the rule checks.
-- No statistics, no row sample, no failure samples and no `invalid_by_rules` table, so a failing check shows nothing about the rows that failed it.
+- No statistics, no row sample, no failure samples and no `error_rows_by_rules` table, so a failing check shows nothing about the rows that failed it.
 - No `check_granularity`, so a 40-column schema has around 40 checks or more, and you cannot collapse its rules into fewer checks.
 - You have to collect and filter a `LazyFrame` yourself.
-- It has three outcomes, not six.
+- No rule can be `"warn"`, and every failing check has the same severity, set by how the run ended.
+- It has three outcomes.
   A run where every row failed succeeds and skips the asset's table.
-  `dd.asset` fails that run with `NoValidRowsError`, because `quarantine=True` lets a run succeed when some rows fail, not when every row fails.
-- The quarantine is a second output, so a run that aborts never writes it, which is when you most need its rows.
+  `dd.asset` fails that run with `NoValidRowsError`, because `filter=True` lets a run succeed when some rows fail an `"error"` rule, not when every row does.
+- The error rows are a second output, so a run that aborts never writes them, which is when you most need them.
 - Nothing checks the names.
   A column already named `dy_rule__amount__min`, or two rules that produce the same check name, cause a silent collision instead of an error at definition time.
 - With a `key_prefix`, you build both asset keys yourself, and nothing checks them.
@@ -331,7 +336,7 @@ It differs from `dd.asset` in these ways:
 
 ```{python}
 #| label: hand-wiring-4
-@dd.asset(Orders, quarantine=True)
+@dd.asset(Orders, filter=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```

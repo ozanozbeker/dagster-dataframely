@@ -91,11 +91,11 @@ shoot() {
 }
 
 echo "Capturing:"
-shoot quarantine-checks        "$ASSETS/marketing_orders?view=checks"             1600 1000    0 2000
+shoot error-rows-checks        "$ASSETS/marketing_orders?view=checks"             1600 1000    0 2000
 shoot columns-tab              "$ASSETS/orders"                                    1600 1400    0 2560
 shoot check-list               "$ASSETS/orders?view=checks"                        1600 1400    0 2000
 shoot severity-error           "$ASSETS/finance_orders?view=checks"                1600 1000    0 2000
-shoot quarantine-lineage       "$ASSETS/marketing_orders?view=lineage"             1600  900    0 1700
+shoot error-rows-lineage       "$ASSETS/marketing_orders?view=lineage"             1600  900    0 1700
 shoot split-checks             "$ASSETS/warehouse_orders?view=checks"              1600 1000    0 1500
 shoot partitions-grid          "$ASSETS/regional_orders?view=partitions&partition=2026-08-01%7Cus" 1600 900 0 1700
 shoot materialization-metadata "$ASSETS/orders?view=events"                        2100 1500    0 2900

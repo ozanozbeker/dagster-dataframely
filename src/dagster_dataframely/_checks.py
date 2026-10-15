@@ -1,4 +1,4 @@
-"""Asset check specs derived from a schema, and the results `_runtime` and `check_results` yield for them.
+"""Asset check specs derived from a schema, and the results `_runtime` and `asset_check_results` yield for them.
 
 Specs and results both group the rules with `_rule_sets`, so they name the same checks only when given the same settings.
 """
@@ -106,7 +106,7 @@ def _rule_sets(
     return rule_sets
 
 
-def check_specs(
+def asset_check_specs(  # noqa: PLR0913 - takes the specs' settings
     schema: type[dy.Schema],
     *,
     # `dagster` has no alias for this union.
@@ -114,6 +114,7 @@ def check_specs(
     partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
+    filter: bool = False,  # noqa: A002 - the name `dd.asset` uses
 ) -> list[dg.AssetCheckSpec]:
     """Return the asset check specs for the schema's rules, plus the column-schema check.
 
@@ -121,6 +122,8 @@ def check_specs(
     ----------
     partitions_def
         The asset's partitions, so each check evaluation records its partition. Dagster does not check that it matches the asset's.
+    filter
+        Pass `True` when the asset writes its error rows instead of failing, as `dd.asset(filter=True)` does. With `False`, a check that reports for an `"error"` rule is blocking. With `True`, no rule's check is blocking, because a blocking check that fails at `ERROR` fails the step after the table is written.
     check_granularity
         How many checks report the schema's rules. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
@@ -140,6 +143,8 @@ def check_specs(
         A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
         Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
     rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity, schema_rules)
@@ -158,6 +163,8 @@ def check_specs(
                 rule_set.name,
                 asset=asset,
                 description=rule_set.description,
+                blocking=not filter
+                and any(rule.severity == "error" for rule in rule_set.rules),
                 partitions_def=partitions_def,
             )
             for rule_set in rule_sets
@@ -296,17 +303,19 @@ def _collapsed_metadata(
     return metadata | sample_metadata("dy_failed_sample", attributed)
 
 
-def rule_results(  # noqa: PLR0913 - takes the specs' settings
+def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,
     asset_key: dg.AssetKey,
-    severity: dg.AssetCheckSeverity,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
-    """Return one result per rule set from `failure`."""
+    """Return one result per rule set from `failure`.
+
+    A result is `ERROR` when an `"error"` rule in its set failed, so a collapsed check that only warns never stops a step.
+    """
     counts: dict[str, int] = failure.counts()
     sampled: dict[str, list[Row]] = _failed_rows(
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
@@ -322,7 +331,12 @@ def rule_results(  # noqa: PLR0913 - takes the specs' settings
                 check_name=rule_set.name,
                 asset_key=asset_key,
                 passed=not any(failed.values()),
-                severity=severity,
+                severity=dg.AssetCheckSeverity.ERROR
+                if any(
+                    failed[rule.name] and rule.severity == "error"
+                    for rule in rule_set.rules
+                )
+                else dg.AssetCheckSeverity.WARN,
                 metadata=_collapsed_metadata(rule_set.rules, failed, sampled)
                 if rule_set.collapsed
                 else _rule_metadata(
@@ -333,32 +347,31 @@ def rule_results(  # noqa: PLR0913 - takes the specs' settings
     return results
 
 
-def check_results(  # noqa: PLR0913 - takes the specs' settings
+def asset_check_results(  # noqa: PLR0913 - takes the specs' settings
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     asset_key: dg.AssetKey,
-    severity: dg.AssetCheckSeverity,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> Iterator[dg.AssetCheckResult]:
-    """Yield a result for each check `check_specs` declares, without writing any rows.
+    """Yield a result for each check `asset_check_specs` declares, without writing any rows.
+
+    Each failing rule's check has its rule's severity, as in `dd.asset`.
 
     Parameters
     ----------
-    severity
-        The severity of every failing check except the column-schema check, which is always `ERROR`.
     check_granularity
-        Pass the value `check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+        Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
-        Pass the value `check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
+        Pass the value `asset_check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
         A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
 
     Yields
     ------
-    The column-schema check's result, then one result per rule set, in the order of `check_specs`.
+    The column-schema check's result, then one result per rule set, in the order of `asset_check_specs`.
 
     Raises
     ------
@@ -370,6 +383,8 @@ def check_results(  # noqa: PLR0913 - takes the specs' settings
         A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
         Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema. It yields the column-schema check's failing result first.
     """
@@ -378,11 +393,10 @@ def check_results(  # noqa: PLR0913 - takes the specs' settings
     # Collects the valid rows too; `docs/pre-1.0.md` has why.
     _, failure = yield from filtered(schema, frame, asset_key=asset_key)
     yield column_schema_result(asset_key=asset_key)
-    yield from rule_results(
+    yield from rule_check_results(
         schema,
         failure,
         asset_key=asset_key,
-        severity=severity,
         check_granularity=check_granularity,
         schema_rules=schema_rules,
         max_failure_samples=max_failure_samples,

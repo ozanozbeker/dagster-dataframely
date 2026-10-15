@@ -31,7 +31,7 @@ from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
 from dagster_dataframely._rules import DAGSTER_NAME
-from dagster_dataframely.wiring import quarantine_path
+from dagster_dataframely.wiring import error_rows_path
 from tests.scenario import events
 
 
@@ -195,7 +195,7 @@ class TestDataframely:
         assert dy.Any().validate_dtype(pl.String)
 
     def test_filter_projects_a_superset_to_the_schemas_columns_in_order(self):
-        """`Schema.filter` keeps only the schema's columns, in the schema's order, as `user_guide/the-failure-policy.qmd` states and Dataframely does not document."""
+        """`Schema.filter` keeps only the schema's columns, in the schema's order, as `user_guide/validation.qmd` states and Dataframely does not document."""
         superset = _MIXED_ORDERS.select(
             "status", "amount", pl.lit("note").alias("shipping"), "order_id"
         )
@@ -225,7 +225,7 @@ class TestDataframely:
             lazy_result.collect_all(engine="nonsense")
 
     def test_details_returns_invalid_rows_plus_one_column_per_rule(self):
-        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.quarantine_frame` and `_checks._failed_rows` both read."""
+        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.error_rows_frame` and `_checks._failed_rows` both read."""
         _, failure = Orders.filter(_MIXED_ORDERS)
         details = failure.details()
 
@@ -234,7 +234,7 @@ class TestDataframely:
             Orders._validation_rules(with_cast=False)
         )
 
-        # An `Enum`, which `quarantine_frame` casts to `String` because the Delta writer panics on it.
+        # An `Enum`, which `error_rows_frame` casts to `String` because the Delta writer panics on it.
         assert details.schema["amount|min"] == pl.Enum(["valid", "invalid", "unknown"])
         assert (
             details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item()
@@ -310,7 +310,7 @@ class TestDagster:
         assert [warning.category for warning in recorded] == [PreviewWarning]
 
     def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def(self):
-        """Dagster does not check that a spec's `partitions_def` matches its asset's, so `check_specs` passes its `partitions_def` through without checking it either."""
+        """Dagster does not check that a spec's `partitions_def` matches its asset's, so `asset_check_specs` passes its `partitions_def` through without checking it either."""
         days = dg.StaticPartitionsDefinition(["mon", "tue"])
         elsewhere = dg.StaticPartitionsDefinition(["x", "y"])
         key = dg.AssetKey(["orders"])
@@ -319,7 +319,7 @@ class TestDagster:
             warnings.simplefilter("ignore", PreviewWarning)
             spec = dg.AssetCheckSpec("row_count", asset=key, partitions_def=elsewhere)
 
-        # Unannotated: with `check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
+        # Unannotated: with `asset_check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
         @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
         def orders():
             return dg.MaterializeResult(
@@ -340,7 +340,7 @@ class TestDagster:
     def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run(
         self,
     ):
-        """A failing blocking check with a `partitions_def` still fails the run, which `check_specs` needs because it gives one to the column-schema check."""
+        """A failing blocking check with a `partitions_def` still fails the run, which `asset_check_specs` needs because it gives one to the column-schema check."""
         days = dg.StaticPartitionsDefinition(["mon", "tue"])
         key = dg.AssetKey(["orders"])
 
@@ -445,7 +445,7 @@ class TestDagster:
         assert "failed type check for Dagster type DataFrame" in str(raised.value)
 
     def test_a_check_input_is_still_type_checked_against_its_annotation(self):
-        """Dagster type-checks a `@dg.multi_asset_check` input, so `check_results` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""
+        """Dagster type-checks a `@dg.multi_asset_check` input, so `asset_check_results` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""
         key = dg.AssetKey(["orders"])
         ran = False
 
@@ -504,11 +504,11 @@ class TestDagster:
 
         # A raw string on purpose: the assertion below shows `_replace` does not wrap it.
         readdressed = check._replace(
-            metadata={"dataframely/quarantine_address": "here"}  # pyrefly: ignore[bad-assignment]
+            metadata={"dataframely/error_rows_address": "here"}  # pyrefly: ignore[bad-assignment]
         )
         rebuilt = result._replace(metadata={"dagster/row_count": 1})
 
-        assert readdressed.metadata == {"dataframely/quarantine_address": "here"}
+        assert readdressed.metadata == {"dataframely/error_rows_address": "here"}
         assert readdressed.severity == dg.AssetCheckSeverity.ERROR
         assert not readdressed.passed
         assert readdressed.check_name == "dy_schema__columns"
@@ -541,7 +541,7 @@ class TestDagster:
         assert recorded["dagster/row_count"].value == 3
 
     def test_the_three_path_escapes_dagster_applies_are_still_importable(self):
-        """`UPathIOManager` escapes a leading `/` but not `..`, and `_quarantine.quarantine_path` calls these three functions to escape both."""
+        """`UPathIOManager` escapes a leading `/` but not `..`, and `_error_rows.error_rows_path` calls these three functions to escape both."""
         assert escape_leading_slash("/etc") == "%2Fetc"
         assert escape_leading_slash("etc") == "etc"
         assert escape_dotdot_segments("../etc") == "%2E%2E/etc"
@@ -556,7 +556,7 @@ class TestDagster:
         self,
         tmp_path: Path,
     ):
-        """`UPathIOManager` formats a multi-partition key in a closure, so `_quarantine._formatted_partition_key` copies it and this test compares the two paths."""
+        """`UPathIOManager` formats a multi-partition key in a closure, so `_error_rows._formatted_partition_key` copies it and this test compares the two paths."""
         written: dict[str, UPath] = {}
 
         class Probe(dg.UPathIOManager):
@@ -589,11 +589,11 @@ class TestDagster:
             partition_key=key,
             resources={"io_manager": Probe(base_path=UPath(tmp_path))},
         )
-        quarantined = quarantine_path(dg.AssetKey(["orders"]), tmp_path, key)
+        filtered = error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
 
         assert result.success
         base = UPath(tmp_path)
-        assert quarantined.relative_to(base / "orders_quarantine") == (
+        assert filtered.relative_to(base / "orders_error_rows") == (
             written["path"].relative_to(base / "orders").with_suffix(".parquet")
         )
 
@@ -605,7 +605,7 @@ class TestPrivateDagsterApis:
         self,
         tmp_path: Path,
     ):
-        """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_quarantine.delegating_writer` uses."""
+        """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_error_rows.delegating_writer` uses."""
         borrowed: dict[str, Any] = {}
 
         @dg.asset(
@@ -636,7 +636,7 @@ class TestPrivateDagsterApis:
         assert borrowed["manager"] == "PolarsParquetIOManager"
 
     def test_a_directly_invoked_asset_still_has_no_step(self):
-        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_quarantine.quarantine_writer` catches to use `file_writer`."""
+        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.error_rows_writer` catches to use `file_writer`."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -647,7 +647,7 @@ class TestPrivateDagsterApis:
         assert orders(dg.build_asset_context()) == "called"
 
     def test_keys_by_output_name_still_omits_the_check_outputs(self):
-        """`keys_by_output_name` omits check outputs, so `_quarantine.delegating_writer` unpacks the asset's one output name from it."""
+        """`keys_by_output_name` omits check outputs, so `_error_rows.delegating_writer` unpacks the asset's one output name from it."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(
@@ -676,18 +676,18 @@ class TestPrivateDagsterApis:
         assert not is_context_provided([])
 
     def test_an_output_context_still_clones_and_re_points_by_attribute(self):
-        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and has its own output metadata, which `_quarantine.delegating_writer` depends on."""
+        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and has its own output metadata, which `_error_rows.delegating_writer` depends on."""
         original = dg.build_output_context(
             asset_key=dg.AssetKey(["analytics", "orders"]),
             definition_metadata={"partition_expr": "ordered_at"},
         )
 
         repointed = copy.copy(original)
-        repointed._asset_key = dg.AssetKey(["analytics", "orders_quarantine"])
+        repointed._asset_key = dg.AssetKey(["analytics", "orders_error_rows"])
         repointed.add_output_metadata({"path": "somewhere"})
 
         assert repointed is not original
-        assert repointed.asset_key.path == ["analytics", "orders_quarantine"]
+        assert repointed.asset_key.path == ["analytics", "orders_error_rows"]
         assert original.asset_key.path == ["analytics", "orders"]
         assert repointed.definition_metadata == original.definition_metadata
         assert "path" in repointed.get_logged_metadata()
@@ -695,10 +695,10 @@ class TestPrivateDagsterApis:
 
 
 class TestExecutableKeys:
-    """The Dagster behaviour `_executable_keys` reads for `validate_quarantine_key` (ADR-0007)."""
+    """The Dagster behaviour `_executable_keys` reads for `validate_error_rows_key` (ADR-0007)."""
 
     def test_an_in_process_run_still_has_no_repository_definition(self):
-        """`repository_def` raises `CheckError` in an in-process run, which `_quarantine._executable_keys` catches to read the job's asset graph instead."""
+        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph instead."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -709,7 +709,7 @@ class TestExecutableKeys:
         assert dg.materialize([orders]).success
 
     def test_a_directly_invoked_asset_still_has_no_repository_definition(self):
-        """`repository_def` raises `DagsterInvalidPropertyError` in a direct invocation, which `_quarantine._executable_keys` catches to return no keys."""
+        """`repository_def` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows._executable_keys` catches to return no keys."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -720,7 +720,7 @@ class TestExecutableKeys:
         assert orders(dg.build_asset_context()) == "called"
 
     def test_the_job_graph_still_narrows_to_what_the_run_selected(self):
-        """The job's asset graph holds only the selected assets, so `_quarantine._executable_keys` reads it only when `repository_def` raises."""
+        """The job's asset graph holds only the selected assets, so `_error_rows._executable_keys` reads it only when `repository_def` raises."""
         seen: dict[str, set[str]] = {}
 
         @dg.asset(name="orders")
@@ -731,18 +731,18 @@ class TestExecutableKeys:
             }
             return "ran"
 
-        @dg.asset(name="orders_quarantine")
+        @dg.asset(name="orders_error_rows")
         def sibling() -> str:
             return "ran"
 
         whole = dg.materialize([orders, sibling])
         subset = dg.materialize([orders, sibling], selection=[orders])
 
-        assert seen[whole.run_id] == {"orders", "orders_quarantine"}
+        assert seen[whole.run_id] == {"orders", "orders_error_rows"}
         assert seen[subset.run_id] == {"orders"}
 
     def test_a_bare_spec_is_still_unexecutable_beside_its_asset(self):
-        """Dagster marks a bare `dg.AssetSpec` unexecutable, so the spec from `quarantine_spec` is not among the keys `validate_quarantine_key` checks."""
+        """Dagster marks a bare `dg.AssetSpec` unexecutable, so the spec from `error_rows_spec` is not among the keys `validate_error_rows_key` checks."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(name="orders")
@@ -754,7 +754,7 @@ class TestExecutableKeys:
             .Definitions(
                 assets=[
                     orders,
-                    dg.AssetSpec(key=dg.AssetKey(["orders_quarantine"]), deps=[key]),
+                    dg.AssetSpec(key=dg.AssetKey(["orders_error_rows"]), deps=[key]),
                 ]
             )
             .get_repository_def()
@@ -762,4 +762,4 @@ class TestExecutableKeys:
         )
 
         assert graph.executable_asset_keys == {key}
-        assert graph.unexecutable_asset_keys == {dg.AssetKey(["orders_quarantine"])}
+        assert graph.unexecutable_asset_keys == {dg.AssetKey(["orders_error_rows"])}

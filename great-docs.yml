@@ -48,8 +48,9 @@ user_guide:
   - section: Guide
     contents:
       - declaring-an-asset.qmd
-      - the-failure-policy.qmd
-      - where-invalid-rows-go.qmd
+      - validation.qmd
+      - rule-severity.qmd
+      - filtering-error-rows.qmd
       - what-a-run-produces.qmd
       - testing-an-asset.qmd
       - partitioning.qmd
@@ -71,11 +72,11 @@ reference:
   sections:
     - title: Core
       desc: >-
-        `dd.asset` builds an asset from a schema, and `quarantine_spec` adds that asset's
-        quarantine to the asset graph.
+        `dd.asset` builds an asset from a schema, and `error_rows_spec` adds that asset's
+        error rows to the asset graph.
       contents:
         - asset
-        - quarantine_spec
+        - error_rows_spec
         - Granularity
         - SchemaRules
 
@@ -86,17 +87,17 @@ reference:
       contents:
         - wiring.schema_metadata
         - wiring.table_schema
-        - wiring.check_specs
-        - wiring.check_results
-        - wiring.check_name
+        - wiring.asset_check_specs
+        - wiring.asset_check_results
+        - wiring.asset_check_name
         - wiring.validation_results
         - wiring.AssetYield
-        - wiring.QuarantineWriter
+        - wiring.ErrorRowsWriter
         - wiring.delegating_writer
         - wiring.file_writer
-        - wiring.quarantine_frame
-        - wiring.quarantine_path
-        - wiring.validate_quarantine_key
+        - wiring.error_rows_frame
+        - wiring.error_rows_path
+        - wiring.validate_error_rows_key
 
     - title: Errors
       desc: >-
@@ -107,11 +108,12 @@ reference:
         - errors.ReservedColumnError
         - errors.InvalidColumnNameError
         - errors.CheckNameCollisionError
+        - errors.InvalidSeverityError
         - errors.InvalidSettingError
         - errors.MaterializeResultValueError
         - errors.MaterializeResultFieldError
         - errors.ColumnSchemaError
         - errors.ValidationAbortError
         - errors.NoValidRowsError
-        - errors.QuarantineKeyCollisionError
-        - errors.QuarantineDirError
+        - errors.ErrorRowsKeyCollisionError
+        - errors.ErrorRowsDirError

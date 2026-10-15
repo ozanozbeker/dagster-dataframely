@@ -102,12 +102,12 @@ def _table(
     metadata: Mapping[str, dg.MetadataValue[Any]], group: str
 ) -> dict[str, dict[str, Any]]:
     """Return one group's table as rows keyed by column name."""
-    value = metadata[f"dataframely/valid_statistics/{group}"]
+    value = metadata[f"dataframely/table_statistics/{group}"]
     return {str(row["column"]): row for row in records(value)}
 
 
 def _groups(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
-    return {key for key in metadata if key.startswith("dataframely/valid_statistics/")}
+    return {key for key in metadata if key.startswith("dataframely/table_statistics/")}
 
 
 def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[str]:
@@ -116,7 +116,7 @@ def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[st
         column
         for group in _groups(metadata)
         for column in _table(
-            metadata, group.removeprefix("dataframely/valid_statistics/")
+            metadata, group.removeprefix("dataframely/table_statistics/")
         )
     }
 
@@ -125,10 +125,10 @@ def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _groups(metadata) == {
-        "dataframely/valid_statistics/numeric",
-        "dataframely/valid_statistics/temporal",
-        "dataframely/valid_statistics/string",
-        "dataframely/valid_statistics/boolean",
+        "dataframely/table_statistics/numeric",
+        "dataframely/table_statistics/temporal",
+        "dataframely/table_statistics/string",
+        "dataframely/table_statistics/boolean",
     }
 
 
@@ -142,7 +142,7 @@ def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
 
     metadata = _metadata(tmp_path, weights, key="weights")
 
-    assert _groups(metadata) == {"dataframely/valid_statistics/numeric"}
+    assert _groups(metadata) == {"dataframely/table_statistics/numeric"}
 
 
 def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
@@ -153,9 +153,9 @@ def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Pat
     assert "tags" not in _statistics_columns(ordered)
     # No boolean table, because `Orders` has no `Bool` column.
     assert _groups(ordered) == {
-        "dataframely/valid_statistics/numeric",
-        "dataframely/valid_statistics/temporal",
-        "dataframely/valid_statistics/string",
+        "dataframely/table_statistics/numeric",
+        "dataframely/table_statistics/temporal",
+        "dataframely/table_statistics/string",
     }
 
 
@@ -324,7 +324,7 @@ def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
 def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     """With `statistics=False`, the package still writes `dagster/row_count`, because it is not a statistic."""
 
-    @dd.asset(Orders, name="orders", quarantine=True, statistics=False)
+    @dd.asset(Orders, name="orders", filter=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
@@ -348,17 +348,17 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
     assert not _groups(_metadata(tmp_path, statistics_off_by_environment))
 
 
-def test_the_quarantine_carries_no_statistics(tmp_path: Path):
-    """Statistics cover only the valid rows, because nothing downstream reads the quarantine (ADR-0004)."""
+def test_the_error_rows_carries_no_statistics(tmp_path: Path):
+    """Statistics cover only the table, because nothing downstream reads the error rows (ADR-0004)."""
 
-    @dd.asset(Orders, name="orders", quarantine=True)
-    def quarantined() -> pl.DataFrame:
+    @dd.asset(Orders, name="orders", filter=True)
+    def filtered() -> pl.DataFrame:
         return mixed_orders()
 
-    metadata = _metadata(tmp_path, quarantined)
+    metadata = _metadata(tmp_path, filtered)
 
     assert _groups(metadata)
-    assert "dataframely/invalid_count" in metadata
+    assert "dataframely/error_rows_count" in metadata
     # Rule columns are strings, so statistics over the invalid rows would add them to the string table.
     assert not [
         column for column in _statistics_columns(metadata) if column.startswith("dy_")

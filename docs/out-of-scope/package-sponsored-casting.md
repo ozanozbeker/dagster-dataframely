@@ -84,7 +84,7 @@ For anyone measuring this again, `filter(cast=True)` end to end:
 
 ```text
 Int32 -> Int64, Decimal -> Float64    cast cleanly
-"abc" -> Float64                      invalid row, quarantined, |dtype rule reports it
+"abc" -> Float64                      invalid row, in the error rows, |dtype rule reports it
 List  -> Float64                      InvalidOperationError at collect
 Struct -> Float64                     InvalidOperationError at collect
 ```
@@ -94,7 +94,7 @@ Only the `List` error names the failing cast.
 
 ## What is in scope
 
-`user_guide/the-failure-policy.qmd` documents the policy.
+`user_guide/validation.qmd` documents the policy.
 The policy is right, but its first stated reason was wrong: casting `Duration('ns')` to `Duration('us')` rescales the value, so the "thousandfold error" it warned about does not happen.
 That correction, and the fact that projection needs no cast, are [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88).
 

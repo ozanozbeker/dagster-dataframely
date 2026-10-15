@@ -11,13 +11,14 @@ __all__ = [
     "CollectionNotSupportedError",
     "ColumnSchemaError",
     "DagsterDataframelyError",
+    "ErrorRowsDirError",
+    "ErrorRowsKeyCollisionError",
     "InvalidColumnNameError",
     "InvalidSettingError",
+    "InvalidSeverityError",
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
     "NoValidRowsError",
-    "QuarantineDirError",
-    "QuarantineKeyCollisionError",
     "ReservedColumnError",
     "ValidationAbortError",
 ]
@@ -52,7 +53,7 @@ class InvalidSettingError(DagsterDataframelyError):
         source
             Where the value came from, as a phrase.
         takes_argument
-            Whether `dd.asset` has a parameter for this setting. `quarantine_dir` has none, so its message names no argument.
+            Whether `dd.asset` has a parameter for this setting. `error_rows_dir` has none, so its message names no argument.
         """
         rendered: str = (
             allowed
@@ -69,6 +70,25 @@ class InvalidSettingError(DagsterDataframelyError):
         )
 
 
+class InvalidSeverityError(DagsterDataframelyError):
+    """A schema declares a severity this package cannot read.
+
+    Raised at definition time by every public function that takes a schema (ADR-0008), because no type checker reads inside `dy.Column(metadata=...)`.
+    """
+
+    def __init__(self, place: str, problem: str) -> None:
+        """Name where the declaration is and what is wrong with it.
+
+        Parameters
+        ----------
+        place
+            The declaration, as the sentence's subject: a column's metadata, or the schema's `__dagster_dataframely__`.
+        problem
+            The rest of the sentence, and any fix.
+        """
+        super().__init__(f"{place} {problem}")
+
+
 class ReservedColumnError(DagsterDataframelyError):
     """A column name is in the reserved `dy_` namespace.
 
@@ -82,7 +102,7 @@ class ReservedColumnError(DagsterDataframelyError):
             ("", "uses", "it") if len(columns) == 1 else ("s", "use", "them")
         )
         super().__init__(
-            f"Column{plural} {names} of {schema_name} {verb} the reserved 'dy_' namespace. Rename {pronoun}. This package generates every check name and quarantine column in it."
+            f"Column{plural} {names} of {schema_name} {verb} the reserved 'dy_' namespace. Rename {pronoun}. This package generates every check name and rule column in it."
         )
 
 
@@ -185,74 +205,74 @@ def _failure_counts(counts: Mapping[str, int]) -> str:
 
 
 class ValidationAbortError(DagsterDataframelyError):
-    """Rows failed validation and the asset declares no quarantine, so it writes nothing.
+    """A row failed an `"error"` rule and the asset has `filter=False`, so it writes nothing.
 
-    Without a quarantine, every row has to be valid. No setting drops the invalid rows and writes the rest: to drop rows, filter them in the asset body.
+    With `filter=False`, every row has to pass every `"error"` rule. No setting drops those rows and writes the rest: to drop rows, filter them in the asset body.
     """
 
     def __init__(
-        self, schema_name: str, invalid_count: int, counts: Mapping[str, int]
+        self, schema_name: str, error_count: int, counts: Mapping[str, int]
     ) -> None:
-        """Give the failure count per rule, and the three fixes.
+        """Give the failure count per `"error"` rule, and the four fixes.
 
         Parameters
         ----------
         counts
-            The failure count for each rule that any row failed. The counts can add up to more than `invalid_count`, because one row can fail several rules.
+            The failure count for each `"error"` rule that any row failed. The counts can add up to more than `error_count`, because one row can fail several rules.
         """
-        plural = "" if invalid_count == 1 else "s"
+        plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"{invalid_count} row{plural} failed {schema_name} validation, {_failure_counts(counts)}. Nothing was written, so the last-known-good table is unchanged. Fix the rows upstream, write them to a quarantine with `quarantine=True`, or drop them in the asset body. This package never drops rows for you."
+            f"{error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. Nothing was written, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>_error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
         )
 
 
 class NoValidRowsError(DagsterDataframelyError):
-    """Every row failed validation, so the run wrote only the quarantine.
+    """Every row failed an `"error"` rule, so the run wrote only the error rows.
 
-    Nothing writes the asset's table, so an empty table never replaces the last-known-good one.
+    Nothing writes the asset's table, so an empty table never replaces the last-known-good one. A frame whose rows fail only `"warn"` rules has no valid rows in Dataframely's sense, and is written without this error.
     """
 
     def __init__(
         self,
         schema_name: str,
-        invalid_count: int,
+        error_count: int,
         counts: Mapping[str, int],
         address: str,
     ) -> None:
-        """Give the failure count per rule and the quarantine address.
+        """Give the failure count per `"error"` rule and the error-rows address.
 
         Parameters
         ----------
         address
-            The quarantine address, so the message says where the rows are.
+            The error-rows address, so the message says where the rows are.
         """
-        plural = "" if invalid_count == 1 else "s"
+        plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"All {invalid_count} row{plural} failed {schema_name} validation, {_failure_counts(counts)}. The rows are in {address}, with one column per rule showing which rules each row failed. The table was not written, so the last-known-good table is unchanged."
+            f"All {error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. The rows are in {address}, with one column per rule showing which rules each row failed. The table was not written, so the last-known-good table is unchanged."
         )
 
 
-class QuarantineKeyCollisionError(DagsterDataframelyError):
-    """Another asset already materializes the quarantine's asset key.
+class ErrorRowsKeyCollisionError(DagsterDataframelyError):
+    """Another asset already materializes the error rows' asset key.
 
-    Raised before the decorated function runs, on every run of an asset with `quarantine=True` (ADR-0007). Otherwise both assets would write to the same key, and the second write would replace the first.
+    Raised before the decorated function runs, on every run of an asset with `filter=True` (ADR-0007). Otherwise both assets would write to the same key, and the second write would replace the first.
     """
 
-    def __init__(self, asset: str, quarantine: str) -> None:
+    def __init__(self, asset: str, error_rows: str) -> None:
         """Name both assets and each fix."""
         super().__init__(
-            f"'{asset}' declares `quarantine=True`, so its invalid rows are written to '{quarantine}', which another asset in this code location already materializes. Rename that asset, or remove `quarantine=True` from '{asset}'. If that asset is your own quarantine table, delete it and use `quarantine_spec` instead, which adds the quarantine itself to the asset graph."
+            f"'{asset}' declares `filter=True`, so its error rows are written to '{error_rows}', which another asset in this code location already materializes. Rename that asset, or remove `filter=True` from '{asset}'. If that asset is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph."
         )
 
 
-class QuarantineDirError(DagsterDataframelyError):
-    """Invalid rows need writing, and nothing sets `quarantine_dir`.
+class ErrorRowsDirError(DagsterDataframelyError):
+    """Error rows need writing, and nothing sets `error_rows_dir`.
 
-    Raised only when you call an asset with `quarantine=True` directly, because a run always has an IO manager to write the rows. There is no default directory, so nothing writes the rows somewhere nobody chose.
+    Raised only when you call an asset with `filter=True` directly, because a run always has an IO manager to write the rows. There is no default directory, so nothing writes the rows somewhere nobody chose.
     """
 
     def __init__(self, asset: str) -> None:
         """Name the asset and the setting that fixes it."""
         super().__init__(
-            f"'{asset}' declares `quarantine=True` and was called directly, so there is no IO manager to write its invalid rows. Set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` to a directory for them, or run the asset, so its IO manager writes them."
+            f"'{asset}' declares `filter=True` and was called directly, so there is no IO manager to write its error rows. Set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` to a directory for them, or run the asset, so its IO manager writes them."
         )

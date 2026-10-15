@@ -17,14 +17,11 @@ def warehouse_orders(raw_marketplace_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_marketplace_orders
 
 
-@dg.multi_asset_check(specs=dd.wiring.check_specs(Orders, asset=WAREHOUSE_ORDERS))
+@dg.multi_asset_check(specs=dd.wiring.asset_check_specs(Orders, asset=WAREHOUSE_ORDERS))
 def warehouse_orders_checks(
     warehouse_orders: pl.LazyFrame,
 ) -> Iterator[dg.AssetCheckResult]:
-    """Check the written `warehouse_orders` table, and report failures as warnings."""
-    yield from dd.wiring.check_results(
-        Orders,
-        warehouse_orders,
-        asset_key=WAREHOUSE_ORDERS,
-        severity=dg.AssetCheckSeverity.WARN,
+    """Check the written `warehouse_orders` table. A failing `"error"` rule's check is blocking, so assets downstream do not run."""
+    yield from dd.wiring.asset_check_results(
+        Orders, warehouse_orders, asset_key=WAREHOUSE_ORDERS
     )

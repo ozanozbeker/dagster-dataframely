@@ -22,7 +22,7 @@ from dagster_dataframely.errors import (
 )
 from dagster_dataframely.wiring import (
     AssetYield,
-    check_specs,
+    asset_check_specs,
     schema_metadata,
     validation_results,
 )
@@ -157,23 +157,23 @@ class TestContextParameter:
         assert result.success
         assert seen == {"asset": "orders", "rows": 3}
 
-    def test_a_quarantined_function_keeps_the_context_it_declared(self, tmp_path: Path):
-        """With `quarantine=True`, a function that declares `context` receives the step's context, not a second one."""
+    def test_a_filtered_function_keeps_the_context_it_declared(self, tmp_path: Path):
+        """With `filter=True`, a function that declares `context` receives the step's context, not a second one."""
         seen: dict[str, str] = {}
 
-        @dd.asset(Orders, name="orders", quarantine=True, partitions_def=_DAYS)
+        @dd.asset(Orders, name="orders", filter=True, partitions_def=_DAYS)
         def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
             seen["partition"] = context.partition_key
             return mixed_orders()
 
         result = materialize(tmp_path, orders, partition_key="2026-01-02")
-        quarantine = pl.read_parquet(
-            tmp_path / "orders_quarantine" / "2026-01-02.parquet"
+        error_rows = pl.read_parquet(
+            tmp_path / "orders_error_rows" / "2026-01-02.parquet"
         )
 
         assert result.success
         assert seen == {"partition": "2026-01-02"}
-        assert len(quarantine) == 3
+        assert len(error_rows) == 3
 
 
 class TestSharedName:
@@ -279,17 +279,17 @@ def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
 
-class TestInvalidRowsWithoutQuarantine:
-    """A run with invalid rows and no quarantine."""
+class TestErrorRowsWithoutFilter:
+    """A run where a row fails an `"error"` rule, with `filter=False`."""
 
-    def test_invalid_rows_with_no_quarantine_fail_the_run(self, tmp_path: Path):
+    def test_invalid_rows_with_no_error_rows_fail_the_run(self, tmp_path: Path):
         with pytest.raises(ValidationAbortError) as raised:
             materialize(tmp_path, _mixed)
 
-        assert "3 rows failed Orders validation" in str(raised.value)
+        assert "3 rows failed an 'error' rule of Orders" in str(raised.value)
         assert "1 by 'amount|min'" in str(raised.value)
         assert "never drops rows for you" in str(raised.value)
-        assert "quarantine=True" in str(raised.value)
+        assert "filter=True" in str(raised.value)
 
     def test_the_abort_writes_nothing(self, tmp_path: Path):
         result = materialize(tmp_path, _mixed, raise_on_error=False)
@@ -323,57 +323,63 @@ class TestInvalidRowsWithoutQuarantine:
         with pytest.raises(ValidationAbortError) as raised:
             materialize(tmp_path, all_invalid)
 
-        assert "2 rows failed Orders validation, 2 by 'amount|min'" in str(raised.value)
+        assert "2 rows failed an 'error' rule of Orders, 2 by 'amount|min'" in str(
+            raised.value
+        )
         assert not list(tmp_path.rglob("*.parquet"))
 
-    def test_the_abort_raises_every_rule_check_to_error(self, tmp_path: Path):
+    def test_every_failing_rule_check_is_an_error(self, tmp_path: Path):
         evaluations = check_evaluations(
             materialize(tmp_path, _mixed, raise_on_error=False)
         )
-        rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
+        failed = [
+            e
+            for name, e in evaluations.items()
+            if name.startswith("dy_rule__") and not e.passed
+        ]
 
-        assert rules
-        assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
+        assert failed
+        assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in failed)
 
 
 _GOOD_KEY = dg.AssetKey(["orders"])
 
 
-@dd.asset(Orders, name="orders", quarantine=True)
-def _quarantined() -> pl.DataFrame:
+@dd.asset(Orders, name="orders", filter=True)
+def _filtered() -> pl.DataFrame:
     return mixed_orders()
 
 
-class TestQuarantineWithValidRows:
-    """A run with a quarantine and some valid rows."""
+class TestFilterWithValidRows:
+    """A run with `filter=True` where some rows pass every `"error"` rule."""
 
-    def test_the_valid_rows_are_written_and_the_rest_are_quarantined(
-        self, tmp_path: Path
-    ):
-        """The run materializes only the asset, because the quarantine is not an asset (ADR-0004)."""
-        result = materialize(tmp_path, _quarantined)
+    def test_the_valid_rows_are_written_and_the_rest_are_filtered(self, tmp_path: Path):
+        """The run materializes only the asset, because the error rows are not an asset (ADR-0004)."""
+        result = materialize(tmp_path, _filtered)
 
         assert result.success
         assert set(materializations(result)) == {_GOOD_KEY}
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
-        assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 3
+        assert pl.read_parquet(tmp_path / "orders_error_rows.parquet").height == 3
 
     def test_the_materialization_says_where_the_rest_went(self, tmp_path: Path):
-        """The package computes the quarantine address, because the step never reads the IO manager's metadata for the quarantine (ADR-0006)."""
-        metadata = materializations(materialize(tmp_path, _quarantined))[
+        """The package computes the error-rows address, because the step never reads the IO manager's metadata for the error rows (ADR-0006)."""
+        metadata = materializations(materialize(tmp_path, _filtered))[
             _GOOD_KEY
         ].metadata
 
-        assert metadata["dataframely/quarantine_address"] == dg.MetadataValue.text(
-            "orders_quarantine"
+        assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
+            "orders_error_rows"
         )
-        assert metadata["dataframely/invalid_count"] == dg.MetadataValue.int(3)
-        assert isinstance(metadata["dataframely/invalid_sample"], dg.TableMetadataValue)
+        assert metadata["dataframely/error_rows_count"] == dg.MetadataValue.int(3)
+        assert isinstance(
+            metadata["dataframely/error_rows_sample"], dg.TableMetadataValue
+        )
 
-    def test_an_upstream_and_a_quarantine_leave_the_graph_alone(self, tmp_path: Path):
-        """A quarantine adds no asset and no step."""
+    def test_an_upstream_and_a_error_rows_leave_the_graph_alone(self, tmp_path: Path):
+        """Error rows add no asset and no step."""
 
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
             return mixed_orders()
 
@@ -383,8 +389,10 @@ class TestQuarantineWithValidRows:
         assert set(materializations(result)) == {dg.AssetKey(["raw_orders"]), _GOOD_KEY}
         assert len(result.get_step_success_events()) == 2
 
-    def test_a_quarantined_run_succeeds_with_every_check_at_warn(self, tmp_path: Path):
-        evaluations = check_evaluations(materialize(tmp_path, _quarantined))
+    def test_a_filtered_run_succeeds_with_every_failing_check_at_error(
+        self, tmp_path: Path
+    ):
+        evaluations = check_evaluations(materialize(tmp_path, _filtered))
         failed = {name for name, e in evaluations.items() if not e.passed}
         rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
@@ -393,13 +401,15 @@ class TestQuarantineWithValidRows:
             "dy_rule__email__check__lowercase",
             "dy_rule__paid_orders_have_amount",
         }
-        assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules)
+        assert all(
+            e.severity == dg.AssetCheckSeverity.ERROR for e in rules if not e.passed
+        )
 
     def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
         self,
         tmp_path: Path,
     ):
-        evaluations = check_evaluations(materialize(tmp_path, _quarantined))
+        evaluations = check_evaluations(materialize(tmp_path, _filtered))
         rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
         assert any(e.passed for e in rules)
@@ -414,47 +424,45 @@ class TestQuarantineWithValidRows:
         def reconciled(orders: pl.DataFrame) -> None:
             seen["rows"] = len(orders)
 
-        result = materialize(tmp_path, _quarantined, reconciled)
+        result = materialize(tmp_path, _filtered, reconciled)
 
         assert result.success
         assert seen == {"rows": 3}
 
-    def test_the_quarantine_holds_the_original_columns_plus_a_rule_column_each(
+    def test_the_error_rows_holds_the_original_columns_plus_a_rule_column_each(
         self,
         tmp_path: Path,
     ):
-        materialize(tmp_path, _quarantined)
-        quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+        materialize(tmp_path, _filtered)
+        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
         rule_columns = [
-            name for name in quarantine.columns if name.startswith("dy_rule__")
+            name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
-        checks = {spec.name for spec in _quarantined.check_specs} - {
-            "dy_schema__columns"
-        }
+        checks = {spec.name for spec in _filtered.check_specs} - {"dy_schema__columns"}
 
-        assert quarantine.columns[: len(Orders.columns())] == list(Orders.columns())
-        assert set(quarantine.columns) == set(Orders.columns()) | set(rule_columns)
+        assert error_rows.columns[: len(Orders.columns())] == list(Orders.columns())
+        assert set(error_rows.columns) == set(Orders.columns()) | set(rule_columns)
         # A rule column has the name of its rule's check.
         assert set(rule_columns) == checks
 
     def test_the_rule_columns_are_cast_from_enum_to_string(self, tmp_path: Path):
         """Rule columns are strings, because the Delta writer panics on an `Enum` column."""
-        materialize(tmp_path, _quarantined)
-        quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+        materialize(tmp_path, _filtered)
+        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
         rule_columns = [
-            name for name in quarantine.columns if name.startswith("dy_rule__")
+            name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
 
-        assert all(quarantine.schema[name] == pl.String for name in rule_columns)
+        assert all(error_rows.schema[name] == pl.String for name in rule_columns)
 
     def test_a_rule_column_says_which_rule_each_row_failed(self, tmp_path: Path):
-        materialize(tmp_path, _quarantined)
-        quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet").sort(
+        materialize(tmp_path, _filtered)
+        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet").sort(
             "order_id"
         )
-        invalid_by_min = quarantine.filter(pl.col("dy_rule__amount__min") == "invalid")
+        invalid_by_min = error_rows.filter(pl.col("dy_rule__amount__min") == "invalid")
 
-        assert quarantine["dy_rule__amount__min"].to_list() == [
+        assert error_rows["dy_rule__amount__min"].to_list() == [
             "invalid",
             "valid",
             "valid",
@@ -464,14 +472,14 @@ class TestQuarantineWithValidRows:
     def test_the_materialization_tabulates_the_rules_that_failed_together(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def cooccurring() -> pl.DataFrame:
             return cooccurring_orders()
 
         metadata = materializations(materialize(tmp_path, cooccurring))[
             _GOOD_KEY
         ].metadata
-        cooccurrence = metadata["dataframely/invalid_by_rules"]
+        cooccurrence = metadata["dataframely/error_rows_by_rules"]
 
         assert isinstance(cooccurrence, dg.TableMetadataValue)
         assert [dict(record.data) for record in cooccurrence.records] == [
@@ -498,12 +506,12 @@ class TestQuarantineWithValidRows:
             )
         )
 
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def repeated() -> pl.DataFrame:
             return pl.concat([mixed_orders(), duplicate_break])
 
         metadata = materializations(materialize(tmp_path, repeated))[_GOOD_KEY].metadata
-        cooccurrence = metadata["dataframely/invalid_by_rules"]
+        cooccurrence = metadata["dataframely/error_rows_by_rules"]
 
         assert isinstance(cooccurrence, dg.TableMetadataValue)
         assert [dict(record.data) for record in cooccurrence.records] == [
@@ -513,15 +521,15 @@ class TestQuarantineWithValidRows:
         ]
 
 
-@dd.asset(Orders, name="orders", quarantine=True)
+@dd.asset(Orders, name="orders", filter=True)
 def _no_valid_rows() -> pl.DataFrame:
     return no_valid_orders()
 
 
-class TestQuarantineWithNoValidRows:
-    """A run with a quarantine and no valid rows."""
+class TestFilterWithNoValidRows:
+    """A run with `filter=True` where every row fails an `"error"` rule."""
 
-    def test_no_valid_rows_writes_the_quarantine_and_materializes_nothing(
+    def test_no_valid_rows_writes_the_error_rows_and_materializes_nothing(
         self,
         tmp_path: Path,
     ):
@@ -529,13 +537,13 @@ class TestQuarantineWithNoValidRows:
 
         assert not result.success
         assert materializations(result) == {}
-        assert pl.read_parquet(tmp_path / "orders_quarantine.parquet").height == 2
+        assert pl.read_parquet(tmp_path / "orders_error_rows.parquet").height == 2
         assert not (tmp_path / "orders.parquet").exists()
 
     def test_no_valid_rows_leaves_the_last_known_good_table_intact(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def spotless() -> pl.DataFrame:
             return clean_orders()
 
@@ -548,18 +556,22 @@ class TestQuarantineWithNoValidRows:
         with pytest.raises(NoValidRowsError) as raised:
             materialize(tmp_path, _no_valid_rows)
 
-        assert "All 2 rows failed Orders validation" in str(raised.value)
+        assert "All 2 rows failed an 'error' rule of Orders" in str(raised.value)
         assert "2 by 'amount|min'" in str(raised.value)
-        assert "orders_quarantine" in str(raised.value)
+        assert "orders_error_rows" in str(raised.value)
 
-    def test_no_valid_rows_raises_every_rule_check_to_error(self, tmp_path: Path):
+    def test_no_valid_rows_fails_every_failing_rule_check_at_error(
+        self, tmp_path: Path
+    ):
         result = materialize(tmp_path, _no_valid_rows, raise_on_error=False)
         evaluations = check_evaluations(result)
         rules = [e for name, e in evaluations.items() if name.startswith("dy_rule__")]
 
         assert evaluations["dy_schema__columns"].passed
         assert rules
-        assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in rules)
+        assert all(
+            e.severity == dg.AssetCheckSeverity.ERROR for e in rules if not e.passed
+        )
         assert (
             dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value
             == 2
@@ -571,8 +583,8 @@ def _skipping() -> pl.DataFrame | None:
     return None
 
 
-@dd.asset(Orders, name="orders", quarantine=True)
-def _skipping_with_quarantine() -> pl.DataFrame | None:
+@dd.asset(Orders, name="orders", filter=True)
+def _skipping_with_error_rows() -> pl.DataFrame | None:
     return None
 
 
@@ -580,7 +592,7 @@ class TestSkip:
     """A run whose decorated function returns `None` (#95)."""
 
     @pytest.mark.parametrize(
-        "asset", [_skipping, _skipping_with_quarantine], ids=["bare", "quarantined"]
+        "asset", [_skipping, _skipping_with_error_rows], ids=["bare", "filtered"]
     )
     def test_a_skipped_run_succeeds_and_materializes_nothing(
         self, tmp_path: Path, asset: dg.AssetsDefinition
@@ -622,7 +634,7 @@ class TestSkip:
             name="orders",
             output_required=False,
             metadata=schema_metadata(Orders),
-            check_specs=check_specs(Orders, asset="orders"),
+            check_specs=asset_check_specs(Orders, asset="orders"),
         )
         def orders_by_hand(context: dg.AssetExecutionContext) -> AssetYield:
             yield from validation_results(Orders, None, valid_key=context.asset_key)
@@ -634,10 +646,10 @@ class TestSkip:
         assert len(check_evaluations(result)) == len(list(orders_by_hand.check_specs))
 
 
-# (frame, quarantine) for each outcome that has a frame.
+# (frame, filtering) for each outcome that has a frame.
 _OUTCOMES = [
     pytest.param(clean_orders, False, id="all valid"),
-    pytest.param(mixed_orders, False, id="no quarantine"),
+    pytest.param(mixed_orders, False, id="no filtering"),
     pytest.param(mixed_orders, True, id="some valid"),
     pytest.param(no_valid_orders, True, id="no valid rows"),
     pytest.param(wrong_dtype_orders, False, id="column_schema"),
@@ -645,15 +657,15 @@ _OUTCOMES = [
 
 
 def _both_ways(
-    frame: Callable[[], pl.DataFrame], quarantine: bool
+    frame: Callable[[], pl.DataFrame], filtering: bool
 ) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
     """Declare the same asset twice, with an eager and a lazy return."""
 
-    @dd.asset(Orders, name="orders", quarantine=quarantine)
+    @dd.asset(Orders, name="orders", filter=filtering)
     def eager() -> pl.DataFrame:
         return frame()
 
-    @dd.asset(Orders, name="orders", quarantine=quarantine)
+    @dd.asset(Orders, name="orders", filter=filtering)
     def lazy() -> pl.LazyFrame:
         return frame().lazy()
 
@@ -689,7 +701,7 @@ class TestLazyReturn:
             return collect_all(frames, **kwargs)
 
         monkeypatch.setattr(pl, "collect_all", spy)
-        eager, lazy = _both_ways(clean_orders, quarantine=False)
+        eager, lazy = _both_ways(clean_orders, filtering=False)
 
         assert materialize(tmp_path, lazy if lazily else eager).success
         assert engines == ["streaming"]
@@ -718,12 +730,12 @@ class TestLazyReturn:
         assert seen == []
 
 
-@dd.asset(Orders, name="orders", quarantine=True, check_granularity="column")
+@dd.asset(Orders, name="orders", filter=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dd.asset(Orders, name="orders", quarantine=True, check_granularity="schema")
+@dd.asset(Orders, name="orders", filter=True, check_granularity="schema")
 def _by_schema() -> pl.DataFrame:
     return mixed_orders()
 
@@ -746,9 +758,7 @@ class TestCollapsedChecks:
 
         assert failed == {"dy_col__amount", "dy_col__email", "dy_schema__rules"}
         assert all(
-            e.severity == dg.AssetCheckSeverity.WARN
-            for name, e in evaluations.items()
-            if name != "dy_schema__columns"
+            evaluations[name].severity == dg.AssetCheckSeverity.ERROR for name in failed
         )
 
     def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
@@ -808,22 +818,22 @@ class TestCollapsedChecks:
         assert all(e.passed for e in evaluations.values())
         assert set(_members(evaluations["dy_col__email"]).values()) == {0}
 
-    def test_collapsing_the_checks_does_not_collapse_the_quarantine(
+    def test_collapsing_the_checks_does_not_collapse_the_error_rows(
         self, tmp_path: Path
     ):
-        """The quarantine has one rule column per rule at every granularity."""
+        """The error rows have one rule column per rule at every granularity."""
         materialize(tmp_path, _by_column)
-        quarantine = pl.read_parquet(tmp_path / "orders_quarantine.parquet")
+        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
 
-        assert "dy_rule__amount__min" in quarantine.columns
-        assert not [name for name in quarantine.columns if name.startswith("dy_col__")]
+        assert "dy_rule__amount__min" in error_rows.columns
+        assert not [name for name in error_rows.columns if name.startswith("dy_col__")]
 
 
-_ADDRESS = "orders_quarantine"
+_ADDRESS = "orders_error_rows"
 
 
 def _drained(
-    frame: pl.DataFrame | None, *, quarantine: bool
+    frame: pl.DataFrame | None, *, filtering: bool
 ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
     """Return what `validation_results` yielded and wrote, and the error it raised, if any.
 
@@ -831,7 +841,7 @@ def _drained(
     """
     written: list[pl.DataFrame] = []
 
-    # A stub, because `tests/test_quarantine.py` tests the real writers.
+    # A stub, because `tests/test_error_rows.py` tests the real writers.
     def writer(invalid: pl.DataFrame) -> str:
         written.append(invalid)
         return _ADDRESS
@@ -841,7 +851,7 @@ def _drained(
         Orders,
         frame,
         valid_key=_GOOD_KEY,
-        quarantine_writer=writer if quarantine else None,
+        error_rows_writer=writer if filtering else None,
     )
     try:
         for result in results:
@@ -871,9 +881,9 @@ def _rules(yielded: Yielded) -> list[dg.AssetCheckResult]:
 class TestOutcomeSelection:
     """The six outcomes, asserted on what `validation_results` yields, writes and raises, with no run."""
 
-    def test_a_clean_frame_writes_an_empty_quarantine_with_every_column(self):
-        yielded, written, error = _drained(clean_orders(), quarantine=True)
-        _, dirty, _ = _drained(mixed_orders(), quarantine=True)
+    def test_a_clean_frame_writes_an_empty_error_rows_with_every_column(self):
+        yielded, written, error = _drained(clean_orders(), filtering=True)
+        _, dirty, _ = _drained(mixed_orders(), filtering=True)
 
         assert error is None
         assert list(results(yielded)) == [_GOOD_KEY]
@@ -883,19 +893,19 @@ class TestOutcomeSelection:
 
     def test_a_clean_frame_says_nothing_about_invalid_rows(self):
         """A clean run omits the four invalid-row keys instead of setting them to zero."""
-        clean, _, _ = _drained(clean_orders(), quarantine=True)
-        partial, _, _ = _drained(mixed_orders(), quarantine=True)
+        clean, _, _ = _drained(clean_orders(), filtering=True)
+        partial, _, _ = _drained(mixed_orders(), filtering=True)
 
         # A difference, not a prefix, because the valid rows' sample is under `dataframely/` too.
         assert set(_metadata(partial)) - set(_metadata(clean)) == {
-            "dataframely/quarantine_address",
-            "dataframely/invalid_count",
-            "dataframely/invalid_by_rules",
-            "dataframely/invalid_sample",
+            "dataframely/error_rows_address",
+            "dataframely/error_rows_count",
+            "dataframely/error_rows_by_rules",
+            "dataframely/error_rows_sample",
         }
 
     def test_a_wrong_column_schema_reports_the_check_and_writes_nothing(self):
-        yielded, written, error = _drained(wrong_dtype_orders(), quarantine=True)
+        yielded, written, error = _drained(wrong_dtype_orders(), filtering=True)
 
         assert isinstance(error, ColumnSchemaError)
         assert list(results(yielded)) == []
@@ -903,15 +913,15 @@ class TestOutcomeSelection:
         assert [c.check_name for c in _checks(yielded)] == ["dy_schema__columns"]
 
     def test_invalid_rows_with_no_writer_write_nothing_but_still_report(self):
-        yielded, written, error = _drained(mixed_orders(), quarantine=False)
+        yielded, written, error = _drained(mixed_orders(), filtering=False)
 
         assert isinstance(error, ValidationAbortError)
         assert list(results(yielded)) == []
         assert written == []
         assert any(not c.passed for c in _checks(yielded))
 
-    def test_invalid_rows_with_a_writer_write_the_table_and_the_quarantine(self):
-        yielded, written, error = _drained(mixed_orders(), quarantine=True)
+    def test_invalid_rows_with_a_writer_write_the_table_and_the_error_rows(self):
+        yielded, written, error = _drained(mixed_orders(), filtering=True)
         (invalid,) = written
 
         assert error is None
@@ -920,37 +930,39 @@ class TestOutcomeSelection:
         assert "dy_rule__amount__min" in invalid.columns
 
     def test_a_partial_run_reports_the_invalid_rows_on_the_materialization(self):
-        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
+        yielded, _, _ = _drained(mixed_orders(), filtering=True)
         metadata = _metadata(yielded)
 
-        assert metadata["dataframely/quarantine_address"] == _ADDRESS
-        assert metadata["dataframely/invalid_count"] == 3
+        assert metadata["dataframely/error_rows_address"] == _ADDRESS
+        assert metadata["dataframely/error_rows_count"] == 3
         assert isinstance(
-            metadata["dataframely/invalid_by_rules"], dg.TableMetadataValue
+            metadata["dataframely/error_rows_by_rules"], dg.TableMetadataValue
         )
-        assert isinstance(metadata["dataframely/invalid_sample"], dg.TableMetadataValue)
+        assert isinstance(
+            metadata["dataframely/error_rows_sample"], dg.TableMetadataValue
+        )
 
     def test_the_invalid_sample_is_bounded_by_the_row_sample_setting(self):
-        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
-        sample = _metadata(yielded)["dataframely/invalid_sample"]
+        yielded, _, _ = _drained(mixed_orders(), filtering=True)
+        sample = _metadata(yielded)["dataframely/error_rows_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
         bounded = validation_results(
             Orders,
             mixed_orders(),
             valid_key=_GOOD_KEY,
-            quarantine_writer=lambda _: _ADDRESS,
+            error_rows_writer=lambda _: _ADDRESS,
             row_sample=1,
         )
         (materialization,) = [r for r in bounded if isinstance(r, dg.MaterializeResult)]
-        narrowed = (materialization.metadata or {})["dataframely/invalid_sample"]
+        narrowed = (materialization.metadata or {})["dataframely/error_rows_sample"]
         assert isinstance(narrowed, dg.TableMetadataValue)
 
         assert len(sample.records) == 3
         assert len(narrowed.records) == 1
 
     def test_no_valid_rows_writes_the_rows_and_yields_no_table(self):
-        yielded, written, error = _drained(no_valid_orders(), quarantine=True)
+        yielded, written, error = _drained(no_valid_orders(), filtering=True)
         (invalid,) = written
 
         assert isinstance(error, NoValidRowsError)
@@ -958,25 +970,25 @@ class TestOutcomeSelection:
         assert len(invalid) == 2
 
     def test_an_abort_puts_the_address_on_every_check_instead(self):
-        """When no rows are valid, every check result has the quarantine address (ADR-0004)."""
-        yielded, _, _ = _drained(no_valid_orders(), quarantine=True)
+        """When every row fails an `"error"` rule, every check result has the error-rows address (ADR-0004)."""
+        yielded, _, _ = _drained(no_valid_orders(), filtering=True)
         checks = _checks(yielded)
 
         assert checks
         # `_addressed` wraps the address, because `_replace` skips normalization.
         assert all(
-            (c.metadata or {})["dataframely/quarantine_address"]
+            (c.metadata or {})["dataframely/error_rows_address"]
             == dg.MetadataValue.text(_ADDRESS)
             for c in checks
         )
 
     def test_the_abort_names_the_address_the_writer_returned(self):
-        _, _, error = _drained(no_valid_orders(), quarantine=True)
+        _, _, error = _drained(no_valid_orders(), filtering=True)
 
         assert _ADDRESS in str(error)
 
     def test_no_valid_rows_without_a_writer_aborts_instead(self):
-        yielded, written, error = _drained(no_valid_orders(), quarantine=False)
+        yielded, written, error = _drained(no_valid_orders(), filtering=False)
 
         assert isinstance(error, ValidationAbortError)
         assert list(results(yielded)) == []
@@ -984,7 +996,7 @@ class TestOutcomeSelection:
 
     def test_check_results_are_yielded_standalone(self):
         """Direct invocation needs standalone check results (ADR-0002)."""
-        yielded, _, _ = _drained(mixed_orders(), quarantine=True)
+        yielded, _, _ = _drained(mixed_orders(), filtering=True)
 
         assert not [
             result
@@ -993,18 +1005,20 @@ class TestOutcomeSelection:
         ]
         assert _checks(yielded)
 
-    def test_severity_follows_the_runs_outcome_rather_than_the_rule(self):
-        """The same invalid rows are `WARN` with a quarantine and `ERROR` without one."""
-        warned, _, _ = _drained(mixed_orders(), quarantine=True)
-        errored, _, _ = _drained(mixed_orders(), quarantine=False)
+    def test_severity_follows_the_rule_rather_than_the_runs_outcome(self):
+        """The same failing checks are `ERROR` with and without `filter`, because every rule of `Orders` is `"error"`."""
+        filtered, _, _ = _drained(mixed_orders(), filtering=True)
+        aborted, _, _ = _drained(mixed_orders(), filtering=False)
 
-        assert {c.severity for c in _rules(warned)} == {dg.AssetCheckSeverity.WARN}
-        assert {c.severity for c in _rules(errored)} == {dg.AssetCheckSeverity.ERROR}
+        def failing(yielded: Yielded) -> set[dg.AssetCheckSeverity]:
+            return {c.severity for c in _rules(yielded) if not c.passed}
+
+        assert failing(filtered) == failing(aborted) == {dg.AssetCheckSeverity.ERROR}
 
     # The sixth outcome: the decorated function returned `None`.
-    @pytest.mark.parametrize("quarantine", [False, True], ids=["bare", "quarantined"])
-    def test_a_skip_writes_no_table_and_raises_nothing(self, quarantine: bool):
-        yielded, written, error = _drained(None, quarantine=quarantine)
+    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
+    def test_a_skip_writes_no_table_and_raises_nothing(self, filtering: bool):
+        yielded, written, error = _drained(None, filtering=filtering)
 
         assert error is None
         assert list(results(yielded)) == []
@@ -1012,15 +1026,15 @@ class TestOutcomeSelection:
 
     def test_a_skip_still_answers_every_check(self):
         """A skip yields a result for every check, because each check spec is a non-optional op output."""
-        skipped, _, _ = _drained(None, quarantine=False)
-        clean, _, _ = _drained(clean_orders(), quarantine=False)
+        skipped, _, _ = _drained(None, filtering=False)
+        clean, _, _ = _drained(clean_orders(), filtering=False)
 
         assert {c.check_name for c in _checks(skipped)} == {
             c.check_name for c in _checks(clean)
         }
 
     def test_a_skips_checks_pass_because_the_rules_ran_over_an_empty_frame(self):
-        yielded, _, _ = _drained(None, quarantine=False)
+        yielded, _, _ = _drained(None, filtering=False)
 
         assert all(c.passed for c in _checks(yielded))
         assert {c.severity for c in _rules(yielded)} == {dg.AssetCheckSeverity.WARN}

@@ -117,17 +117,17 @@ class TestMaterialization:
         assert (result.metadata or {})["m"] == 1
         assert_frame_equal(result.value, clean_orders())
 
-    def test_with_quarantine_the_result_is_merged_into_the_one_materialization(
+    def test_with_error_rows_the_result_is_merged_into_the_one_materialization(
         self,
         tmp_path: Path,
     ):
-        """The run writes the quarantine and does not materialize it, so the asset's materialization is the only one."""
+        """The run writes the error rows and does not materialize them, so the asset's materialization is the only one."""
 
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=cooccurring_orders(),
-                metadata={"source": "stripe", "dataframely/invalid_count": 99},
+                metadata={"source": "stripe", "dataframely/error_rows_count": 99},
                 data_version=dg.DataVersion("v1"),
                 tags={"run/flavour": "backfill"},
             )
@@ -138,7 +138,7 @@ class TestMaterialization:
 
         assert set(recorded) == {_VALID}
         assert event.metadata["source"] == dg.MetadataValue.text("stripe")
-        assert event.metadata["dataframely/invalid_count"] == dg.MetadataValue.int(1)
+        assert event.metadata["dataframely/error_rows_count"] == dg.MetadataValue.int(1)
         assert tags["dagster/data_version"] == "v1"
         assert tags["run/flavour"] == "backfill"
 
@@ -264,7 +264,7 @@ class TestErrors:
     ):
         """With no valid rows, `with_returned_fields` receives no materialization and lets `NoValidRowsError` propagate."""
 
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=no_valid_orders(), metadata={"source": "stripe"}
@@ -273,8 +273,8 @@ class TestErrors:
         with pytest.raises(NoValidRowsError):
             materialize(tmp_path, orders)
 
-    def test_an_abort_with_no_quarantine_still_raises_its_own_error(self):
-        """With no quarantine, failing rows produce no materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
+    def test_an_abort_with_no_error_rows_still_raises_its_own_error(self):
+        """With `filter=False`, failing rows produce no materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
 
         @dd.asset(Orders, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:

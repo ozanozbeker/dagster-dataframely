@@ -37,7 +37,7 @@ The catalog shows `A customer order line: one row per product on one order.` as 
 The schema's docstring takes precedence over the function's, because it describes the table, not the code.
 `dd.asset` reads the schema's own docstring only, and ignores one inherited from a parent class, including `dy.Schema`'s.
 
-The spec from `quarantine_spec` has its own description: `Invalid rows from <asset>, with one column per rule.`
+The spec from `error_rows_spec` has its own description: `Rows from <asset> that failed an 'error' rule, with one column per rule.`
 
 ## Where a check's text comes from
 
@@ -80,21 +80,21 @@ ops:
 
 There are three.
 
-**`dy_`** starts every check name, every rule column in the quarantine, and every check metadata key except `dataframely/quarantine_address`.
+**`dy_`** starts every check name, every rule column in the error rows, and every check metadata key except `dataframely/error_rows_address`.
 These are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
 A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
 So a check name cannot contain a slash.
 
 A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
-`dd.wiring.check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
+`dd.wiring.asset_check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
 
 **`dataframely/`** starts every materialization metadata key this package names.
 A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.
 This package's keys then sort together, apart from Dagster's keys and your IO manager's.
 
-`dataframely/quarantine_address` is the one `dataframely/` key that also appears on check results.
-When every row fails validation, the run raises `NoValidRowsError` and has no materialization.
-So each check result has the quarantine address under that key.
+`dataframely/error_rows_address` is the one `dataframely/` key that also appears on check results.
+When every row fails an `"error"` rule, the run raises `NoValidRowsError` and has no materialization.
+So each check result has the error-rows address under that key.
 
 Every public function that takes a schema raises three errors for names this package cannot use ([ADR-0008](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it)).
 It raises `ReservedColumnError` for a column name that starts with `dy_`.
@@ -105,9 +105,9 @@ So `dd.asset` raises them where you declare the asset, and a hand-wired asset ra
 A column name with such characters almost always comes from `dy.Column(alias=...)`, which Dataframely provides for a name that is not a Python identifier.
 A `|` is one of them, and Dataframely also uses it to separate a column from its rule name.
 
-**`<name>_quarantine`** is the third: the asset key a writer writes the invalid rows under.
+**`<name>_error_rows`** is the third: the asset key a writer writes the error rows under.
 You also choose asset keys in this key space, so another asset can already have this key.
-Before the decorated function runs, a run of an asset with `quarantine=True` checks that no other asset in the code location materializes this key.
-If one does, the run raises `QuarantineKeyCollisionError`.
+Before the decorated function runs, a run of an asset with `filter=True` checks that no other asset in the code location materializes this key.
+If one does, the run raises `ErrorRowsKeyCollisionError`.
 
 No setting changes any of the three, so they are the same in every project.

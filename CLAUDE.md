@@ -17,7 +17,7 @@ Code does not refuse, decide, know, learn, ask, answer or promise: it raises, se
 Rows do not land, arrive, ride or survive: the package writes, passes, copies and keeps them.
 `CONTEXT.md` lists the words to avoid and what to write instead.
 
-Give every sentence a verb, including a heading's description or a caption: "The decorator, and the spec that puts a quarantine in the graph" becomes "`dd.asset` builds an asset, and `quarantine_spec` adds its quarantine to the asset graph".
+Give every sentence a verb, including a heading's description or a caption: "The decorator, and the spec that puts the error rows in the graph" becomes "`dd.asset` builds an asset, and `error_rows_spec` adds its error rows to the asset graph".
 
 Use the word Dagster, Polars or Dataframely already uses, in the meaning it has there.
 A step is Dagster's, a member is Dataframely's, and Polars collects a plan.
@@ -71,10 +71,10 @@ These two rules set the shape of an identifier.
 ### Name a function for what it returns
 
 Name a function that returns a value after the value, not after what it does.
-`check_specs` returns check specs, `quarantine_frame` returns the quarantine frame, `delegating_writer` returns a writer, `frame_and_result` returns a frame and a returned result.
+`asset_check_specs` returns asset check specs, `error_rows_frame` returns the error-rows frame, `delegating_writer` returns a writer, `frame_and_result` returns a frame and a returned result.
 
 Where the value has no name, give it one instead of using a verb: `described_rules` returns `DescribedRule`s, so the function is the record's name in snake case.
-A verb name means the function returns nothing: `validate_quarantine_key` either raises or returns `None`.
+A verb name means the function returns nothing: `validate_error_rows_key` either raises or returns `None`.
 
 No prefix: the annotation already gives the type.
 D401 still requires an imperative summary, so `described_rules` starts with "Return the schema's validation rules".
@@ -84,7 +84,7 @@ Avoid `get_*`, `build_*`, `make_*`, `compute_*`.
 ### Name a transformer with a participle
 
 Use the participle of the change to name a function that takes a value and returns it changed.
-`_addressed` returns check results with the quarantine address added, `_suffixed` returns key parts with a suffix on the last one, `_checked` returns a value the setting allows.
+`_addressed` returns check results with the error-rows address added, `_suffixed` returns key parts with a suffix on the last one, `_checked` returns a value the setting allows.
 
 Where only part of the value changes, a participle is misleading.
 Use Polars' `with_*` prefix instead: `with_returned_fields` returns the same results with three fields set on one of them.

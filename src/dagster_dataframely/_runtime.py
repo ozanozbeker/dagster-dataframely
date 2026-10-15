@@ -1,9 +1,11 @@
 """What an asset built with `dd.asset` runs after its decorated function.
 
 Choosing an outcome requires collecting the valid and the invalid rows (`docs/pre-1.0.md`).
+`Schema.filter` removes every invalid row, so the rows that failed only `"warn"` rules are read back from `FailureInfo` and appended to the valid rows.
 """
 
 from collections.abc import Iterator, Mapping
+from collections.abc import Set as AbstractSet
 
 import dagster as dg
 import dataframely as dy
@@ -12,13 +14,13 @@ import polars as pl
 from dagster_dataframely._checks import (
     column_schema_result,
     filtered,
+    rule_check_results,
     rule_columns,
-    rule_results,
 )
-from dagster_dataframely._naming import check_name
-from dagster_dataframely._quarantine import QuarantineWriter
-from dagster_dataframely._rules import validate_namespace
-from dagster_dataframely._samples import VALID_SAMPLE_KEY, sample_metadata, sample_rows
+from dagster_dataframely._error_rows import ErrorRowsWriter
+from dagster_dataframely._naming import asset_check_name
+from dagster_dataframely._rules import described_rules, validate_namespace
+from dagster_dataframely._samples import TABLE_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
@@ -32,12 +34,14 @@ from dagster_dataframely.errors import NoValidRowsError, ValidationAbortError
 AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
 """What `validation_results` yields: the asset's materialization, if the run writes its table, then one result per check. Use it as the return annotation of a hand-wired asset's function."""
 
-_ADDRESS_KEY = "dataframely/quarantine_address"
-_INVALID_COUNT_KEY = "dataframely/invalid_count"
-_INVALID_BY_RULES_KEY = "dataframely/invalid_by_rules"
-_INVALID_SAMPLE_KEY = "dataframely/invalid_sample"
+_ADDRESS_KEY = "dataframely/error_rows_address"
+_ERROR_ROWS_COUNT_KEY = "dataframely/error_rows_count"
+_ERROR_ROWS_BY_RULES_KEY = "dataframely/error_rows_by_rules"
+_ERROR_ROWS_SAMPLE_KEY = "dataframely/error_rows_sample"
 
-type InvalidMetadata = Mapping[str, str | int | dg.TableMetadataValue]
+_VALID = "valid"
+
+type ErrorRowsMetadata = Mapping[str, str | int | dg.TableMetadataValue]
 
 
 def _require_frame(frame: object, asset: str) -> None:
@@ -51,12 +55,51 @@ def _require_frame(frame: object, asset: str) -> None:
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
-def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
-    """Return the invalid rows as a writer receives them, with one rule column per rule.
+def _with_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> pl.DataFrame:
+    """Rename the rule columns to their check names, as `String`."""
+    renames: dict[str, str] = {
+        rule: asset_check_name(rule) for rule in rule_columns(schema, details)
+    }
+    return details.rename(renames).with_columns(
+        pl.col(name).cast(pl.String) for name in renames.values()
+    )
+
+
+def _warned_and_error_rows(
+    schema: type[dy.Schema], failure: dy.FailureInfo, errors: AbstractSet[str]
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Return the invalid rows that failed only `"warn"` rules, with the schema's columns, and the error rows as a writer receives them.
+
+    `unknown` counts as failed; Dataframely reports it only with `cast=True` or for a `Collection`.
+    """
+    # Bound once: `details()` rebuilds the frame on every call.
+    details: pl.DataFrame = failure.details()
+    present: pl.Schema = details.collect_schema()
+    failed: pl.Expr = pl.any_horizontal(
+        pl.lit(value=False),
+        *(pl.col(rule) != _VALID for rule in errors if rule in present),
+    )
+    return (
+        details.filter(~failed).select(schema.column_names()),
+        _with_rule_columns(schema, details.filter(failed)),
+    )
+
+
+def _error_rules(schema: type[dy.Schema]) -> set[str]:
+    """Return the names of the schema's `"error"` rules."""
+    return {
+        name
+        for name, rule in described_rules(schema).items()
+        if rule.severity == "error"
+    }
+
+
+def error_rows_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
+    """Return the rows that failed an `"error"` rule, as a writer receives them, with one rule column per rule.
 
     Returns
     -------
-    The original columns in their own order, then a `String` rule column for every rule, named by `check_name`. A rule column's value is `valid`, `invalid` or `unknown`.
+    The original columns in their own order, then a `String` rule column for every rule, named by `asset_check_name`. A rule column's value is `valid`, `invalid` or `unknown`.
 
     Raises
     ------
@@ -66,22 +109,18 @@ def quarantine_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.Dat
         A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
         Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
-    # Bound once: `details()` rebuilds the frame on every call.
-    details: pl.DataFrame = failure.details()
-    renames: dict[str, str] = {
-        rule: check_name(rule) for rule in rule_columns(schema, details)
-    }
-    return details.rename(renames).with_columns(
-        pl.col(name).cast(pl.String) for name in renames.values()
-    )
+    _, error_rows = _warned_and_error_rows(schema, failure, _error_rules(schema))
+    return error_rows
 
 
 def _addressed(
     checks: list[dg.AssetCheckResult], address: str
 ) -> list[dg.AssetCheckResult]:
-    """Copy the quarantine address onto every check result.
+    """Copy the error-rows address onto every check result.
 
     `_replace` skips the constructor's normalization, so `_addressed` wraps the address itself.
     """
@@ -102,7 +141,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     It sorts the sets because `cooccurrence_counts()` returns them in arbitrary order.
     """
     ordered: list[tuple[int, str]] = sorted(
-        (-n, ", ".join(sorted(check_name(rule) for rule in rules)))
+        (-n, ", ".join(sorted(asset_check_name(rule) for rule in rules)))
         for rules, n in counts.items()
     )
     return dg.MetadataValue.table([
@@ -115,7 +154,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     frame: pl.DataFrame | pl.LazyFrame | None,
     *,
     valid_key: dg.AssetKey,
-    quarantine_writer: QuarantineWriter | None = None,
+    error_rows_writer: ErrorRowsWriter | None = None,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
@@ -129,23 +168,23 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     frame
         The frame to validate, or `None` to skip.
     valid_key
-        The key the run materializes the valid rows under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
-    quarantine_writer
-        The writer for the invalid rows, called at most once, with the frame `quarantine_frame` returns. When no row fails, it receives zero rows. With `None`, any invalid row fails the run with `ValidationAbortError`, and the asset writes nothing.
+        The key the run materializes the table under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
+    error_rows_writer
+        The writer for the rows that failed an `"error"` rule, called at most once, with the frame `error_rows_frame` returns. When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
-        Pass the value `check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+        Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
-        Pass the value `check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
+        Pass the value `asset_check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
         A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
     statistics
         Whether the materialization metadata has statistics of the written rows. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
-        The materialization metadata has at most this many valid rows, and this many invalid rows. `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
+        The materialization metadata has at most this many rows of the table, and this many error rows. `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
 
     Yields
     ------
-    The asset's `dg.MaterializeResult`, if the run writes its table, then one `dg.AssetCheckResult` per check. On a skip, it yields only the check results, and every check passes. It writes the quarantine instead of yielding it.
+    The asset's `dg.MaterializeResult`, if the run writes its table, then one `dg.AssetCheckResult` per check. On a skip, it yields only the check results, and every check passes. It writes the error rows instead of yielding them.
 
     Raises
     ------
@@ -155,6 +194,8 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
         Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
     InvalidSettingError
         A setting's argument or environment variable has a value the setting does not allow.
     DagsterInvariantViolationError
@@ -162,9 +203,9 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema. It yields the column-schema check's failing result first, and writes nothing.
     ValidationAbortError
-        Rows failed validation and `quarantine_writer` is `None`, so the package writes nothing.
+        A row failed an `"error"` rule and `error_rows_writer` is `None`, so the package writes nothing.
     NoValidRowsError
-        Every row failed validation. It writes the quarantine, and not the asset's table.
+        Every row failed an `"error"` rule. It writes the error rows, and not the asset's table.
     """
     validate_namespace(schema)
     _require_frame(frame, valid_key.to_user_string())
@@ -173,19 +214,14 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
-    def checks_for(
-        failure: dy.FailureInfo, *, aborting: bool
-    ) -> list[dg.AssetCheckResult]:
+    def checks_for(failure: dy.FailureInfo) -> list[dg.AssetCheckResult]:
         """Return a passing column-schema result and every rule result."""
         return [
             column_schema_result(asset_key=valid_key),
-            *rule_results(
+            *rule_check_results(
                 schema,
                 failure,
                 asset_key=valid_key,
-                severity=dg.AssetCheckSeverity.ERROR
-                if aborting
-                else dg.AssetCheckSeverity.WARN,
                 check_granularity=check_granularity,
                 schema_rules=schema_rules,
                 max_failure_samples=failure_samples,
@@ -195,56 +231,63 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     if frame is None:
         # A check spec is a non-optional op output, so the rules report over an empty frame.
         _, nothing = schema.filter(schema.create_empty(), cast=False)
-        yield from checks_for(nothing, aborting=False)
+        yield from checks_for(nothing)
         return
 
     valid, failure = yield from filtered(schema, frame, asset_key=valid_key)
-    invalid_count: int = len(failure)
-    aborting = bool(invalid_count) and (quarantine_writer is None or not len(valid))
-    checks = checks_for(failure, aborting=aborting)
+    checks: list[dg.AssetCheckResult] = checks_for(failure)
+    errors: set[str] = _error_rules(schema)
+    warned, error_rows = _warned_and_error_rows(schema, failure, errors)
+    table: pl.DataFrame = pl.concat([valid, warned])
 
-    def valid_result(
-        invalid_metadata: InvalidMetadata | None = None,
+    def table_result(
+        error_rows_metadata: ErrorRowsMetadata | None = None,
     ) -> dg.MaterializeResult[pl.DataFrame]:
         """Return the asset's materialization."""
         return dg.MaterializeResult(
             asset_key=valid_key,
-            value=valid,
+            value=table,
             metadata={
-                "dagster/row_count": len(valid),
-                **statistics_metadata(valid, enabled=emit_statistics),
-                **sample_metadata(VALID_SAMPLE_KEY, sample_rows(valid, sampled_rows)),
-                **(invalid_metadata or {}),
+                "dagster/row_count": len(table),
+                **statistics_metadata(table, enabled=emit_statistics),
+                **sample_metadata(TABLE_SAMPLE_KEY, sample_rows(table, sampled_rows)),
+                **(error_rows_metadata or {}),
             },
         )
 
-    if not invalid_count:
-        if quarantine_writer is not None:
+    if error_rows.is_empty():
+        if error_rows_writer is not None:
             # An IO manager has no delete, so only an empty write replaces the last run's rows.
-            quarantine_writer(quarantine_frame(schema, failure))
-        yield valid_result()
+            error_rows_writer(error_rows)
+        yield table_result()
         yield from checks
         return
 
-    if quarantine_writer is None:
+    error_counts: dict[str, int] = {
+        rule: n for rule, n in failure.counts().items() if rule in errors
+    }
+    if error_rows_writer is None:
         yield from checks
-        raise ValidationAbortError(schema.__name__, invalid_count, failure.counts())
+        raise ValidationAbortError(schema.__name__, len(error_rows), error_counts)
 
-    invalid: pl.DataFrame = quarantine_frame(schema, failure)
-    # The writer runs before anything below can raise, so the quarantine has the rows however the run ends.
-    address: str = quarantine_writer(invalid)
-    invalid_metadata: InvalidMetadata = {
+    # The writer runs before anything below can raise, so the error rows are written however the run ends.
+    address: str = error_rows_writer(error_rows)
+    error_rows_metadata: ErrorRowsMetadata = {
         _ADDRESS_KEY: address,
-        _INVALID_COUNT_KEY: invalid_count,
-        _INVALID_BY_RULES_KEY: _cooccurrence(failure.cooccurrence_counts()),
-        **sample_metadata(_INVALID_SAMPLE_KEY, sample_rows(invalid, sampled_rows)),
+        _ERROR_ROWS_COUNT_KEY: len(error_rows),
+        _ERROR_ROWS_BY_RULES_KEY: _cooccurrence({
+            together: n
+            for together, n in failure.cooccurrence_counts().items()
+            if together & errors
+        }),
+        **sample_metadata(
+            _ERROR_ROWS_SAMPLE_KEY, sample_rows(error_rows, sampled_rows)
+        ),
     }
 
-    if not len(valid):
+    if table.is_empty():
         yield from _addressed(checks, address)
-        raise NoValidRowsError(
-            schema.__name__, invalid_count, failure.counts(), address
-        )
+        raise NoValidRowsError(schema.__name__, len(error_rows), error_counts, address)
 
-    yield valid_result(invalid_metadata)
+    yield table_result(error_rows_metadata)
     yield from checks

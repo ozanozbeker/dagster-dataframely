@@ -1,6 +1,6 @@
 """Tests for `_Setting.resolve`, which reads each setting from its three sources.
 
-The last two tests call `check_specs`, because no other test file sets `DAGSTER_DATAFRAMELY_SCHEMA_RULES`.
+The last two tests call `asset_check_specs`, because no other test file sets `DAGSTER_DATAFRAMELY_SCHEMA_RULES`.
 """
 
 from dataclasses import replace
@@ -11,21 +11,21 @@ import pytest
 
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
+    ERROR_ROWS_DIR,
     MAX_FAILURE_SAMPLES,
-    QUARANTINE_DIR,
     ROW_SAMPLE,
     SCHEMA_RULES,
     STATISTICS,
 )
 from dagster_dataframely.errors import InvalidSettingError
-from dagster_dataframely.wiring import check_specs
+from dagster_dataframely.wiring import asset_check_specs
 from tests.scenario import Orders
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
 _SCHEMA_RULES_ENV = "DAGSTER_DATAFRAMELY_SCHEMA_RULES"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
-_QUARANTINE_DIR_ENV = "DAGSTER_DATAFRAMELY_QUARANTINE_DIR"
+_ERROR_ROWS_DIR_ENV = "DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR"
 
 # Typed `Any`, so the type checker does not reject the wrong values these tests need.
 _WRONG: Any = "per_column"
@@ -38,7 +38,7 @@ _PATH_OBJECT: Any = Path("/scratch")
 _BROKEN = replace(CHECK_GRANULARITY, name="fake_setting", default=_WRONG)
 _BROKEN_COUNT = replace(MAX_FAILURE_SAMPLES, name="fake_count", default=-1)
 _BROKEN_FLAG = replace(STATISTICS, name="fake_flag", default=_WORD)
-_BROKEN_DIRECTORY = replace(QUARANTINE_DIR, name="fake_directory", default="")
+_BROKEN_DIRECTORY = replace(ERROR_ROWS_DIR, name="fake_directory", default="")
 
 
 def test_a_setting_nobody_touched_is_the_package_default():
@@ -47,7 +47,7 @@ def test_a_setting_nobody_touched_is_the_package_default():
     assert STATISTICS.resolve(None) is True
     assert MAX_FAILURE_SAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
-    assert QUARANTINE_DIR.resolve(None) is None
+    assert ERROR_ROWS_DIR.resolve(None) is None
 
 
 def test_the_environment_variable_beats_the_package_default(
@@ -70,7 +70,7 @@ def test_every_setting_names_its_environment_variable_after_itself():
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
-    assert QUARANTINE_DIR.env_var == _QUARANTINE_DIR_ENV
+    assert ERROR_ROWS_DIR.env_var == _ERROR_ROWS_DIR_ENV
 
 
 def test_a_flag_parses_the_environment_source_rather_than_matching_it(
@@ -192,32 +192,32 @@ def test_a_count_rejects_a_bool():
 def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "/scratch/quarantine")
+    monkeypatch.setenv(_ERROR_ROWS_DIR_ENV, "/scratch/error_rows")
 
-    assert QUARANTINE_DIR.resolve(None) == "/scratch/quarantine"
-    assert QUARANTINE_DIR.resolve("/mnt/volume") == "/mnt/volume"
+    assert ERROR_ROWS_DIR.resolve(None) == "/scratch/error_rows"
+    assert ERROR_ROWS_DIR.resolve("/mnt/volume") == "/mnt/volume"
 
 
 def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "   ")
+    monkeypatch.setenv(_ERROR_ROWS_DIR_ENV, "   ")
 
     with pytest.raises(InvalidSettingError) as raised:
-        QUARANTINE_DIR.resolve(None)
+        ERROR_ROWS_DIR.resolve(None)
     message = str(raised.value)
 
-    assert f"got '   ' from the environment variable {_QUARANTINE_DIR_ENV}" in message
+    assert f"got '   ' from the environment variable {_ERROR_ROWS_DIR_ENV}" in message
     assert "filesystem paths" in message
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
     """The setting rejects a `Path` object, because it holds a string, like its environment variable."""
     with pytest.raises(InvalidSettingError) as raised:
-        QUARANTINE_DIR.resolve(_PATH_OBJECT)
+        ERROR_ROWS_DIR.resolve(_PATH_OBJECT)
 
-    # This test does not assert the source: it names a `quarantine_dir=` argument, which `dd.asset` does not take.
-    assert "Setting `quarantine_dir` got '/scratch'" in str(raised.value)
+    # This test does not assert the source: it names a `error_rows_dir=` argument, which `dd.asset` does not take.
+    assert "Setting `error_rows_dir` got '/scratch'" in str(raised.value)
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_environment(
@@ -276,18 +276,18 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
 def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setenv(_QUARANTINE_DIR_ENV, "")
+    monkeypatch.setenv(_ERROR_ROWS_DIR_ENV, "")
 
     with pytest.raises(InvalidSettingError) as raised:
-        QUARANTINE_DIR.resolve(None)
+        ERROR_ROWS_DIR.resolve(None)
     message = str(raised.value)
 
     assert (
         "It is read from two sources, each overriding the one before: the package default,"
         in message
     )
-    assert f"then the environment variable {_QUARANTINE_DIR_ENV}." in message
-    assert "There is no `quarantine_dir=` argument." in message
+    assert f"then the environment variable {_ERROR_ROWS_DIR_ENV}." in message
+    assert "There is no `error_rows_dir=` argument." in message
 
 
 def test_the_schema_rules_environment_variable_changes_the_check_specs(
@@ -298,7 +298,9 @@ def test_the_schema_rules_environment_variable_changes_the_check_specs(
     # `schema_rules` has no effect at the other granularities.
     names = [
         spec.name
-        for spec in check_specs(Orders, asset="orders", check_granularity="column")
+        for spec in asset_check_specs(
+            Orders, asset="orders", check_granularity="column"
+        )
     ]
 
     assert "dy_rule__primary_key" in names
@@ -311,7 +313,7 @@ def test_a_schema_rules_value_outside_the_allowed_values_raises(
     monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_column")
 
     with pytest.raises(InvalidSettingError) as raised:
-        check_specs(Orders, asset="orders", check_granularity="column")
+        asset_check_specs(Orders, asset="orders", check_granularity="column")
     message = str(raised.value)
 
     assert (

@@ -25,7 +25,7 @@ def daily_orders(
     return _data.orders_on(raw_orders, dt.date.fromisoformat(context.partition_key))
 
 
-@dd.asset(Orders, partitions_def=BY_REGION, quarantine=True)
+@dd.asset(Orders, partitions_def=BY_REGION, filter=True)
 def regional_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame | None:
@@ -37,4 +37,4 @@ def regional_orders(
     return _data.orders_in(raw_orders, day, cell["region"])
 
 
-regional_orders_quarantine = dd.quarantine_spec(Orders, regional_orders)
+regional_orders_error_rows = dd.error_rows_spec(Orders, regional_orders)

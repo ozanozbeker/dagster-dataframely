@@ -29,7 +29,7 @@ It names the function by its relation to the decorator, not by what it does.
 _Avoid_: transform, compute function (Dagster's, but there it names the wrapper `dd.asset` builds)
 
 **Valid rows**: The rows that passed every rule, which `Schema.filter` returns first.
-They are what the asset materializes.
+The asset materializes them, plus the rows that failed only `"warn"` rules.
 _Avoid_: good rows, kept rows, survivors
 
 **Invalid rows**: The rows that failed at least one rule, which `FailureInfo.invalid()` returns.
@@ -37,12 +37,12 @@ Dataframely uses this word, and its rule columns report these rows.
 _Avoid_: bad rows, rejected rows, held-back rows
 
 **Failure**: One row failing one rule, which is what `FailureInfo.counts()` counts.
-The per-check counts can add up to more than `dataframely/invalid_count`, because a row that fails three rules is three failures and one invalid row.
+The per-check counts can add up to more than the number of invalid rows, because a row that fails three rules is three failures and one invalid row.
 _Avoid_: rejection, violation
 
 **Outcome**: How a run ended.
 The word has only this meaning: a rule column's `valid`, `invalid` or `unknown` is not an outcome, and neither is a check's result.
-Say what happened: no rows failed; rows failed and the asset declares no quarantine; no rows were valid; the decorated function returned `None`.
+Say what happened: no rows failed; an `"error"` rule failed and the asset has `filter=False`; every row failed an `"error"` rule; the decorated function returned `None`.
 _Avoid_: exit, the rule-column meaning, "check outcome"
 
 **Skip**: What happens when the decorated function returns `None`.
@@ -50,30 +50,31 @@ The package validates nothing, nothing materializes, the partition stays unmater
 Dagster has no noun for it, only `output_required=False` and "the function can conditionally not `yield` a result".
 _Avoid_: empty run, no-op, conditional materialization
 
-**Quarantine**: Where a writer writes the invalid rows, under the asset key `<name>_quarantine`.
-It is not an asset, and it is not in the asset graph unless `quarantine_spec` adds it.
-With `quarantine=True`, a run writes the valid rows even when some rows fail.
-Without it, any invalid row fails the run, and the package writes nothing.
-_Avoid_: quarantine asset, dead-letter asset, "quarantined asset" for an asset with `quarantine=True`
+**Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the asset key `<name>_error_rows` when the asset has `filter=True`.
+They are not an asset, and they are not in the asset graph unless `error_rows_spec` adds them.
+With `filter=True`, a run writes the other rows to the asset's table, so the two tables never share a row.
+With `filter=False`, a row that fails an `"error"` rule fails the run, and the package writes nothing.
+ADR-0004, ADR-0006 and ADR-0007 call it the quarantine, and the argument `quarantine`, their names at the time.
+_Avoid_: quarantine, invalid rows (Dataframely's, and it includes rows that failed only `"warn"` rules), bad rows, dead-letter asset
 
-**Writer**: A function that writes the invalid rows and returns the quarantine address.
+**Writer**: A function that writes the error rows and returns the error-rows address.
 `validation_results` receives only that address.
-`delegating_writer` passes the rows to the asset's own IO manager, and `file_writer` writes a parquet file under `quarantine_dir`.
+`delegating_writer` passes the rows to the asset's own IO manager, and `file_writer` writes a parquet file under `error_rows_dir`.
 Name the one you mean.
 _Avoid_: sink, emitter, exporter, router, dispatcher, resolver, and **the fallback** for `file_writer`
 
-**Quarantine address**: Where a writer wrote the invalid rows, as a string: an asset key from `delegating_writer`, or a file path from `file_writer`.
+**Error-rows address**: Where a writer wrote the error rows, as a string: an asset key from `delegating_writer`, or a file path from `file_writer`.
 It is a string because the rows can be in a database table.
 Dagster uses the word address, in `TableMetadataSet.extract_storage_address`.
-This package reports the quarantine's address and never the location of the valid rows.
+This package reports the error-rows address and never the location of the asset's table.
 _Avoid_: location, destination, and `path`, which assumes a filesystem
 
-**`quarantine_dir`**: The directory `file_writer` writes under.
+**`error_rows_dir`**: The directory `file_writer` writes under.
 The asset key and the partition key form the rest of the file path.
-Set by `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` and nothing else.
+Set by `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` and nothing else.
 _Avoid_: root, base dir, output dir
 
-**Rule column**: A column of the quarantine with one rule's result per row: `valid`, `invalid` or `unknown`.
+**Rule column**: A column of the error rows with one rule's result per row: `valid`, `invalid` or `unknown`.
 Dataframely uses this term, in `FailureInfo.details()`.
 _Avoid_: outcome column
 
@@ -83,7 +84,7 @@ Never a part of this package's own work: the column-schema check and `Schema.fil
 _Avoid_: execution context (Dagster's, but there it names `context` itself), and "step" or "stage" for this package's calls
 
 **Direct invocation**: Calling a decorated asset instead of running it, which is Dagster's documented unit-testing path and its own phrase.
-It is the only case with no step, which is why `file_writer` and `quarantine_dir` exist.
+It is the only case with no step, which is why `file_writer` and `error_rows_dir` exist.
 _Avoid_: "test", which is one use of it, not what it is
 
 **Hand-wiring**: Building a `@dg.asset` from `dd.wiring` instead of using `dd.asset`.
@@ -109,15 +110,22 @@ It is not a rule, and it reports on its own at every granularity.
 **Column rule**: A rule on one column, keyed `<column>|<rule name>`.
 Dataframely uses this word, in the `column_rules` it builds as `f"{col_name}|{rule_name}"`.
 
-**Rule name**: The part after the `|`, which is also the column argument Dataframely generated the rule from.
+**Rule name**: The part after the `|`.
 For example, `amount|min` has the rule name `min`.
 Dataframely uses this word, on that same line.
+It differs from the column argument Dataframely generated the rule from for four arguments: `nullable=False` generates `nullability`, `allow_inf=False` generates `inf`, `allow_nan=False` generates `nan`, and `check={"lowercase": ...}` generates `check__lowercase`.
+A `dy.List` or `dy.Array` adds `inner_` to each rule name of its inner column.
 _Avoid_: kind (Dagster's `kinds=` is the asset's badges, and `dd.asset` forwards it), type, flavour
 
 **Schema-level rule**: A rule that belongs to no single column: a `@dy.rule()`, and `primary_key`.
 Dataframely uses this phrase, in `_schema_validation_rules()` and in the warning it raises about them.
 A single-column primary key is one of these, which is why the setting is `schema_rules`.
 _Avoid_: multi-column rule, which a single-column primary key makes false; table rule
+
+**Severity**: A rule's `"error"` or `"warn"`, which the schema declares and which is `"error"` when it does not.
+It is the severity of the rule's failing check, as Dagster's `AssetCheckSeverity` and dbt's test `severity` use the word.
+A row that fails an `"error"` rule is never written to the asset's table, and a row that fails only `"warn"` rules is.
+_Avoid_: blocking rule, aborting rule, strict rule, level
 
 **`DescribedRule`**: One rule with everything this package derives from it: its check name, its column and rule name, its docstring, and its expression.
 _Avoid_: parsed rule, rule info, rule spec, enriched rule
@@ -141,14 +149,14 @@ _Avoid_: pill, chip
 ### Configuration
 
 **Setting**: One configurable value, resolved from three sources, each overriding the one before: the package default, then `DAGSTER_DATAFRAMELY_*`, then the `dd.asset` argument.
-`quarantine_dir` has only the first two, because it takes no argument.
+`error_rows_dir` has only the first two, because it takes no argument.
 Say "the setting's sources", not "the settings chain".
 _Avoid_: knob, dial, option, settings chain, house style
 
 **Allowed values**: What a setting accepts, which is what `InvalidSettingError` prints.
 _Avoid_: vocabulary
 
-**Statistics**: The `skimr`-style summary of the written rows, in the materialization's metadata under `dataframely/valid_statistics/<group>`.
+**Statistics**: The `skimr`-style summary of the written rows, in the materialization's metadata under `dataframely/table_statistics/<group>`.
 Spelled out everywhere, including the metadata key.
 _Avoid_: stats, profile, describe (Polars' `describe()` is a different thing this package does not use)
 
@@ -163,10 +171,10 @@ _Avoid_: preview, example, head
 **Reserved namespace**: Three namespaces.
 `dy_` starts every check name, rule column and check-result metadata key this package generates, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
-The quarantine address is the exception: when every row fails validation, there is no materialization, so each check result has `dataframely/quarantine_address`, the same key the materialization uses (ADR-0004).
+The error-rows address is the exception: when the package writes no table, there is no materialization, so each check result has `dataframely/error_rows_address`, the same key the materialization uses (ADR-0004).
 `dataframely/` starts every materialization metadata key this package names, as `dagster/` does for Dagster.
 The valid row count is the exception, because Dagster already has a key for it: `dagster/row_count`.
-`<name>_quarantine` is the asset key of a quarantine.
+`<name>_error_rows` is the asset key of the error rows.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.
 Namespace, never prefix, even where the string is one.
@@ -224,7 +232,7 @@ Say what the code does instead.
 | orphan a check's history | start a new check history |
 | sibling | another check on the same asset |
 | die | fail |
-| consent to partial data | `quarantine=True`: the run writes the valid rows when some rows fail |
+| consent to partial data | `filter=True`: the run writes the other rows when some rows fail an `"error"` rule |
 | evidence | record |
 | verdict | result |
 | culprit, offending | the failing column, rule or value |
@@ -241,7 +249,7 @@ Say what the code does instead.
 | Avoid | Write |
 | --- | --- |
 | schema-backed asset | an asset built with `dd.asset`, or name the asset |
-| quarantined asset | an asset with `quarantine=True` |
+| quarantined asset | an asset with `filter=True` |
 | valid table, valid asset, valid out | the asset's table; the valid rows |
 | rule check | the rule's check; the asset check |
 | arrangement | example |

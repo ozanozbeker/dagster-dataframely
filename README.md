@@ -43,11 +43,14 @@ From that one declaration you get:
 
   ![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
 
-- **A quarantine for invalid rows**, if you declare one.
-  With `quarantine=True`, a run with invalid rows writes them to a quarantine next to the table, writes the valid rows to the table, and succeeds.
-  The run still fails when every row is invalid.
+- **A severity for each rule**, `"error"` by default or `"warn"`, declared in the schema.
+  A row that fails an `"error"` rule fails the run, and a row that fails only `"warn"` rules is written with a warning.
 
-  ![The lineage view. The table materialized with 17 of its 24 checks passing. Its quarantine is a separate node beside it, drawn with a dashed outline because nothing materializes it: the table's own step wrote the invalid rows.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-lineage.png)
+- **Error rows**, if you set `filter=True`.
+  A run writes the rows that failed an `"error"` rule to a table next to the asset's, writes the other rows to the asset's table, and succeeds.
+  The run still fails when every row fails an `"error"` rule.
+
+  ![The lineage view. The table materialized with 17 of its 24 checks passing. Its error rows are a separate node beside it, drawn with a dashed outline because nothing materializes them: the table's own step wrote them.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-lineage.png)
 
 The decorated function is a normal Dagster asset function.
 Dagster passes upstream assets to it as parameters.
@@ -76,7 +79,7 @@ Extra columns and column order need no extra work: `Schema.filter` drops the col
 So dtypes are the only thing you have to fix.
 
 **Partial data needs a declaration, not a setting.**
-The only parameter for it is `quarantine=True`.
+The only parameter for it is `filter=True`.
 No environment variable sets it.
 Without it, one failing row fails the run and the package writes nothing, so your last-known-good table is unchanged.
 
@@ -131,12 +134,12 @@ Four things now exist that did not before:
 - A materialization that has the row count, a row sample and statistics for each dtype group.
 - A table, written by your IO manager.
 
-To write the rows that fail to a quarantine instead of failing the run, declare `@dd.asset(Customers, quarantine=True)`.
-The same IO manager writes them, under the asset's key with `_quarantine` appended.
+To write the rows that fail an `"error"` rule to a separate table instead of failing the run, declare `@dd.asset(Customers, filter=True)`.
+The same IO manager writes them, under the asset's key with `_error_rows` appended.
 Each of those rows has one added column per rule, which shows whether the row failed that rule.
-The checks then fail at `WARN` and the run succeeds, so downstream assets read the valid rows.
+The run succeeds, so downstream assets read the other rows, and each failing `"error"` rule's check still fails at `ERROR`.
 
-![The Checks tab for an asset with `quarantine=True` has seven of its twenty-four checks failing at `WARN`. The selected check shows its rendered constraint, the rule's expression, and the two rows that failed the rule.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/quarantine-checks.png)
+![The Checks tab for an asset with `filter=True` after some rows failed. The selected check shows its rendered constraint, the rule's expression, and the two rows that failed the rule.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-checks.png)
 
 ## Documentation
 

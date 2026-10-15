@@ -16,13 +16,13 @@ from dagster_dataframely_demo.schema import Orders
 ```
 
 The schema is the only required argument, and it is positional.
-Every other argument is `quarantine`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
+Every other argument is `filter`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
 
 You write the decorated function as you would for `@dg.asset`:
 
 ```{python}
 #| label: declaring-an-asset-1
-@dd.asset(Orders, quarantine=True, group_name="sales")
+@dd.asset(Orders, filter=True, group_name="sales")
 def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
     context.log.info("%d rows arrived", raw_orders.height)
     return raw_orders
@@ -46,8 +46,8 @@ flowchart TB
         direction TB
         F["decorated function returns a frame"] --> CS["column-schema check"]
         CS --> FL["Schema.filter"]
-        FL --> V["valid rows, to the asset's IO manager"]
-        FL --> I["invalid rows, to the quarantine"]
+        FL --> V["the table, to the asset's IO manager"]
+        FL --> I["with filter=True, the error rows, to a writer"]
         FL --> R["a result per check"]
     end
     load --> run
@@ -62,10 +62,10 @@ Two things exist as soon as the module imports, before any run:
 The asset's description comes from the schema's docstring, as [Naming](naming.qmd) describes.
 
 A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
-The asset's IO manager writes the valid rows.
-A writer writes the invalid rows to the quarantine.
+The asset's IO manager writes the table.
+With `filter=True`, a writer writes the rows that failed an `"error"` rule, the error rows, under `<name>_error_rows`.
 Each check reports a result.
-Not every run writes both the valid and the invalid rows: [The failure policy](the-failure-policy.qmd) lists the six outcomes and what each one writes.
+Not every run writes the table: [Validation](validation.qmd) lists the outcomes and what each one writes.
 
 ![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
 
@@ -76,10 +76,10 @@ A type checker rejects the five legacy forms, but nothing rejects them at run ti
 
 | `@dg.asset` parameter | why it is not here | what to write instead |
 | --- | --- | --- |
-| `check_specs` | they come from the schema's rules | nothing |
+| `asset_check_specs` | they come from the schema's rules | nothing |
 | `key` | `key_prefix` and `name` set it | `key_prefix=` plus `name=` |
 | `output_required` | the outcomes that write nothing must end the step without an output | nothing |
-| `dagster_type` | declined ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and cannot set a severity, so it cannot apply the failure policy | the schema, which this package validates against |
+| `dagster_type` | declined ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and cannot set a severity, so it cannot apply the rules' severities | the schema, which this package validates against |
 | `is_virtual` | a virtual asset has no function to decorate | nothing |
 | `io_manager_def` | `resource_defs` already sets it | `resource_defs={"io_manager": ...}` |
 

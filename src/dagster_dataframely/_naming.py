@@ -12,10 +12,10 @@ SCHEMA_RULES_CHECK = "dy_schema__rules"
 """Not `dy_col__schema`, which a `schema` column also gets."""
 
 
-def check_name(rule_name: str) -> str:
+def asset_check_name(rule_name: str) -> str:
     """Return the asset check name for the Dataframely rule named `rule_name`.
 
-    The quarantine's rule columns and the checks at `rule` granularity have this name.
+    The error rows' rule columns and the checks at `rule` granularity have this name.
 
     Returns
     -------

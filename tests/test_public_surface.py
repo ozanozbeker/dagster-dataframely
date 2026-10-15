@@ -9,7 +9,7 @@ import dagster_dataframely as dd
 
 _PUBLIC = {
     "asset",
-    "quarantine_spec",
+    "error_rows_spec",
     "errors",
     "wiring",
     # At the root rather than in a namespace, because annotated code uses them often.
@@ -19,18 +19,18 @@ _PUBLIC = {
 
 _WIRING = {
     "AssetYield",
-    "QuarantineWriter",
-    "check_name",
-    "check_results",
-    "check_specs",
+    "ErrorRowsWriter",
+    "asset_check_name",
+    "asset_check_results",
+    "asset_check_specs",
     "delegating_writer",
     "file_writer",
     "validation_results",
-    "quarantine_frame",
-    "quarantine_path",
+    "error_rows_frame",
+    "error_rows_path",
     "schema_metadata",
     "table_schema",
-    "validate_quarantine_key",
+    "validate_error_rows_key",
 }
 
 # Imported by `dd.errors` for its annotations, and listed so a third import fails a test.
@@ -41,11 +41,12 @@ _ERRORS = {
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
     "InvalidSettingError",
+    "InvalidSeverityError",
     "MaterializeResultFieldError",
     "MaterializeResultValueError",
     "NoValidRowsError",
-    "QuarantineDirError",
-    "QuarantineKeyCollisionError",
+    "ErrorRowsDirError",
+    "ErrorRowsKeyCollisionError",
     "ReservedColumnError",
     "InvalidColumnNameError",
     "ColumnSchemaError",

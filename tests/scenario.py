@@ -1,6 +1,7 @@
 """The `Orders` schema, the frames the tests validate, and the helpers several test modules share."""
 
 import datetime as dt
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -11,6 +12,8 @@ import duckdb
 import polars as pl
 from dagster_duckdb_polars import DuckDBPolarsIOManager
 from dagster_polars import PolarsParquetIOManager
+
+import dagster_dataframely as dd
 
 WAREHOUSE_SCHEMA = "analytics"
 """The database schema `warehouse` writes to."""
@@ -275,3 +278,27 @@ def no_valid_orders() -> pl.DataFrame:
 def wrong_dtype_orders() -> pl.DataFrame:
     """`quantity` is `Int64`, so the column-schema check fails."""
     return clean_orders().with_columns(pl.col("quantity").cast(pl.Int64))
+
+
+_TAKER_KEY = dg.AssetKey(["orders"])
+_, _TAKER_FAILURE = Orders.filter(clean_orders())
+
+SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
+    "asset": dd.asset,  # raises before it returns a decorator (ADR-0008)
+    "error_rows_spec": lambda schema: dd.error_rows_spec(schema, _TAKER_KEY),
+    "wiring.asset_check_results": lambda schema: list(
+        dd.wiring.asset_check_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
+    ),
+    "wiring.asset_check_specs": lambda schema: dd.wiring.asset_check_specs(
+        schema, asset=_TAKER_KEY
+    ),
+    "wiring.error_rows_frame": lambda schema: dd.wiring.error_rows_frame(
+        schema, _TAKER_FAILURE
+    ),
+    "wiring.schema_metadata": dd.wiring.schema_metadata,
+    "wiring.table_schema": dd.wiring.table_schema,
+    "wiring.validation_results": lambda schema: list(
+        dd.wiring.validation_results(schema, pl.DataFrame(), valid_key=_TAKER_KEY)
+    ),
+}
+"""Every public function that takes a schema, with placeholders for its other arguments, so a `TypeError` means a check runs too late (ADR-0008)."""

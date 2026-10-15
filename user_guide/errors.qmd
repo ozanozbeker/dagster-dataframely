@@ -25,36 +25,38 @@ Every message names what failed and how to fix it.
 | `ReservedColumnError` | at decoration, and by every public function that takes a schema | rename the column that starts with `dy_` |
 | `InvalidColumnNameError` | the same | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
 | `CheckNameCollisionError` | the same | rename one of the two rules that produce the same check name |
+| `InvalidSeverityError` | the same | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms |
 | `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
 | `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
 | `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
 | `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body |
-| `ValidationAbortError` | after `Schema.filter`, when rows failed and the asset declares no quarantine | fix the rows upstream, write them to a quarantine with `quarantine=True`, or drop them in the asset body |
-| `NoValidRowsError` | after `Schema.filter`, when every row failed validation and the asset declares a quarantine | read the invalid rows at the quarantine address in the message |
-| `QuarantineKeyCollisionError` | before the decorated function runs, on every run of an asset with `quarantine=True` | rename the other asset, or remove `quarantine=True`; if the other asset is your quarantine table, delete it and use `quarantine_spec` |
-| `QuarantineDirError` | under direct invocation only, when there are invalid rows to write | set `DAGSTER_DATAFRAMELY_QUARANTINE_DIR`, or run the asset |
+| `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>_error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
+| `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
+| `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |
+| `ErrorRowsDirError` | under direct invocation only, when there are error rows to write | set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or run the asset |
 
 `ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
 The failing check's `dy_schema__errors` table lists the same columns.
 
 ![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
 
-`ValidationAbortError` and `NoValidRowsError` both give the failure count per rule.
-The counts can add up to more than the number of invalid rows, because one row can fail several rules.
+`ValidationAbortError` and `NoValidRowsError` both give the failure count per `"error"` rule.
+The counts can add up to more than the number of failing rows, because one row can fail several rules.
+`NoValidRowsError` keeps its name although a frame whose rows fail only `"warn"` rules has no valid rows in Dataframely's sense and is written.
 
 ## Three ways to get this wrong
 
-**Do not declare an asset keyed `<name>_quarantine` if `<name>` has `quarantine=True`.**
-`orders` with `quarantine=True` writes its invalid rows to the asset key `orders_quarantine`, through the same IO manager that writes `orders`.
-An asset of your own keyed `orders_quarantine` has the same address.
+**Do not declare an asset keyed `<name>_error_rows` if `<name>` has `filter=True`.**
+`orders` with `filter=True` writes its error rows to the asset key `orders_error_rows`, through the same IO manager that writes `orders`.
+An asset of your own keyed `orders_error_rows` has the same address.
 Both assets would write to the same table or file, and the second write would replace the first.
 So every run of `orders` checks for such an asset before the decorated function runs, and raises:
 
 ```text
-QuarantineKeyCollisionError: 'orders' declares `quarantine=True`, so its invalid rows are written
-to 'orders_quarantine', which another asset in this code location already materializes. Rename
-that asset, or remove `quarantine=True` from 'orders'. If that asset is your own quarantine table,
-delete it and use `quarantine_spec` instead, which adds the quarantine itself to the asset graph.
+ErrorRowsKeyCollisionError: 'orders' declares `filter=True`, so its error rows are written to
+'orders_error_rows', which another asset in this code location already materializes. Rename that
+asset, or remove `filter=True` from 'orders'. If that asset is your own table for the error rows,
+delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph.
 ```
 
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**

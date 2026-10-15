@@ -62,7 +62,7 @@ class TestMaterializationSamples:
 
     def test_a_materialization_has_a_sample_of_the_rows_it_wrote(self, tmp_path: Path):
         metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
-        sampled = records(metadata["dataframely/valid_sample"])
+        sampled = records(metadata["dataframely/table_sample"])
 
         assert [row["order_id"] for row in sampled] == ["ORD-1", "ORD-2", "ORD-3"]
         assert [row["email"] for row in sampled] == clean_orders()["email"].to_list()
@@ -74,7 +74,7 @@ class TestMaterializationSamples:
 
         metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
 
-        assert len(records(metadata["dataframely/valid_sample"])) == _DEFAULT
+        assert len(records(metadata["dataframely/table_sample"])) == _DEFAULT
 
     def test_the_row_sample_is_the_head_rather_than_any_other_draw(
         self, tmp_path: Path
@@ -86,7 +86,7 @@ class TestMaterializationSamples:
             return _many_orders(_DEFAULT * 2)
 
         metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
-        sampled = records(metadata["dataframely/valid_sample"])
+        sampled = records(metadata["dataframely/table_sample"])
 
         assert [row["line_no"] for row in sampled] == list(range(1, _DEFAULT + 1))
 
@@ -94,7 +94,7 @@ class TestMaterializationSamples:
         metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
 
         assert [
-            list(record) for record in records(metadata["dataframely/valid_sample"])
+            list(record) for record in records(metadata["dataframely/table_sample"])
         ] == [list(Orders.columns())] * 3
 
     def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(
@@ -110,7 +110,7 @@ class TestMaterializationSamples:
             _GOOD_KEY
         ].metadata
 
-        assert "dataframely/valid_sample" not in metadata
+        assert "dataframely/table_sample" not in metadata
 
     def test_a_frame_with_no_rows_materializes_without_a_sample(self, tmp_path: Path):
         """Dagster raises on a table value with no records and no schema, so an empty sample would fail the run."""
@@ -123,7 +123,7 @@ class TestMaterializationSamples:
         metadata = materializations(result)[_GOOD_KEY].metadata
 
         assert result.success
-        assert "dataframely/valid_sample" not in metadata
+        assert "dataframely/table_sample" not in metadata
 
     def test_the_environment_variable_sets_the_row_sample(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -136,14 +136,14 @@ class TestMaterializationSamples:
 
         metadata = materializations(materialize(tmp_path, orders))[_GOOD_KEY].metadata
 
-        assert len(records(metadata["dataframely/valid_sample"])) == 1
+        assert len(records(metadata["dataframely/table_sample"])) == 1
 
     def test_a_cell_no_table_record_can_hold_is_rendered_as_the_value_it_is(
         self, tmp_path: Path
     ):
         """A `Decimal` becomes its string, not a float, so `10.00` stays `10.00`."""
         metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
-        first = records(metadata["dataframely/valid_sample"])[0]
+        first = records(metadata["dataframely/table_sample"])[0]
 
         assert first["amount"] == "10.00"
         assert first["ordered_at"] == str(dt.datetime(2026, 8, 1, 12, 0))  # noqa: DTZ001 - the schema declares no time zone
@@ -156,47 +156,47 @@ class TestMaterializationSamples:
         self,
         tmp_path: Path,
     ):
-        @dd.asset(Orders, name="orders", quarantine=True)
-        def with_quarantine() -> pl.DataFrame:
+        @dd.asset(Orders, name="orders", filter=True)
+        def with_error_rows() -> pl.DataFrame:
             return mixed_orders()
 
-        metadata = materializations(materialize(tmp_path, with_quarantine))[
+        metadata = materializations(materialize(tmp_path, with_error_rows))[
             _GOOD_KEY
         ].metadata
 
-        assert len(records(metadata["dataframely/valid_sample"])) == 3
-        assert len(records(metadata["dataframely/invalid_sample"])) == 3
+        assert len(records(metadata["dataframely/table_sample"])) == 3
+        assert len(records(metadata["dataframely/error_rows_sample"])) == 3
 
     def test_the_invalid_sample_is_bounded_by_the_same_setting(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", quarantine=True, row_sample=1)
+        @dd.asset(Orders, name="orders", filter=True, row_sample=1)
         def bounded() -> pl.DataFrame:
             return mixed_orders()
 
         metadata = materializations(materialize(tmp_path, bounded))[_GOOD_KEY].metadata
 
-        assert len(records(metadata["dataframely/valid_sample"])) == 1
-        assert len(records(metadata["dataframely/invalid_sample"])) == 1
+        assert len(records(metadata["dataframely/table_sample"])) == 1
+        assert len(records(metadata["dataframely/error_rows_sample"])) == 1
 
     def test_an_invalid_sample_has_the_rule_columns(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", quarantine=True)
-        def with_quarantine() -> pl.DataFrame:
+        @dd.asset(Orders, name="orders", filter=True)
+        def with_error_rows() -> pl.DataFrame:
             return mixed_orders()
 
-        metadata = materializations(materialize(tmp_path, with_quarantine))[
+        metadata = materializations(materialize(tmp_path, with_error_rows))[
             _GOOD_KEY
         ].metadata
-        (first, *_) = records(metadata["dataframely/invalid_sample"])
+        (first, *_) = records(metadata["dataframely/error_rows_sample"])
 
         assert list(first)[: len(Orders.columns())] == list(Orders.columns())
         assert any(name.startswith("dy_rule__") for name in first)
 
 
-@dd.asset(Orders, name="orders", quarantine=True)
-def _with_quarantine() -> pl.DataFrame:
+@dd.asset(Orders, name="orders", filter=True)
+def _with_error_rows() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dd.asset(Orders, name="orders", quarantine=True, check_granularity="column")
+@dd.asset(Orders, name="orders", filter=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
@@ -205,7 +205,7 @@ class TestFailureSamples:
     """The sample of failing rows in a check's metadata."""
 
     def test_a_failing_check_has_the_rows_that_failed_it(self, tmp_path: Path):
-        result = materialize(tmp_path, _with_quarantine)
+        result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
         sampled = records(metadata["dy_failed_sample"])
 
@@ -217,7 +217,7 @@ class TestFailureSamples:
         self,
         tmp_path: Path,
     ):
-        result = materialize(tmp_path, _with_quarantine)
+        result = materialize(tmp_path, _with_error_rows)
         sampled = records(
             check_evaluations(result)["dy_rule__amount__min"].metadata[
                 "dy_failed_sample"
@@ -227,14 +227,14 @@ class TestFailureSamples:
         assert list(sampled[0]) == list(Orders.columns())
 
     def test_a_passing_check_has_no_sample(self, tmp_path: Path):
-        result = materialize(tmp_path, _with_quarantine)
+        result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__quantity__min"].metadata
 
         assert "dy_failed_sample" not in metadata
         assert {"dy_rule", "dy_rule__expr"} <= set(metadata)
 
     def test_the_failure_sample_is_bounded(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def many_invalid() -> pl.DataFrame:
             return _invalid_orders(_DEFAULT * 2)
 
@@ -251,7 +251,7 @@ class TestFailureSamples:
         @dd.asset(
             Orders,
             name="orders",
-            quarantine=True,
+            filter=True,
             max_failure_samples=0,
         )
         def unsampled() -> pl.DataFrame:
@@ -268,7 +268,7 @@ class TestFailureSamples:
     ):
         monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "0")
 
-        @dd.asset(Orders, name="orders", quarantine=True)
+        @dd.asset(Orders, name="orders", filter=True)
         def orders() -> pl.DataFrame:
             return mixed_orders()
 
@@ -325,7 +325,7 @@ class TestSampleSettings:
     """The two sample settings, read separately from `statistics`."""
 
     def test_turning_the_statistics_off_leaves_both_samples_on(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", quarantine=True, statistics=False)
+        @dd.asset(Orders, name="orders", filter=True, statistics=False)
         def without_statistics() -> pl.DataFrame:
             return mixed_orders()
 
@@ -333,9 +333,9 @@ class TestSampleSettings:
         metadata = materializations(result)[_GOOD_KEY].metadata
 
         assert not [
-            key for key in metadata if key.startswith("dataframely/valid_statistics/")
+            key for key in metadata if key.startswith("dataframely/table_statistics/")
         ]
-        assert "dataframely/valid_sample" in metadata
+        assert "dataframely/table_sample" in metadata
         assert (
             "dy_failed_sample"
             in check_evaluations(result)["dy_rule__amount__min"].metadata
@@ -345,7 +345,7 @@ class TestSampleSettings:
         @dd.asset(
             Orders,
             name="orders",
-            quarantine=True,
+            filter=True,
             row_sample=0,
             max_failure_samples=0,
         )
@@ -355,8 +355,8 @@ class TestSampleSettings:
         result = materialize(tmp_path, unsampled)
         metadata = materializations(result)[_GOOD_KEY].metadata
 
-        assert "dataframely/valid_statistics/numeric" in metadata
-        assert "dataframely/valid_sample" not in metadata
+        assert "dataframely/table_statistics/numeric" in metadata
+        assert "dataframely/table_sample" not in metadata
         assert (
             "dy_failed_sample"
             not in check_evaluations(result)["dy_rule__amount__min"].metadata

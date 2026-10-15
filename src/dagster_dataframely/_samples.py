@@ -6,7 +6,7 @@ Sample rows go into the Dagster event log, which nothing redacts, so `sample_row
 import dagster as dg
 import polars as pl
 
-VALID_SAMPLE_KEY = "dataframely/valid_sample"
+TABLE_SAMPLE_KEY = "dataframely/table_sample"
 
 type Cell = str | int | float | bool | None
 type Row = dict[str, Cell]

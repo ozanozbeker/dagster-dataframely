@@ -1,0 +1,114 @@
+---
+title: "Validation"
+---
+
+```{python}
+#| label: setup-validation
+#| code-fold: true
+#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| output: false
+import polars as pl
+
+import dagster_dataframely as dd
+from dagster_dataframely_demo.schema import Orders
+```
+
+`dd.asset` validates the frame the decorated function returns.
+The column-schema check runs first, then `Schema.filter`.
+Each rule has a severity, `"error"` or `"warn"`, and a rule is `"error"` unless the schema declares `"warn"` ([Rule severity](rule-severity.qmd)).
+
+This page covers the default, `filter=False`.
+[Advanced: `filter=True`](filtering-error-rows.qmd) covers what `filter=True` changes.
+
+<!-- rumdl-disable-next-line MD078 -->
+```{mermaid}
+%%| label: validation-outcomes
+flowchart TD
+    F["the decorated function returns"] --> N{"None?"}
+    N -- yes --> SKIP["skip: nothing written<br/>every check passes<br/>run succeeds"]
+    N -- no --> CS{"column schema matches?"}
+    CS -- no --> DRIFT["nothing written<br/>dy_schema__columns fails<br/>run fails, ColumnSchemaError"]
+    CS -- yes --> FILTER["Schema.filter"]
+    FILTER --> ERR{"a row failed an 'error' rule?"}
+    ERR -- yes --> ABORT["nothing written<br/>each failing check has its rule's severity<br/>run fails, ValidationAbortError"]
+    ERR -- no --> WRITE["every row written<br/>failing 'warn' checks at WARN<br/>run succeeds"]
+```
+
+A run writes nothing when the function returns `None`, when the frame's columns or dtypes differ from the schema's, or when a row fails an `"error"` rule.
+Otherwise it writes every row, including the rows that failed only `"warn"` rules.
+
+| what the function returned | the table | failing checks | run |
+| --- | --- | --- | --- |
+| columns or dtypes that are not the schema's | not written | the column-schema check, blocking | fails, `ColumnSchemaError` |
+| every row valid | written | none | succeeds |
+| rows that failed only `"warn"` rules | written, including those rows | each `"warn"` rule's check, at `WARN` | succeeds |
+| a row that failed an `"error"` rule | not written | each `"error"` rule's check at `ERROR`, each `"warn"` rule's check at `WARN` | fails, `ValidationAbortError` |
+| `None`, meaning no source data | skipped | none | succeeds |
+
+Each row of the table is one of the five outcomes a run can have.
+A failing check has its rule's severity in every outcome, so a check's history shows only its own rule's failures.
+When the column-schema check fails, its severity is always `ERROR`.
+
+![The Checks tab of an asset after some rows failed an `"error"` rule. The failing checks have severity `ERROR`.](../assets/images/severity-error.png)
+
+![The run log shows the step failure. The `ValidationAbortError` message lists how many rows failed each rule. The counts add up to more than the number of failing rows, because one row can fail several rules.](../assets/images/error-validation-abort.png)
+
+**Every row has to pass every `"error"` rule.**
+A run with even one row that fails an `"error"` rule writes nothing, so the last-known-good table is unchanged.
+To write the other rows and keep the failing ones in a separate table, set `filter=True`.
+To drop the failing rows yourself, drop them in the decorated function:
+
+```{python}
+#| label: validation-1
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    valid, _ = Orders.filter(raw_orders)
+    return valid
+```
+
+**A row that fails only `"warn"` rules is written.**
+So the table satisfies every `"error"` rule, but not necessarily every `"warn"` rule.
+An asset downstream that reads the table as `dy.DataFrame[Orders]` can rely only on the `"error"` rules.
+Those rows come after the valid rows, so the table does not keep the frame's row order when a `"warn"` rule fails.
+
+## The package never casts
+
+The column-schema check compares your frame's dtypes with the schema's and fails the run on a mismatch.
+`Schema.filter` runs with `cast=False`.
+A dtype mismatch is a bug in the pipeline, and a silent cast can write wrong values.
+For example, a cast from `Float64` to a declared `Int64` turns `1.9` into `1`, and every rule still passes.
+
+The check runs before `Schema.filter`, without executing the plan.
+It reports every mismatched column at once.
+
+**Extra columns and column order are not a mismatch.**
+The check compares only the columns the schema declares, and `Schema.filter` drops any other column.
+The table has the schema's columns in the schema's order, whatever order the frame had:
+
+```{python}
+#| label: validation-2
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    # `net` is working state, and `raw_orders` has columns `Orders` never declared.
+    # `Schema.filter` drops both, and the table has the schema's thirteen columns, in its order.
+    return raw_orders.with_columns(net=pl.col("amount") * 0.8)
+```
+
+So a decorated function that returns extra columns needs no `select`, and no `Schema.cast` to drop them.
+
+**To cast, call `Schema.cast` in the decorated function:**
+
+```{python}
+#| label: validation-3
+@dd.asset(Orders)
+def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return Orders.cast(raw_orders)
+```
+
+This is the intended way to cast, not a workaround, and few assets need it.
+An asset needs it when its source returns a dtype that differs from the schema's, most often on a read from a warehouse.
+DuckDB returns `DECIMAL` where the schema declares `Float64`, so an asset that reads from `DuckDBPolarsIOManager` fails the column-schema check on its first run unless it casts.
+If you cast in every asset, check whether the dtypes differ at all, because dropping extra columns never needs a cast ([#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88)).
+
+The package casts only columns it generates.
+It casts the error rows' rule columns from `Enum` to `String`, because an `Enum` column makes the Delta writer panic with a Rust `unreachable!()`.

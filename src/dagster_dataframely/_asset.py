@@ -16,13 +16,13 @@ import dataframely as dy
 from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAssetDep
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 
-from dagster_dataframely._checks import check_specs
-from dagster_dataframely._metadata import schema_metadata
-from dagster_dataframely._quarantine import (
-    QuarantineWriter,
-    quarantine_writer,
-    validate_quarantine_key,
+from dagster_dataframely._checks import asset_check_specs
+from dagster_dataframely._error_rows import (
+    ErrorRowsWriter,
+    error_rows_writer,
+    validate_error_rows_key,
 )
+from dagster_dataframely._metadata import schema_metadata
 from dagster_dataframely._returns import (
     DecoratedReturn,
     frame_and_result,
@@ -32,8 +32,8 @@ from dagster_dataframely._rules import validate_namespace
 from dagster_dataframely._runtime import AssetYield, validation_results
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
+    ERROR_ROWS_DIR,
     MAX_FAILURE_SAMPLES,
-    QUARANTINE_DIR,
     ROW_SAMPLE,
     SCHEMA_RULES,
     STATISTICS,
@@ -54,7 +54,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     schema: type[dy.Schema],
     /,
     *,
-    quarantine: bool = False,
+    filter: bool = False,  # noqa: A002 - Dataframely's `Schema.filter` is the same operation
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
@@ -92,8 +92,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     Parameters
     ----------
-    quarantine
-        Whether a run writes the valid rows when some rows fail. With `True`, the run writes the invalid rows to the quarantine, under the asset key `<name>_quarantine`. A run fails with `QuarantineKeyCollisionError` if another asset already materializes that key. With `False`, any invalid row fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
+    filter
+        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the asset key `<name>_error_rows`, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
     check_granularity
         How many asset checks report the schema's rules: one per rule at `rule`, one per column with rules at `column`, and one for the schema at `schema`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
@@ -103,17 +103,17 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     statistics
         Whether the materialization metadata has statistics of the written rows, one table per dtype group. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
-        The materialization metadata has at most this many valid rows, and this many invalid rows. **A run writes the rows to the Dagster event log unredacted.** `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
+        The materialization metadata has at most this many rows of the table, and this many error rows. **A run writes the rows to the Dagster event log unredacted.** `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
     key_prefix
-        The quarantine's asset key has the same prefix.
+        The error rows' asset key has the same prefix.
     metadata
         Definition metadata. The schema's `dagster/column_schema` entry replaces a key of the same name.
     description
         `None` uses the schema's docstring, or the decorated function's docstring if the schema has none.
     io_manager_key
-        In a run, `delegating_writer` passes the invalid rows to the same IO manager.
+        In a run, `delegating_writer` passes the error rows to the same IO manager.
     partitions_def
-        The writer writes the quarantine under the same partition key, and every check spec has the same partitions.
+        The writer writes the error rows under the same partition key, and every check spec has the same partitions.
 
     Returns
     -------
@@ -129,6 +129,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         A column name has a character Dagster does not allow in an asset check name.
     CheckNameCollisionError
         Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
     InvalidSettingError
         A setting's argument or environment variable has a value the setting does not allow.
 
@@ -151,7 +153,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         amount = dy.Float64(nullable=False, min=0.0)
 
 
-    @dd.asset(Orders, quarantine=True)
+    @dd.asset(Orders, filter=True)
     def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
         return raw_orders.select("order_id", "amount")
 
@@ -173,7 +175,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
     # Only to raise on a malformed value (#115).
-    QUARANTINE_DIR.resolve(None)
+    ERROR_ROWS_DIR.resolve(None)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -209,7 +211,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         declares_context: bool = is_context_provided(parameters)
 
         def asset_yields(
-            returned: DecoratedReturn, writer: QuarantineWriter | None
+            returned: DecoratedReturn, writer: ErrorRowsWriter | None
         ) -> AssetYield:
             frame, result = frame_and_result(returned, asset=key.to_user_string())
             yield from with_returned_fields(
@@ -217,7 +219,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                     schema,
                     frame,
                     valid_key=key,
-                    quarantine_writer=writer,
+                    error_rows_writer=writer,
                     check_granularity=granularity,
                     schema_rules=schema_rule_checks,
                     max_failure_samples=failure_samples,
@@ -228,14 +230,14 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                 valid_key=key,
             )
 
-        if quarantine:
+        if filter:
 
             @functools.wraps(fn)
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
-                validate_quarantine_key(context)
-                writer = quarantine_writer(context)
+                validate_error_rows_key(context)
+                writer = error_rows_writer(context)
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
                     if declares_context
@@ -270,12 +272,13 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             key_prefix=prefix or None,
             output_required=False,
             metadata={**(metadata or {}), **schema_metadata(schema)},
-            check_specs=check_specs(
+            check_specs=asset_check_specs(
                 schema,
                 asset=key,
                 partitions_def=partitions_def,
                 check_granularity=granularity,
                 schema_rules=schema_rule_checks,
+                filter=filter,
             ),
             **forwarded,
         )(compute)

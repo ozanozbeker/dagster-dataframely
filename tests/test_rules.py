@@ -44,7 +44,7 @@ def test_a_description_appears_only_where_a_rule_wrote_one():
 
 
 def test_the_check_name_is_the_rewrite():
-    """The check and the quarantine's rule column share this name."""
+    """The check and the error rows' rule column share this name."""
     rules = described_rules(Orders)
 
     assert rules["amount|min"].check_name == "dy_rule__amount__min"

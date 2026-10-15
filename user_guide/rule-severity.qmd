@@ -1,0 +1,137 @@
+---
+title: "Rule severity"
+---
+
+```{python}
+#| label: setup-rule-severity
+#| code-fold: true
+#| code-summary: "Setup: the imports every example on this page uses"
+#| output: false
+import dataframely as dy
+import polars as pl
+
+import dagster_dataframely as dd
+```
+
+Every rule has a severity, `"error"` or `"warn"`, as a dbt test does.
+A rule is `"error"` unless the schema declares `"warn"`.
+
+| severity | a row that fails the rule | the rule's check |
+| --- | --- | --- |
+| `"error"` | is not written to the table: the run fails, or with `filter=True` the package writes the row under `<name>_error_rows` | fails at `ERROR` |
+| `"warn"` | is written to the table | fails at `WARN` |
+
+[Validation](validation.qmd) shows what each outcome writes, and [Advanced: `filter=True`](filtering-error-rows.qmd) shows the error rows.
+
+## Declaring a severity
+
+The schema declares each severity, so every asset that uses the schema has the same severities:
+
+```{python}
+#| label: rule-severity-1
+class Orders(dy.Schema):
+    order_id = dy.String(
+        primary_key=True,
+        regex=r"^ORD-\d{4}$",
+        metadata={"dagster_dataframely": {"severity": {"regex": "warn"}}},
+    )
+    amount = dy.Float64(nullable=False, min=0.0)
+    note = dy.String(
+        nullable=True,
+        max_length=100,
+        metadata={"dagster_dataframely": {"severity": "warn"}},
+    )
+
+    __dagster_dataframely__ = {"severity": {"amount_is_rounded": "warn"}}
+
+    @dy.rule()
+    def amount_is_rounded(cls) -> pl.Expr:
+        """Require whole cents."""
+        return (cls.amount.col * 100).round() == cls.amount.col * 100
+```
+
+**A column rule's severity goes in the column's `metadata`, under the key `dagster_dataframely`.**
+Its `severity` is one value for every rule on the column, as on `note`, or a mapping from rule name to value, as on `order_id`.
+Dataframely does not read `metadata`, so the key does not change how Dataframely validates.
+
+**A schema-level rule's severity goes in the class attribute `__dagster_dataframely__`.**
+A schema-level rule is `primary_key` or a `@dy.rule()`, and neither has a column to declare it on.
+The attribute takes the same two forms: one value for every schema-level rule, or a mapping.
+
+The values are the strings `"error"` and `"warn"`.
+A subclass has its parent's declarations.
+The Columns tab does not show the `dagster_dataframely` key as a tag, because the checks already show each rule's severity.
+
+A check whose rules include an `"error"` rule is blocking, so the specs of `Orders` mark the checks whose failure stops the write:
+
+```{python}
+#| label: rule-severity-2
+@dd.asset(Orders)
+def orders() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+{spec.name: spec.blocking for spec in orders.check_specs}
+```
+
+### Rule names
+
+A severity mapping names Dataframely's rule name: the part after the `|` in the check's `dy_rule` metadata, such as `regex` in `order_id|regex`.
+Four column arguments generate a rule under a different name, and the package reads the argument as that rule:
+
+| you can write | the rule it names |
+| --- | --- |
+| `nullable` | `nullability` |
+| `allow_inf` | `inf` |
+| `allow_nan` | `nan` |
+| `check`, when `check=` is a dict | every `check__<key>` rule on the column |
+
+A `dy.List` or `dy.Array` adds `inner_` to the rule names of its inner column, and those rules have no argument of their own.
+
+### A declaration the package cannot read raises
+
+No type checker reads inside `metadata`.
+So every public function that takes a schema checks the declarations, and raises `InvalidSeverityError` when you declare the asset:
+
+```{python}
+#| label: rule-severity-3
+class Misspelled(dy.Schema):
+    amount = dy.Float64(
+        min=0.0, metadata={"dagster_dataframely": {"severity": {"minimum": "warn"}}}
+    )
+
+
+try:
+    dd.asset(Misspelled)
+except dd.errors.InvalidSeverityError as error:
+    print(error)
+```
+
+It raises for six mistakes:
+
+- a key other than `severity` under `dagster_dataframely` or in `__dagster_dataframely__`;
+- a value other than `"error"`, `"warn"` or a mapping of rule names to those, including `dg.AssetCheckSeverity.WARN`;
+- a name that is not one of the column's rules;
+- one value for every rule on a column that has no rules;
+- a column rule, such as `amount|min`, in `__dagster_dataframely__`;
+- a schema-level rule that does not exist.
+
+## Blocking checks
+
+With `filter=False`, the default, a check whose rules include an `"error"` rule is blocking, like the column-schema check.
+With `filter=True`, no rule's check is blocking, because the run writes the table and succeeds.
+
+The Checks tab marks each blocking check.
+Dagster stops the assets downstream when a blocking check fails at `ERROR`, but it does not stop the asset's own write, so `dd.asset` does not write the table itself.
+A failing check also sets the asset's health: "Degraded" for a check at `ERROR`, and "Warning" for a check at `WARN`.
+
+### Collapsed checks
+
+At `column` and `schema` granularity, one check reports for several rules:
+
+- The check is blocking when `filter=False` and any of its rules is `"error"`.
+- It fails at `ERROR` when a failing rule is `"error"`, and at `WARN` when only `"warn"` rules failed.
+
+So a collapsed check whose `"warn"` rule failed and whose `"error"` rule passed fails at `WARN`, and Dagster does not fail the step.
+At `schema` granularity, the one check is blocking whenever any rule is `"error"`, which is almost always.
+Its metadata still lists the failures of each rule.

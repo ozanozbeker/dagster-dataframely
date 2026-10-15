@@ -131,8 +131,8 @@ ROW_SAMPLE = _Setting[int](
     parse=_count,
 )
 
-QUARANTINE_DIR = _Setting[str | None](
-    name="quarantine_dir",
+ERROR_ROWS_DIR = _Setting[str | None](
+    name="error_rows_dir",
     default=None,
     allowed="filesystem paths",
     accepts=_path,

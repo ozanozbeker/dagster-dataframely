@@ -25,23 +25,23 @@ Every other key this package writes is in the `dataframely/` namespace, so these
 
 | key | what it holds |
 | --- | --- |
-| `dagster/row_count` | how many rows passed validation, not how many the function returned |
-| `dataframely/valid_sample` | the first few of those rows |
-| `dataframely/valid_statistics/<group>` | one table per dtype group present |
-| `dataframely/quarantine_address` | where the writer wrote the invalid rows, on the runs that wrote any |
-| `dataframely/invalid_count` | how many rows failed at least one rule |
-| `dataframely/invalid_sample` | the first few of those, rule columns included |
-| `dataframely/invalid_by_rules` | which sets of rules the rows failed together, largest group first |
+| `dagster/row_count` | how many rows the run wrote to the table, not how many the function returned |
+| `dataframely/table_sample` | the first few of those rows |
+| `dataframely/table_statistics/<group>` | one table per dtype group present |
+| `dataframely/error_rows_address` | where the writer wrote the error rows, on the runs that wrote any |
+| `dataframely/error_rows_count` | how many rows failed at least one `"error"` rule |
+| `dataframely/error_rows_sample` | the first few of those, rule columns included |
+| `dataframely/error_rows_by_rules` | which sets of rules the rows failed together, largest group first |
 
-The last four are absent when no rows failed.
-`dataframely/invalid_by_rules` counts each invalid row once, under the set of rules it failed.
+The last four appear only on a run with `filter=True` that wrote error rows.
+`dataframely/error_rows_by_rules` counts each error row once, under the set of rules it failed.
 So one bad upstream field that fails three rules appears as one group, not as three unrelated counts.
-It names rules as the quarantine's rule columns do, so its names match the check names only at `rule` granularity.
+It names rules as the error rows' rule columns do, so its names match the check names only at `rule` granularity.
 
-![The materialization of a run where 8 rows failed, and the writer wrote them to the quarantine. The third row of `dataframely/invalid_by_rules` is one row that failed three rules, counted once, not three times.](../assets/images/invalid-by-rules.png)
+![The materialization of a run where 8 rows failed, and the writer wrote them under `orders_error_rows`. The third row of `dataframely/error_rows_by_rules` is one row that failed three rules, counted once, not three times.](../assets/images/invalid-by-rules.png)
 
 Every value that contains rows is a Dagster table value, not markdown, so the UI shows a sortable table.
-The two counts are integers, and the quarantine address is a string.
+The two counts are integers, and the error-rows address is a string.
 
 ![The materialization of a run where no rows failed: the row count, one statistics table per dtype group present, the row sample, and the IO manager's own keys below them.](../assets/images/materialization-metadata.png)
 
@@ -69,7 +69,7 @@ The table shows a `span` in Polars' own duration form, such as `8d` or `1m 30s`,
 A `min` or `max` on an email column would write real addresses into the event log, which a deployment shares, anyone can export, and nothing deletes.
 Lengths and cardinality detect the same problems.
 
-The package computes no statistics for the invalid rows.
+The package computes no statistics for the error rows.
 
 ## The checks
 
@@ -92,7 +92,7 @@ Counts are per rule, and one row can fail several rules, so their sum is not a r
 `max_failure_samples` applies per rule, not per check.
 So in a collapsed check, a rule that a thousand rows failed cannot fill the sample and leave out a rule that one row failed.
 
-A run that raises `NoValidRowsError` yields no materialization, so the package copies `dataframely/quarantine_address` onto every check result instead.
+A run that raises `NoValidRowsError` yields no materialization, so the package copies `dataframely/error_rows_address` onto every check result instead.
 
 The Columns tab is not one of these two places.
 It comes from the asset definition, so the catalog shows it before the first run and still shows it after a failed run.
@@ -121,7 +121,7 @@ def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
 
 `value` is the frame to validate, and you have to set it.
 The package copies `metadata`, `data_version` and `tags` onto the table's materialization.
-The quarantine has no materialization event, so none of these fields apply to it.
+The error rows have no materialization event, so none of these fields apply to them.
 
 Setting the result's `asset_key` or `check_results` raises `MaterializeResultFieldError`, which names the field.
 The decorator sets the asset key from its declaration and the check results from the schema's rules.

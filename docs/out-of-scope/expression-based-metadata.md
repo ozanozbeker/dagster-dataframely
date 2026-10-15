@@ -4,7 +4,7 @@ This package writes the statistics it derives from the schema, and takes no expr
 There is no way to ask for an aggregate over chosen columns, and no way to put a revenue total, a ratio or a predicate count on a materialization.
 
 The `statistics` setting is on or off.
-When it is on, the package writes one table per dtype group present, under `dataframely/valid_statistics/<group>`, and no setting changes the groups.
+When it is on, the package writes one table per dtype group present, under `dataframely/table_statistics/<group>`, and no setting changes the groups.
 
 ## Why this is out of scope
 
@@ -25,7 +25,7 @@ A number added to a validated table's materialization metadata has none of those
 
 Accepting an expression from a user requires three decisions, and nothing gives a basis for any of them:
 
-- Where the package writes the result: beside `dataframely/valid_statistics/<group>`, or in a namespace of its own.
+- Where the package writes the result: beside `dataframely/table_statistics/<group>`, or in a namespace of its own.
 - What happens when a metric fails to evaluate.
   The statistics cannot fail, so there is no precedent, and both options are bad.
   Failing the materialization lets a typo in an optional number fail a valid table.

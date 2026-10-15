@@ -1,6 +1,6 @@
 """The code location loads, and each asset does what the README and screenshots show.
 
-The tests read the resolved asset graph, because `Definitions.assets` lists each `quarantine_spec` twice.
+The tests read the resolved asset graph, because `Definitions.assets` lists each `error_rows_spec` twice.
 """
 
 import collections
@@ -42,14 +42,14 @@ EXPECTED_GROUPS = {
         "orders",
         "customers",
         "marketing_orders",
-        "marketing_orders_quarantine",
+        "marketing_orders_error_rows",
         "finance_orders",
         "partner_orders",
         "legacy_orders",
-        "legacy_orders_quarantine",
+        "legacy_orders_error_rows",
         "daily_orders",
         "regional_orders",
-        "regional_orders_quarantine",
+        "regional_orders_error_rows",
         "warehouse_orders",
     },
     "gold": {"weekly_orders", "high_value_orders", "orders_snapshot"},
@@ -58,10 +58,10 @@ EXPECTED_GROUPS = {
 # Includes `dy_schema__columns`. The README and the screenshots quote these.
 EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 14, "legacy_orders": 2}
 
-EXPECTED_QUARANTINES = {
-    "marketing_orders_quarantine": "marketing_orders",
-    "legacy_orders_quarantine": "legacy_orders",
-    "regional_orders_quarantine": "regional_orders",
+EXPECTED_ERROR_ROWS = {
+    "marketing_orders_error_rows": "marketing_orders",
+    "legacy_orders_error_rows": "legacy_orders",
+    "regional_orders_error_rows": "regional_orders",
 }
 
 MARKETPLACE_BROKEN_RULES = {
@@ -135,23 +135,23 @@ def test_nothing_has_more_than_one_parent(graph: AssetGraph):
     assert fanned_in == set()
 
 
-def test_every_quarantine_depends_on_its_own_asset(graph: AssetGraph):
+def test_every_error_rows_depends_on_its_own_asset(graph: AssetGraph):
     parents = {
         key.to_user_string(): _names(graph.get(key).parent_keys)
         for key in graph.get_all_asset_keys()
-        if key.to_user_string() in EXPECTED_QUARANTINES
+        if key.to_user_string() in EXPECTED_ERROR_ROWS
     }
-    assert parents == {key: {valid} for key, valid in EXPECTED_QUARANTINES.items()}
+    assert parents == {key: {valid} for key, valid in EXPECTED_ERROR_ROWS.items()}
 
 
-def test_the_grid_quarantine_is_partitioned_like_its_asset(graph: AssetGraph):
+def test_the_grid_error_rows_is_partitioned_like_its_asset(graph: AssetGraph):
     partitioned = {
         key.to_user_string()
         for key in graph.get_all_asset_keys()
-        if key.to_user_string() in EXPECTED_QUARANTINES
+        if key.to_user_string() in EXPECTED_ERROR_ROWS
         and graph.get(key).partitions_def is not None
     }
-    assert partitioned == {"regional_orders_quarantine"}
+    assert partitioned == {"regional_orders_error_rows"}
 
 
 def test_the_marketplace_feed_breaks_the_expected_rules():
@@ -207,8 +207,8 @@ def test_every_order_is_in_exactly_one_region_cell():
 
 
 @pytest.fixture
-def quarantine_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(tmp_path))
+def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR", str(tmp_path))
     return tmp_path
 
 
@@ -229,22 +229,22 @@ def test_the_partner_feed_stops_at_the_column_schema_check():
         _events(partner_orders, _data.partner_orders())
 
 
-def test_the_legacy_migration_writes_only_the_quarantine(quarantine_dir: Path):
+def test_the_legacy_migration_writes_only_the_error_rows(error_rows_dir: Path):
     with pytest.raises(dd.errors.NoValidRowsError):
         _events(legacy_orders, dg.build_asset_context(), _data.legacy_orders())
     assert (
-        pl.read_parquet(quarantine_dir / "legacy_orders_quarantine.parquet").height == 3
+        pl.read_parquet(error_rows_dir / "legacy_orders_error_rows.parquet").height == 3
     )
 
 
-def test_marketing_keeps_the_valid_lines_and_quarantines_the_rest(quarantine_dir: Path):
+def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Path):
     events = _events(
         marketing_orders, dg.build_asset_context(), _data.marketplace_orders()
     )
     materialization = next(e for e in events if isinstance(e, dg.MaterializeResult))
     assert materialization.value.height == 12
     assert (
-        pl.read_parquet(quarantine_dir / "marketing_orders_quarantine.parquet").height
+        pl.read_parquet(error_rows_dir / "marketing_orders_error_rows.parquet").height
         == 8
     )
 

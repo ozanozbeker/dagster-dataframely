@@ -36,17 +36,17 @@ import pytest
 
 
 @pytest.fixture
-def quarantine_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("DAGSTER_DATAFRAMELY_QUARANTINE_DIR", str(tmp_path))
+def error_rows_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR", str(tmp_path))
     return tmp_path
 
 
-@dd.asset(Orders, quarantine=True)
+@dd.asset(Orders, filter=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-def test_orders_quarantines_the_bad_lines(quarantine_dir):
+def test_orders_filters_the_failing_lines(error_rows_dir):
     events = list(orders(dg.build_asset_context(), marketplace_orders()))
     tables = {
         event.asset_key: event.value
@@ -61,7 +61,7 @@ def test_orders_quarantines_the_bad_lines(quarantine_dir):
 
     assert tables[dg.AssetKey(["orders"])].height == 12
     assert not checks["dy_rule__amount__min"]
-    assert pl.read_parquet(quarantine_dir / "orders_quarantine.parquet").height == 8
+    assert pl.read_parquet(error_rows_dir / "orders_error_rows.parquet").height == 8
 ```
 
 ```{python}
@@ -75,20 +75,20 @@ import os
 import tempfile
 
 with tempfile.TemporaryDirectory() as tmp:
-    os.environ["DAGSTER_DATAFRAMELY_QUARANTINE_DIR"] = tmp
-    test_orders_quarantines_the_bad_lines(Path(tmp))
+    os.environ["DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR"] = tmp
+    test_orders_filters_the_failing_lines(Path(tmp))
 ```
 
-**A writer writes the quarantine, and the call does not yield it.**
-The call yields one materialization, for the table, so the test reads the invalid rows from the parquet file, not from an event.
-In a run too, the IO manager writes the invalid rows, and Dagster records no materialization for the quarantine.
+**A writer writes the error rows, and the call does not yield them.**
+The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from an event.
+In a run too, the IO manager writes the error rows, and Dagster records no materialization for them.
 
-**An asset with `quarantine=True` takes a `context` parameter**, even when your function does not declare one.
+**An asset with `filter=True` takes a `context` parameter**, even when your function does not declare one.
 Pass the context first and the upstream frames after it, as Dagster does.
-A call has no IO manager, so it writes the invalid rows to the directory in `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` instead.
-It reads that variable only when some rows are invalid.
+A call has no IO manager, so it writes the error rows to the directory in `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` instead.
+It reads that variable only when some rows failed an `"error"` rule.
 
-An asset without `quarantine=True` needs neither the context nor the directory:
+An asset without `filter=True` needs neither the context nor the directory:
 
 ```{python}
 #| label: testing-an-asset-2
@@ -119,7 +119,7 @@ events = list(daily_orders(dg.build_asset_context(partition_key="2026-01-02")))
 ```
 
 An asset that aborts raises the error from the call.
-Test the failure policy with `pytest.raises(dd.errors.ValidationAbortError)`, and a frame whose columns or dtypes differ from the schema with `pytest.raises(dd.errors.ColumnSchemaError)`.
+Test a failing `"error"` rule with `pytest.raises(dd.errors.ValidationAbortError)`, and a frame whose columns or dtypes differ from the schema with `pytest.raises(dd.errors.ColumnSchemaError)`.
 
 **Direct invocation does not support metadata added through the context.**
 `context.add_asset_metadata` raises when you call the asset directly:

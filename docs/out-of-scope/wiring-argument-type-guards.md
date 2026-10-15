@@ -1,24 +1,24 @@
 # Wiring Argument Type Guards
 
-`check_results` does not check the type of its `frame` argument.
+`asset_check_results` does not check the type of its `frame` argument.
 An argument of another type fails in `_column_schema_problems`, two calls below, on `collect_schema()`.
 
 `validation_results` calls `_require_frame`, and that guard is not a precedent.
 It exists for the decorator: Dagster does not check the decorated function's return value, which `dd.asset` passes to `validation_results`.
 Someone hand-wiring an asset gets the same check by calling the same function.
-In the documented use, a type checker or Dagster checks the frame passed to `check_results`, so that reason does not apply.
+In the documented use, a type checker or Dagster checks the frame passed to `asset_check_results`, so that reason does not apply.
 
 ## Why this is out of scope
 
 Proposed as [#124](https://github.com/ozanozbeker/dagster-dataframely/issues/124), reviewed on 2026-09-13, and rejected.
-It offered three options: one guard with one message for both callers, a separate guard for `check_results`, or no guard, with the reason written down.
+It offered three options: one guard with one message for both callers, a separate guard for `asset_check_results`, or no guard, with the reason written down.
 The maintainer chose the third.
 Measured on dagster 1.13.20, dataframely 3.0.0, polars 1.44.1.
 
 ### Dagster already checks the case the proposal named
 
 The proposal accepted that a type checker covers a hand-written call, and named the one case it does not: a frame that an IO manager loads.
-That is the case `check_results` exists for, so it mattered.
+That is the case `asset_check_results` exists for, so it mattered.
 
 Dagster covers it: it checks a loaded input against the check function's parameter annotation, before the function runs:
 
@@ -51,7 +51,7 @@ This is the main reason for the decision.
 The proposal named a vaguer message as the only drawback of the simplest option, one guard for both callers.
 The drawback is larger.
 `_require_frame` accepts `None` and returns, because `None` is the decorator's skip.
-`check_results` has to reject `None`: it writes nothing, so it has no partition to skip, and its annotation excludes the value.
+`asset_check_results` has to reject `None`: it writes nothing, so it has no partition to skip, and its annotation excludes the value.
 One function can do both only with a parameter that selects the behaviour, and its message would then state two meanings for one object.
 
 ### Hand-wiring composing one part is not a goal
@@ -64,7 +64,7 @@ A guard here would only help someone assembling `wiring` functions by hand.
 
 Two other guards look like precedents, and neither is one.
 
-The maintainer accepted [ADR-0008](../pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it) the same day, and it put `validate_namespace(schema)` at the top of `check_results`, one line above where this guard would have been.
+The maintainer accepted [ADR-0008](../pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it) the same day, and it put `validate_namespace(schema)` at the top of `asset_check_results`, one line above where this guard would have been.
 It rejects a property that no annotation can express.
 A schema declaring a `dy_` column satisfies `type[dy.Schema]`, and only reading its columns at run time shows the problem.
 

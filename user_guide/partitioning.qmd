@@ -20,10 +20,10 @@ from dagster_dataframely_demo.schema import Orders
 
 `dd.asset` passes `partitions_def` to `dg.asset` unchanged.
 Partitioning has no setting of its own.
-The writer writes the quarantine under the same partition key as the asset.
-A run of a clean partition writes that partition's quarantine empty and leaves every other partition's quarantine as it was.
+With `filter=True`, the writer writes the error rows under the same partition key as the asset.
+A run of a clean partition writes that partition's error rows empty and leaves every other partition's error rows as they were.
 Validation runs on each partition's frame separately.
-`dagster/row_count` is the number of valid rows in that partition.
+`dagster/row_count` is the number of rows written to that partition.
 If one partition's frame fails the column-schema check, no other partition's data changes.
 
 Every check has the asset's partitions.
@@ -98,7 +98,7 @@ The lazy form holds only the plan's output.
 The dict's keys and the validation are the same in both forms.
 
 **A `MultiPartitionsDefinition` needs nothing special either.**
-The quarantine uses the same partitions as the asset:
+The error rows use the same partitions as the asset:
 
 ```{python}
 #| label: partitioning-5
@@ -115,7 +115,7 @@ def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     return raw
 
 
-@dd.asset(Orders, partitions_def=grid, quarantine=True)
+@dd.asset(Orders, partitions_def=grid, filter=True)
 def priority_orders(
     context: dg.AssetExecutionContext, orders: pl.DataFrame
 ) -> pl.DataFrame:
@@ -138,7 +138,7 @@ A `UPathIOManager` writes one file per partition, with one path segment per dime
 orders/2026-01-01/eu.parquet
 orders/2026-01-01/us.parquet
 priority_orders/2026-01-01/eu.parquet
-priority_orders_quarantine/2026-01-01/eu.parquet
+priority_orders_error_rows/2026-01-01/eu.parquet
 ```
 
 **An unpartitioned asset downstream of a multi-partitioned one receives a flat dict, not a nested one.**
@@ -225,10 +225,10 @@ Dagster records these results with no `target_materialization_data`, so it never
 
 `dd.asset` passes `automation_condition` and `freshness_policy` to `dg.asset` unchanged, and they apply to the asset only.
 
-You cannot automate on the quarantine.
-The writer writes the invalid rows inside the asset's own step.
-The quarantine has no materialization events.
-So `dg.AutomationCondition.eager()` on a downstream asset never requests a run because of the quarantine, however you declare the dependency.
+You cannot automate on the error rows.
+The writer writes them inside the asset's own step.
+The error rows have no materialization events.
+So `dg.AutomationCondition.eager()` on a downstream asset never requests a run because of the error rows, however you declare the dependency.
 
 **Automate on the check instead.**
 Each failed rule is a failed asset check with its own history.
@@ -240,4 +240,4 @@ You can also add your own asset check to the asset:
 def triage_needed() -> dg.AssetCheckResult: ...
 ```
 
-Or read the quarantine on a schedule, through the spec `quarantine_spec` returns.
+Or read the error rows on a schedule, through the spec `error_rows_spec` returns.

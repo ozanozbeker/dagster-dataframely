@@ -28,11 +28,11 @@ _PARTITIONS = dg.StaticPartitionsDefinition(["clean", "mixed", "wrong"])
 _FRAMES = {"clean": clean_orders, "mixed": mixed_orders, "wrong": wrong_dtype_orders}
 
 _GOOD_KEY = dg.AssetKey(["orders"])
-_QUARANTINE_KEY = dg.AssetKey(["orders_quarantine"])
+_ERROR_ROWS_KEY = dg.AssetKey(["orders_error_rows"])
 _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 
 
-@dd.asset(Orders, name="orders", quarantine=True, partitions_def=_PARTITIONS)
+@dd.asset(Orders, name="orders", filter=True, partitions_def=_PARTITIONS)
 def _orders() -> pl.DataFrame:
     # `.get()` instead of a `context` parameter, so the suite also covers the accessor.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
@@ -47,7 +47,7 @@ class TestPartitionsDef:
     """The `partitions_def` on the asset spec and every check spec."""
 
     def test_the_asset_carries_its_partitioning(self):
-        """The only spec is the asset's, so the quarantine has no partitioning of its own."""
+        """The only spec is the asset's, so the error rows have no partitioning of their own."""
         assert {spec.key: spec.partitions_def for spec in _orders.specs} == {
             _GOOD_KEY: _PARTITIONS
         }
@@ -68,24 +68,24 @@ class TestPartitionRuns:
         )
         assert pl.read_parquet(tmp_path / "orders" / "mixed.parquet").height == 3
 
-    def test_the_quarantine_is_written_under_the_partition_that_produced_it(
+    def test_the_error_rows_is_written_under_the_partition_that_produced_it(
         self, tmp_path: Path
     ):
         result = materialize(tmp_path, _orders, partition_key="mixed")
 
         assert _partitions(result) == {_GOOD_KEY: "mixed"}
         assert (
-            pl.read_parquet(tmp_path / "orders_quarantine" / "mixed.parquet").height
+            pl.read_parquet(tmp_path / "orders_error_rows" / "mixed.parquet").height
             == 3
         )
 
-    def test_a_clean_rerun_empties_only_its_own_partitions_quarantine(
+    def test_a_clean_rerun_empties_only_its_own_partitions_error_rows(
         self, tmp_path: Path
     ):
         days = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 
         def orders(frame: Callable[[], pl.DataFrame]) -> dg.AssetsDefinition:
-            @dd.asset(Orders, name="orders", quarantine=True, partitions_def=days)
+            @dd.asset(Orders, name="orders", filter=True, partitions_def=days)
             def orders() -> pl.DataFrame:
                 return frame()
 
@@ -94,11 +94,11 @@ class TestPartitionRuns:
         materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-02")
         materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-03")
         result = materialize(tmp_path, orders(clean_orders), partition_key="2026-01-03")
-        quarantine = tmp_path / "orders_quarantine"
+        filtering = tmp_path / "orders_error_rows"
 
         assert _partitions(result) == {_GOOD_KEY: "2026-01-03"}
-        assert pl.read_parquet(quarantine / "2026-01-02.parquet").height == 3
-        assert pl.read_parquet(quarantine / "2026-01-03.parquet").height == 0
+        assert pl.read_parquet(filtering / "2026-01-02.parquet").height == 3
+        assert pl.read_parquet(filtering / "2026-01-03.parquet").height == 0
 
     # No row-count test: `dagster-polars` overwrites `dagster/row_count`, so `test_asset_runtime.py` tests it.
 

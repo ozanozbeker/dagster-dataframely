@@ -55,8 +55,8 @@ Dagster cannot run partitioned and unpartitioned assets together, so `daily_orde
 | | `raw_legacy_orders` | A one-off export from the old platform, which stored refunds as negative amounts. |
 | `silver` | **`orders`** | **Start here.** The Columns tab, filled from the schema before the first run. 24 checks, including the blocking column-schema check. Statistics and a row sample on the materialization. |
 | | `customers` | Three columns and eight checks make it the README's first example and the smallest use of the package. |
-| | `marketing_orders` | The marketplace feed with `quarantine=True`: seven checks fail at `WARN`, and the run writes the eight invalid lines to `marketing_orders_quarantine` and succeeds. |
-| | `finance_orders` | The same feed with no quarantine: the checks fail at `ERROR`, and the run raises `ValidationAbortError` and writes nothing. |
+| | `marketing_orders` | The marketplace feed with `filter=True`: seven checks fail at `WARN`, and the run writes the eight invalid lines to `marketing_orders_error_rows` and succeeds. |
+| | `finance_orders` | The same feed with `filter=False`: the checks fail at `ERROR`, and the run raises `ValidationAbortError` and writes nothing. |
 | | `partner_orders` | The blocking `dy_schema__columns` check fails on `quantity`, and the run raises `ColumnSchemaError` before `Schema.filter` runs. |
 | | `legacy_orders` | Every row fails validation, so the run writes no table, not even an empty one, and raises `NoValidRowsError`. It uses `schema` granularity, so one check reports for every rule. |
 | | `daily_orders` | It has five daily partitions, at `column` granularity. |
@@ -66,7 +66,7 @@ Dagster cannot run partitioned and unpartitioned assets together, so `daily_orde
 | | `high_value_orders` | A lazy input and a lazy return, validated in one pass. |
 | | `orders_snapshot` | A returned `dg.MaterializeResult`, whose metadata, tags and data version the package copies onto the materialization. |
 
-The three quarantines appear beside their assets in `silver`.
+The error rows of the three assets with `filter=True` appear beside them in `silver`.
 The lineage view draws them with a dashed outline, because nothing materializes them.
 
 ## The code
