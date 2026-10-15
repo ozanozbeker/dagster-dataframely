@@ -186,7 +186,10 @@ def file_writer(
 
 
 def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
-    """Return a writer that calls `delegating_writer` in a run and `file_writer` otherwise."""
+    """Return a writer that calls `delegating_writer` in a run and `file_writer` otherwise.
+
+    Without a step it skips a zero-row frame, so a clean call needs no `quarantine_dir`.
+    """
 
     def address(frame: pl.DataFrame) -> str:
         try:
@@ -195,6 +198,8 @@ def quarantine_writer(context: dg.AssetExecutionContext) -> QuarantineWriter:
             pass
         else:
             return delegating_writer(context)(frame)
+        if frame.is_empty():
+            return ""
         quarantine_dir: str | None = QUARANTINE_DIR.resolve(None)
         if quarantine_dir is None:
             raise QuarantineDirError(context.asset_key.to_user_string())

@@ -131,7 +131,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     valid_key
         The key the run materializes the valid rows under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
     quarantine_writer
-        The writer for the invalid rows, called at most once, with the frame `quarantine_frame` returns. With `None`, any invalid row fails the run with `ValidationAbortError`, and the asset writes nothing.
+        The writer for the invalid rows, called at most once, with the frame `quarantine_frame` returns. When no row fails, it receives zero rows. With `None`, any invalid row fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
         Pass the value `check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
@@ -219,6 +219,9 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         )
 
     if not invalid_count:
+        if quarantine_writer is not None:
+            # An IO manager has no delete, so only an empty write replaces the last run's rows.
+            quarantine_writer(quarantine_frame(schema, failure))
         yield valid_result()
         yield from checks
         return

@@ -74,7 +74,7 @@ flowchart TD
     CS -- no --> DRIFT["nothing written<br/>dy_schema__columns fails, ERROR<br/>rules never evaluated<br/>run fails, ColumnSchemaError"]
     CS -- yes --> FILTER["Schema.filter"]
     FILTER --> ANY{"any invalid rows?"}
-    ANY -- no --> CLEAN["table written<br/>every check passes<br/>run succeeds"]
+    ANY -- no --> CLEAN["table written<br/>quarantine written empty, if passed<br/>every check passes<br/>run succeeds"]
     ANY -- yes --> Q{"quarantine_writer passed?"}
     Q -- no --> ABORT["nothing written<br/>failing checks ERROR<br/>run fails, ValidationAbortError"]
     Q -- yes --> SURV{"any valid rows left?"}
@@ -87,6 +87,7 @@ flowchart TD
 **The quarantine.**
 `validation_results` takes a `QuarantineWriter`: a function that receives the invalid rows, writes them and returns the quarantine address.
 The address is a string, not a path, because it can name a database table.
+When no row fails, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's invalid rows.
 
 In a run, `dd.asset` uses `delegating_writer(context)`.
 It passes the rows to the asset's own IO manager, under the asset key `<name>_quarantine`.

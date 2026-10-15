@@ -21,7 +21,7 @@ There is no lenient mode and no strict flag.
 | what the function returned | the table | the quarantine | checks | run |
 | --- | --- | --- | --- | --- |
 | columns or dtypes that are not the schema's | not written | not written | the column-schema check fails, blocking | fails, `ColumnSchemaError` |
-| every row valid | written | not written | all pass | succeeds |
+| every row valid | written | written empty, if declared | all pass | succeeds |
 | some rows failed, no quarantine declared | not written | n/a | fail at `ERROR` | fails, `ValidationAbortError` |
 | some rows failed, quarantine declared | the valid rows | the invalid rows | fail at `WARN` | succeeds |
 | every row failed, quarantine declared | not written | every row | fail at `ERROR` | fails, `NoValidRowsError` |

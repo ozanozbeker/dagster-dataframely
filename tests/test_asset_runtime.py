@@ -833,12 +833,15 @@ class TestOutcomeSelection:
         """Return the check results except the column-schema check's, whose severity the outcome does not set."""
         return [c for c in cls._checks(yielded) if c.check_name != "dy_schema__columns"]
 
-    def test_a_clean_frame_never_calls_a_declared_writer(self):
+    def test_a_clean_frame_writes_an_empty_quarantine_with_every_column(self):
         yielded, written, error = self._drained(clean_orders(), quarantine=True)
+        _, dirty, _ = self._drained(mixed_orders(), quarantine=True)
 
         assert error is None
         assert list(results(yielded)) == [self.VALID]
-        assert written == []
+        (empty,) = written
+        assert empty.is_empty()
+        assert empty.schema == dirty[0].schema
 
     def test_a_clean_frame_says_nothing_about_invalid_rows(self):
         """A clean run omits the four invalid-row keys instead of setting them to zero."""

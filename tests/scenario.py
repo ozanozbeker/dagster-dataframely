@@ -34,28 +34,34 @@ def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:
 
 
 class Table(NamedTuple):
-    """A warehouse table's column names and row count, not its values: Polars loads DuckDB's INTERVAL only with an unstable environment variable set."""
+    """A warehouse table's column names, column types and row count, not its values: Polars loads DuckDB's INTERVAL only with an unstable environment variable set."""
 
     columns: list[str]
     height: int
+    types: list[str]
 
 
 def tables(tmp_path: Path) -> dict[str, Table]:
     """Describe every table a `warehouse` run wrote, keyed by name."""
     with duckdb.connect(str(tmp_path / "warehouse.duckdb")) as connection:
         columns: dict[str, list[str]] = {}
-        for name, column in connection.sql(
-            "select table_name, column_name from information_schema.columns "  # noqa: S608
+        types: dict[str, list[str]] = {}
+        for name, column, dtype in connection.sql(
+            "select table_name, column_name, data_type from information_schema.columns "  # noqa: S608
             f"where table_schema = '{WAREHOUSE_SCHEMA}' order by ordinal_position"
         ).fetchall():
             columns.setdefault(name, []).append(column)
+            types.setdefault(name, []).append(dtype)
         heights = {
             name: connection.sql(
                 f"select count(*) from {WAREHOUSE_SCHEMA}.{name}"  # noqa: S608
             ).pl()["count_star()"][0]
             for name in columns
         }
-        return {name: Table(names, heights[name]) for name, names in columns.items()}
+        return {
+            name: Table(names, heights[name], types[name])
+            for name, names in columns.items()
+        }
 
 
 Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]

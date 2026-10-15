@@ -56,6 +56,11 @@ Check samples have at most `max_failure_samples` rows per rule, so the rule colu
 The table's materialization has the quarantine address, the number of invalid rows, and which sets of rules they failed together.
 See [What a run produces](what-a-run-produces.qmd).
 
+**A run with no invalid rows writes the quarantine empty**, so it no longer has the last run's invalid rows.
+An empty quarantine has the same columns as one with rows.
+So a quarantine that exists does not mean rows failed.
+Read its row count, or check whether the materialization has `dataframely/invalid_count`.
+
 **A partitioned asset on a database IO manager needs `partition_expr`.**
 `DbIOManager` raises an error without it, so you already set it for the asset's own table.
 The quarantine write uses the same value.
@@ -115,7 +120,7 @@ DAGSTER_DATAFRAMELY_QUARANTINE_DIR=/tmp/quarantine
 
 The package reads the directory when it writes the invalid rows, not when the module imports.
 So a `monkeypatch.setenv` in a test takes effect even though Python imported the module that defines the asset earlier.
-A call where every row is valid never reads it.
+A call where every row is valid never reads it and writes no file.
 
 If the variable is unset, a call with invalid rows raises `QuarantineDirError`.
 There is no default directory.

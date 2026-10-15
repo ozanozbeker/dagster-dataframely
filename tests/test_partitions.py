@@ -4,6 +4,7 @@ Some tests pin Dagster's own behaviour, so a Dagster release that changes it fai
 Most tests use static partitions, whose keys name the frame the asset returns for each partition.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import dagster as dg
@@ -70,11 +71,24 @@ def test_the_quarantine_is_written_under_the_partition_that_produced_it(tmp_path
     assert pl.read_parquet(tmp_path / "orders_quarantine" / "mixed.parquet").height == 3
 
 
-def test_a_clean_partition_skips_the_quarantine(tmp_path: Path):
-    result = materialize(tmp_path, _orders, partition_key="clean")
+def test_a_clean_rerun_empties_only_its_own_partitions_quarantine(tmp_path: Path):
+    days = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 
-    assert set(_partitions(result)) == {_GOOD_KEY}
-    assert not (tmp_path / "orders_quarantine").exists()
+    def orders(frame: Callable[[], pl.DataFrame]) -> dg.AssetsDefinition:
+        @dd.asset(Orders, name="orders", quarantine=True, partitions_def=days)
+        def orders() -> pl.DataFrame:
+            return frame()
+
+        return orders
+
+    materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-02")
+    materialize(tmp_path, orders(mixed_orders), partition_key="2026-01-03")
+    result = materialize(tmp_path, orders(clean_orders), partition_key="2026-01-03")
+    quarantine = tmp_path / "orders_quarantine"
+
+    assert _partitions(result) == {_GOOD_KEY: "2026-01-03"}
+    assert pl.read_parquet(quarantine / "2026-01-02.parquet").height == 3
+    assert pl.read_parquet(quarantine / "2026-01-03.parquet").height == 0
 
 
 # No row-count test: `dagster-polars` overwrites `dagster/row_count`, so `test_asset_runtime.py` tests it.

@@ -457,6 +457,49 @@ def test_a_database_manager_puts_the_quarantine_in_a_table_beside_it(
     assert "dy_rule__amount__min" in written["orders_quarantine"].columns
 
 
+def test_a_clean_rerun_empties_the_quarantine_file(tmp_path: Path):
+    path = tmp_path / WAREHOUSE_SCHEMA / "orders_quarantine.parquet"
+    _run(
+        _delegating(mixed_orders, partitioned=False),
+        storage(tmp_path),
+        partitioned=False,
+        aborts=False,
+    )
+    dirty = pl.read_parquet(path)
+
+    _run(
+        _delegating(clean_orders, partitioned=False),
+        storage(tmp_path),
+        partitioned=False,
+        aborts=False,
+    )
+    clean = pl.read_parquet(path)
+
+    assert clean.is_empty()
+    assert clean.schema == dirty.schema
+
+
+def test_a_clean_rerun_empties_the_quarantine_table(tmp_path: Path):
+    _run(
+        _delegating(mixed_orders, partitioned=False),
+        warehouse(tmp_path),
+        partitioned=False,
+        aborts=False,
+    )
+    dirty = tables(tmp_path)["orders_quarantine"]
+
+    _run(
+        _delegating(clean_orders, partitioned=False),
+        warehouse(tmp_path),
+        partitioned=False,
+        aborts=False,
+    )
+    clean = tables(tmp_path)["orders_quarantine"]
+
+    assert clean.height == 0
+    assert (clean.columns, clean.types) == (dirty.columns, dirty.types)
+
+
 def test_a_run_delegates_without_reading_the_quarantine_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

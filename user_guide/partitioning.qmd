@@ -21,6 +21,7 @@ from dagster_dataframely_demo.schema import Orders
 `dd.asset` passes `partitions_def` to `dg.asset` unchanged.
 Partitioning has no setting of its own.
 The writer writes the quarantine under the same partition key as the asset.
+A run of a clean partition writes that partition's quarantine empty and leaves every other partition's quarantine as it was.
 Validation runs on each partition's frame separately.
 `dagster/row_count` is the number of valid rows in that partition.
 If one partition's frame fails the column-schema check, no other partition's data changes.

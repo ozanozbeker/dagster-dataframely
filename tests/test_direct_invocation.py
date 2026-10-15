@@ -178,6 +178,16 @@ def test_a_call_with_every_row_valid_needs_no_root_at_all():
     assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
 
 
+def test_a_call_with_every_row_valid_writes_nothing_under_quarantine_dir(
+    quarantine_dir: Path,
+):
+    asset = _orders(clean_orders, quarantine=True)
+
+    _called(asset, quarantine=True)
+
+    assert not quarantine_dir.exists()
+
+
 def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
