@@ -90,9 +90,15 @@ It lists the schema's columns with their dtypes, descriptions and tags, then one
 The invalid rows can fail any of the schema's constraints, so a `not null` on a column full of nulls would be false.
 The primary key is absent too, because the writer writes rows with a duplicate key to the quarantine.
 
-Pass `quarantine_spec` the asset definition, and the spec uses its partitions.
+Pass `quarantine_spec` the asset definition, and the spec uses its partitions and its asset group.
+So the catalog lists the quarantine in the same group as the asset.
 Pass an asset key instead, and set the partitions with `partitions_def=`.
 Passing both an asset definition and `partitions_def=` raises `dg.DagsterInvariantViolationError`.
+
+`group_name=` sets the quarantine's group.
+With an asset definition, it overrides the asset's group and does not raise.
+For example, pass `group_name="quarantine"` on every call to list all the quarantines in one group.
+With an asset key and no `group_name=`, the quarantine is in the `default` group.
 
 **The quarantine never receives a materialization event, even with a spec.**
 If you want to automate on invalid rows, see [Automation](partitioning.qmd#automation).

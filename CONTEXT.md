@@ -261,3 +261,4 @@ Say what the code does instead.
 | materialize | Dagster's materialization | collect, for running a Polars plan |
 | job | a Dagster job | what has to happen |
 | rule | a Dataframely rule | convention, condition |
+| group | a Dagster asset group, which `group_name` sets | dtype group, for Polars' set of dtypes |

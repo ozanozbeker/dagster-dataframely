@@ -168,6 +168,28 @@ def test_the_spec_takes_the_partitions_off_the_definition():
     assert quarantine_spec(Orders, orders).partitions_def == _DAYS
 
 
+@dg.asset(group_name="sales")
+def grouped_orders() -> None:
+    """Customer orders in the `sales` group."""
+
+
+def test_the_spec_takes_the_group_off_the_definition():
+    assert quarantine_spec(Orders, grouped_orders).group_name == "sales"
+
+
+def test_a_group_name_overrides_the_definitions_group():
+    spec = quarantine_spec(Orders, grouped_orders, group_name="quarantine")
+
+    assert spec.group_name == "quarantine"
+
+
+def test_the_quarantine_is_in_its_parents_group_in_the_asset_graph():
+    spec = quarantine_spec(Orders, grouped_orders)
+    graph = dg.Definitions(assets=[grouped_orders, spec]).resolve_asset_graph()
+
+    assert graph.get(spec.key).group_name == "sales"
+
+
 def test_the_description_names_the_asset_the_rows_came_from():
     description = quarantine_spec(Orders, orders).description
 
@@ -251,6 +273,22 @@ def test_a_key_form_takes_the_partitions_it_is_given(
     form: dg.AssetKey | Sequence[str],
 ):
     assert quarantine_spec(Orders, form, partitions_def=_DAYS).partitions_def == (_DAYS)
+
+
+@pytest.mark.parametrize(
+    "form",
+    [dg.AssetKey(["orders"]), ["orders"], "orders"],
+    ids=["asset_key", "sequence", "string"],
+)
+def test_a_key_form_takes_the_group_it_is_given(form: dg.AssetKey | Sequence[str]):
+    assert quarantine_spec(Orders, form, group_name="silver").group_name == "silver"
+
+
+def test_a_key_form_with_no_group_is_in_the_default_group():
+    spec = quarantine_spec(Orders, "orders")
+    graph = dg.Definitions(assets=[spec]).resolve_asset_graph()
+
+    assert graph.get(spec.key).group_name == "default"
 
 
 def test_a_definition_and_a_partitions_def_together_raise():

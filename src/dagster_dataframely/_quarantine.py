@@ -212,6 +212,7 @@ def quarantine_spec(
     asset: dg.AssetsDefinition | dg.AssetKey | str | Sequence[str],
     *,
     partitions_def: dg.PartitionsDefinition | None = None,
+    group_name: str | None = None,
 ) -> dg.AssetSpec:
     """Return an asset spec that adds an asset's quarantine to the asset graph.
 
@@ -220,9 +221,11 @@ def quarantine_spec(
     Parameters
     ----------
     asset
-        The asset the invalid rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions.
+        The asset the invalid rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions and group.
     partitions_def
         The quarantine's partitions, when `asset` is a key.
+    group_name
+        The quarantine's asset group. A definition's group is the default, and a value overrides it. Unlike `partitions_def`, passing it with a definition does not raise, because the group sets only where the catalog lists the quarantine.
 
     Returns
     -------
@@ -272,6 +275,8 @@ def quarantine_spec(
             both = f"`quarantine_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
             raise dg.DagsterInvariantViolationError(both)
         parent, partitions_def = asset.key, asset.partitions_def
+        if group_name is None:
+            group_name = asset.group_names_by_key[parent]
     else:
         parent = asset if isinstance(asset, dg.AssetKey) else dg.AssetKey(asset)
 
@@ -282,4 +287,5 @@ def quarantine_spec(
         description=f"Invalid rows from {rendered}, with one column per rule.",
         metadata=quarantine_metadata(schema),
         partitions_def=partitions_def,
+        group_name=group_name,
     )
