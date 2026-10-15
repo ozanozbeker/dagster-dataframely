@@ -285,7 +285,7 @@ Definition metadata is never copied into the materialization event: an asset dec
 `execute_step.py:591` merges `{**output.metadata, **io_manager_metadata}`, so an IO manager beats `Output(metadata=)`, `MaterializeResult(metadata=)` and `add_output_metadata`.
 Line 591 is not the last word: `execute_step.py:650-653` layers `context.add_asset_metadata()` over that, and `658-663` layers the partition-scoped call over that again.
 
-This is why `tests/test_upstream_characterization.py::test_dagster_polars_writes_its_own_row_count_over_the_steps` exists.
+This is why `tests/test_upstream_characterization.py::TestDagster::test_dagster_polars_writes_its_own_row_count_over_the_steps` exists.
 `dd.asset` returns `dg.MaterializeResult(value=..., metadata={"dagster/row_count": ...})`, which is the weakest position, so `PolarsParquetIOManager` writes its own count over it.
 The tests assert this package's count on what `validation_results` yields, not on the event.
 One trap when reproducing this: a `MaterializeResult` with no `value` and an `Any` output type skips the IO manager entirely, so it appears to take precedence only because nothing competed.
@@ -340,7 +340,7 @@ The writer writes the quarantine under the same partition key as the asset.
 All four are pinned in `tests/test_partitions.py` and stated in `user_guide/partitioning.qmd`.
 
 One provenance detail changed.
-`PolarsParquetIOManager` writes its own `dagster/row_count` over the step's, pinned by `tests/test_upstream_characterization.py::test_dagster_polars_writes_its_own_row_count_over_the_steps`, so the catalog value comes from the bound manager.
+`PolarsParquetIOManager` writes its own `dagster/row_count` over the step's, pinned by `tests/test_upstream_characterization.py::TestDagster::test_dagster_polars_writes_its_own_row_count_over_the_steps`, so the catalog value comes from the bound manager.
 It equals the valid rows either way, because the manager counts the frame it writes.
 
 #### Asset checks have the asset's partitions
@@ -433,7 +433,7 @@ Measured at #118: two lazy `sink_parquet` nodes and one aggregate pull the sourc
 
 At #118, on 2M rows with three injected duplicates and 10% `min` failures, the streaming `collect_all` returned the same `counts()`, the same valid rows in the same order and the same invalid rows as the eager path.
 Polars documents a fallback to the in-memory engine for any operation the streaming engine does not support, so naming an engine never fails a plan.
-`tests/test_upstream_characterization.py::test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine` pins both facts: `collect_all` exists only on the lazy result, and polars raises `Invalid engine argument` for a name it does not accept, which proves the argument is forwarded.
+`tests/test_upstream_characterization.py::TestDataframely::test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine` pins both facts: `collect_all` exists only on the lazy result, and polars raises `Invalid engine argument` for a name it does not accept, which proves the argument is forwarded.
 
 #### Dataframely's lazy-validation guide was stale, and still is
 
@@ -470,7 +470,7 @@ Disk staging is gone, and the fact it established now carries a different weight
 #### Schema.filter projects to the schema's columns, in the schema's order
 
 This was listed as not investigated while promoting a staged file was under consideration.
-It is now answered and pinned by `tests/test_upstream_characterization.py::test_filter_projects_a_superset_to_the_schemas_columns_in_order`, on both the eager and the lazy path.
+It is now answered and pinned by `tests/test_upstream_characterization.py::TestDataframely::test_filter_projects_a_superset_to_the_schemas_columns_in_order`, on both the eager and the lazy path.
 Dataframely does not document it, and `user_guide/the-failure-policy.qmd` states it.
 
 ### The cost of DescribedRule records
