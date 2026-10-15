@@ -45,11 +45,12 @@ The file is long because it covers a lot, not because the closure makes anything
 
 ## This is not #65
 
-[#65](https://github.com/ozanozbeker/dagster-dataframely/issues/65) would pass all six settings as one resolved value, and it stays open at its full scope.
+[#65](https://github.com/ozanozbeker/dagster-dataframely/issues/65) would have passed the settings as one resolved value.
+[One resolved settings value](one-settings-value.md) records its rejection, for reasons of its own.
 
-It changes how `dd.asset` passes the settings, and keeps both `_rule_sets` calls.
+It would have changed how `dd.asset` passes the settings, and kept both `_rule_sets` calls.
 This proposal would have changed what `dd.asset` passes: with the grouping fixed at definition time, a run would never receive the two check settings.
-This note does not reject passing one resolved value, only fixing the grouping as the reason to build one.
+The case below that would reopen this proposal would also reopen #65.
 
 ## If someone proposes this again
 
