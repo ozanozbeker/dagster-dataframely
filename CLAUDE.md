@@ -91,6 +91,19 @@ Use Polars' `with_*` prefix instead: `with_returned_fields` returns the same res
 
 Avoid `apply_*`, `add_*`, `enrich_*`.
 
+## Tests
+
+A test file groups its tests into classes when it asserts against more than one target.
+A file with one target stays flat.
+
+A target is what a group of tests asserts against, such as the check specs of an `AssetsDefinition` or a run with no valid rows.
+
+Name a class `Test` plus its target, such as `TestCheckSpecs` or `TestSkip`.
+Its docstring is one sentence naming the target.
+
+Only tests go in a class.
+Fixtures, helpers and schemas stay at module level, because the classes in a file share most of them.
+
 ## Design priority
 
 End user first, maintainer legibility second, and convenience for hand-wiring is never a goal.
