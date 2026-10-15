@@ -113,7 +113,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     io_manager_key
         In a run, `delegating_writer` passes the invalid rows to the same IO manager.
     partitions_def
-        The writer writes the quarantine under the same partition key.
+        The writer writes the quarantine under the same partition key, and every check spec has the same partitions.
 
     Returns
     -------
@@ -273,6 +273,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             check_specs=check_specs(
                 schema,
                 asset=key,
+                partitions_def=partitions_def,
                 check_granularity=granularity,
                 schema_rules=schema_rule_checks,
             ),

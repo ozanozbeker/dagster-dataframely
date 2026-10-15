@@ -49,6 +49,10 @@ def test_the_asset_carries_its_partitioning():
     }
 
 
+def test_every_check_has_the_assets_partitioning():
+    assert all(spec.partitions_def == _PARTITIONS for spec in _orders.check_specs)
+
+
 def test_each_partition_materializes_its_own_frame(tmp_path: Path):
     assert materialize(tmp_path, _orders, partition_key="clean").success
     assert materialize(tmp_path, _orders, partition_key="mixed").success
@@ -115,20 +119,21 @@ def test_a_drifting_partition_leaves_every_other_partition_alone(tmp_path: Path)
         ("wrong", {"dy_schema__columns"}),
     ],
 )
-def test_every_partition_reports_its_own_checks_and_names_no_partition(
+def test_every_partition_reports_its_own_checks_under_its_partition(
     tmp_path: Path, partition_key: str, failing: set[str]
 ):
-    """Dagster records a partition on a check evaluation only when the check spec has a `partitions_def`, a preview API this package does not use."""
     result = materialize(
         tmp_path, _orders, partition_key=partition_key, raise_on_error=False
     )
     evaluations = check_evaluations(result)
 
     assert {name for name, e in evaluations.items() if not e.passed} == failing
-    assert all(e.partition is None for e in evaluations.values())
+    assert all(e.partition == partition_key for e in evaluations.values())
 
 
-def test_a_backfill_appends_every_partition_to_one_check_history(tmp_path: Path):
+def test_a_clean_partition_run_last_keeps_the_dirty_partitions_failure(
+    tmp_path: Path,
+):
     with dg.DagsterInstance.ephemeral() as instance:
         materialize(tmp_path, _orders, partition_key="mixed", instance=instance)
         materialize(tmp_path, _orders, partition_key="clean", instance=instance)
@@ -143,41 +148,14 @@ def test_a_backfill_appends_every_partition_to_one_check_history(tmp_path: Path)
             if isinstance(record.evaluation, dg.AssetCheckEvaluation)
         ]
 
-        assert [e.passed for e in evaluations] == [True, False]
-        assert all(e.partition is None for e in evaluations)
+        assert [(e.partition, e.passed) for e in evaluations] == [
+            ("clean", True),
+            ("mixed", False),
+        ]
 
 
-def test_a_history_row_is_traceable_to_its_partition_through_the_materialization(
-    tmp_path: Path,
-):
-    """Dagster sets `target_materialization_data` to the step's partitioned materialization, even for an unpartitioned check."""
-    with dg.DagsterInstance.ephemeral() as instance:
-        materialize(tmp_path, _orders, partition_key="mixed", instance=instance)
-        materialize(tmp_path, _orders, partition_key="clean", instance=instance)
-
-        latest = instance.event_log_storage.get_asset_check_execution_history(
-            check_key=_AMOUNT_MIN, limit=1
-        )[0].evaluation
-        assert isinstance(latest, dg.AssetCheckEvaluation)
-        assert latest.target_materialization_data is not None
-
-        materializations = instance.fetch_materializations(
-            dg.AssetRecordsFilter(asset_key=_GOOD_KEY), limit=10
-        ).records
-        partition_by_storage_id = {
-            record.storage_id: record.partition_key for record in materializations
-        }
-
-        assert (
-            partition_by_storage_id[latest.target_materialization_data.storage_id]
-            == "clean"
-        )
-
-
-def test_a_time_window_partition_leaves_the_planned_check_row_unresolved(
-    tmp_path: Path,
-):
-    """Dagster writes the result as a second row, because the planned row has the partition and the result has none."""
+def test_a_time_window_partition_resolves_its_planned_check_row(tmp_path: Path):
+    """Dagster updates the planned row in place, because the planned row and the result have the same partition."""
     daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
     @dd.asset(Orders, name="daily_orders", partitions_def=daily)
@@ -194,9 +172,8 @@ def test_a_time_window_partition_leaves_the_planned_check_row_unresolved(
             check_key=check_key, limit=10
         )
 
-    assert [record.partition for record in history] == [None, "2026-01-01"]
+    assert [record.partition for record in history] == ["2026-01-01"]
     assert isinstance(history[0].evaluation, dg.AssetCheckEvaluation)
-    assert not isinstance(history[1].evaluation, dg.AssetCheckEvaluation)
 
 
 def test_a_single_run_backfill_is_rejected_by_the_io_manager(tmp_path: Path):

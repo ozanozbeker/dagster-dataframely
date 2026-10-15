@@ -328,7 +328,7 @@ It reads the materialization bucket only, so it never fires on this package's de
 ### Partitioned assets
 
 Issue #25 asked what a partitioned asset actually does, because partitioning was forwarded rather than designed for.
-It works, and it needed no code.
+It works, and the one change it needed is the check specs' partitions, below.
 `tests/test_partitions.py` is the durable half: 17 tests, all passing, covering the two claims that are Dagster's behaviour rather than this package's.
 
 #### Everything the package does per partition holds
@@ -343,47 +343,30 @@ One provenance detail changed.
 `PolarsParquetIOManager` writes its own `dagster/row_count` over the step's, pinned by `tests/test_upstream_characterization.py::test_dagster_polars_writes_its_own_row_count_over_the_steps`, so the catalog value comes from the bound manager.
 It equals the valid rows either way, because the manager counts the frame it writes.
 
-#### Asset checks are not partitioned, and this is the one finding still worth acting on
+#### Asset checks have the asset's partitions
 
 `dg.AssetCheckResult` has no partition field.
-Dagster fills the evaluation's partition only when the check's own spec has a `partitions_def`, which this package does not set.
-So every evaluation on a partitioned asset has `partition=None`, and one history accumulates per asset and check pair rather than one per partition.
-The last partition to run owns every rule's latest state, so a backfill ending on a clean partition hides a dirty one, and a backfill ending on a dirty partition marks the rule failed for an asset that is mostly fine.
+Dagster fills the evaluation's partition only when the check's own spec has a `partitions_def`.
+Without one, every evaluation on a partitioned asset had `partition=None`, and one history accumulated per asset and check pair.
+The last partition to run then set every rule's latest state, so a backfill ending on a clean partition hid a dirty one.
 
-The invalid rows are never lost.
-The quarantine is written per partition with full per-row attribution, and only the checks are coarse.
-Attribution by hand is possible: `target_materialization_data` is scoped to the step's partition, so a history row points at exactly one materialization, and that materialization has its partition key.
+A time-window partition also stranded a planned check row.
+Dagster writes a planned row per check when the run starts, keyed by the run's partition, and `_update_asset_check_evaluation` matches the result on `(asset_key, check_name, run_id, partition)`.
+A result with `partition=None` missed that row and was inserted as a second one, so a per-partition check view read never-executed on an asset whose checks all ran.
+A stock `@dg.asset` with one `check_spec` reproduced it, and issue #32 closed without an upstream issue.
 
-Three tests pin this: `test_every_partition_reports_its_own_checks_and_names_no_partition`, `test_a_backfill_appends_every_partition_to_one_check_history`, and `test_a_history_row_is_traceable_to_its_partition_through_the_materialization`.
+`check_specs` gives every spec the asset's `partitions_def`, which fixes both.
+`test_every_partition_reports_its_own_checks_under_its_partition`, `test_a_clean_partition_run_last_keeps_the_dirty_partitions_failure` and `test_a_time_window_partition_resolves_its_planned_check_row` pin the result.
+Adoption deletes nothing: a check key's history stays continuous across the switch, the per-partition view starts empty and refills as each partition next runs, and one `partition_key=None` entry stays behind.
 
-#### A time-window partition strands a planned check row
+Dagster marks the parameter preview, so a partitioned asset emits `PreviewWarning` when it is defined.
+Issue #31 first waited for GA, because the `dagster` floor has no upper bound and a patch release may change a preview parameter.
+It shipped before GA, because Dagster's guide documents partitioned checks.
+`test_a_partitioned_asset_check_spec_warns_preview` asserts the whole warning list, so the suite fails when upstream promotes the parameter, and the failure message tells beta from GA.
 
-A static partitions definition records one history row per run.
-A daily one records two, and the second never resolves.
-Dagster writes a planned row per check when the run starts, keyed by the partitions subset the run has, and a time-window run has one where a static run has `None`.
-The evaluation then arrives with `partition=None`, `_update_asset_check_evaluation` matches on `(asset_key, check_name, run_id, partition)`, the partition clause misses, and the result is inserted as a second row.
-A per-partition check view then reads never-executed on an asset whose checks all ran.
-
-None of this is the package's doing: a stock `@dg.asset` with one `check_spec` and a daily partitions definition reproduces it.
-`test_a_time_window_partition_leaves_the_planned_check_row_unresolved` pins it.
-The `DeprecationWarning` from `datetime.utcfromtimestamp` inside Dagster's SQL event log still fires on 1.13.24, 21 times across the partition suite.
-Issue #32 closed without an upstream issue.
-
-#### The fix exists and waits on GA, not on the end of preview
-
-`dg.AssetCheckSpec` accepts a `partitions_def`, and giving it the asset's own closes both findings together: the history is keyed per partition and no planned row is stranded.
-Adoption was measured and is small.
-Nothing is deleted, a check key's history stays continuous across the switch, the per-partition view starts empty and refills as each partition next runs, and what is left behind is a single `partition_key=None` entry that does not grow with how long adoption is deferred.
-
-Constructing that spec still emits `PreviewWarning` on dagster 1.13.24, asserted as the whole warning list by `test_a_partitioned_asset_check_spec_is_still_in_preview`, so the suite fails when upstream promotes the parameter and the failure message tells beta from GA.
-The floor moved from `dagster>=1.13.16` to `dagster>=1.13.24` and still has no upper bound, which is the reason to wait: a preview parameter that changes in a patch release would break a user's asset through no action of their own.
-Beta permits the same behaviour changes under a quieter name, so the trigger is GA.
-Tracked as issue #31, the only follow-up from this work still open.
-
-Two properties of the parameter itself got tests, because they are properties of the surface rather than of adopting it.
+Two properties of the parameter have their own tests in `tests/test_upstream_characterization.py`.
 A blocking check takes a `partitions_def`, stamps its partition and still ends the run when it fails, so the column-schema check needs no carve-out.
-And Dagster does not enforce its own documented constraint that a spec's partitioning match its asset's, at construction, attach, load or run.
-Both are in `tests/test_upstream_characterization.py`.
+And Dagster does not enforce its documented constraint that a spec's partitioning match its asset's, at construction, attach, load or run, so `check_specs` does not check it either.
 
 #### A single-run backfill raises before it writes
 

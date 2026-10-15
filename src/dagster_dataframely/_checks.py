@@ -111,6 +111,7 @@ def check_specs(
     *,
     # `dagster` has no alias for this union.
     asset: str | dg.AssetKey,
+    partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
 ) -> list[dg.AssetCheckSpec]:
@@ -118,6 +119,8 @@ def check_specs(
 
     Parameters
     ----------
+    partitions_def
+        The asset's partitions, so each check evaluation records its partition. Dagster does not check that it matches the asset's.
     check_granularity
         How many checks report the schema's rules. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
@@ -140,17 +143,22 @@ def check_specs(
     """
     validate_namespace(schema)
     rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity, schema_rules)
+    # Dagster's guide documents partitioned checks, so this passes `partitions_def` despite its `PreviewWarning`.
     column_schema = dg.AssetCheckSpec(
         COLUMN_SCHEMA_CHECK,
         asset=asset,
         description=f"Columns and dtypes match {schema.__name__}.",
         blocking=True,
+        partitions_def=partitions_def,
     )
     return [
         column_schema,
         *(
             dg.AssetCheckSpec(
-                rule_set.name, asset=asset, description=rule_set.description
+                rule_set.name,
+                asset=asset,
+                description=rule_set.description,
+                partitions_def=partitions_def,
             )
             for rule_set in rule_sets
         ),

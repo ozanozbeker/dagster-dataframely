@@ -50,6 +50,7 @@ For a composite key, marking each column unique would show a constraint that no 
 
 **The checks.**
 `check_specs(schema, asset=key)` returns a spec for every check the schema defines, including the column-schema check.
+For a partitioned asset, also pass its `partitions_def`, so Dagster records each check evaluation under its partition.
 `check_results(schema, frame, asset_key=key, severity=...)` yields a result for each of those checks and writes nothing.
 Pass the same `check_granularity` and `schema_rules` to `check_specs` and to the function that yields the results, or to neither.
 Those settings determine the check names.

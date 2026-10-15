@@ -1,4 +1,7 @@
 ---
+# The prose names the `PreviewWarning` a partitioned asset emits, so the cells do not print it.
+execute:
+  warning: false
 title: "Partitioning"
 ---
 
@@ -21,6 +24,10 @@ The writer writes the quarantine under the same partition key as the asset.
 Validation runs on each partition's frame separately.
 `dagster/row_count` is the number of valid rows in that partition.
 If one partition's frame fails the column-schema check, no other partition's data changes.
+
+Every check has the asset's partitions.
+Dagster records each check evaluation under the partition it ran for, so a clean partition does not hide a failure in another partition.
+Dagster marks partitioned checks as preview, so a partitioned asset emits `dg.PreviewWarning` when you define it.
 
 **A root asset reads its partition key from a declared `context`.**
 It has no Dagster asset upstream, so it reads the partition's file itself:

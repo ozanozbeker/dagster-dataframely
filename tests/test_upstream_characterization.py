@@ -290,8 +290,8 @@ def test_polars_renders_a_duration_in_its_own_friendly_style():
         spans.cast(pl.String)
 
 
-def test_a_partitioned_asset_check_spec_is_still_in_preview():
-    """`AssetCheckSpec(partitions_def=)` warns `PreviewWarning` and nothing else, and #31 waits until Dagster removes that warning."""
+def test_a_partitioned_asset_check_spec_warns_preview():
+    """`AssetCheckSpec(partitions_def=)` warns `PreviewWarning` and nothing else, as `user_guide/partitioning.qmd` states."""
     # The whole list, not `pytest.warns`, so a failure distinguishes `[]` (GA) from `[BetaWarning]`.
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
@@ -305,7 +305,7 @@ def test_a_partitioned_asset_check_spec_is_still_in_preview():
 
 
 def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
-    """Dagster does not check that a spec's `partitions_def` matches its asset's, so #31 can pass one through `check_specs` without checking it either."""
+    """Dagster does not check that a spec's `partitions_def` matches its asset's, so `check_specs` passes its `partitions_def` through without checking it either."""
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     elsewhere = dg.StaticPartitionsDefinition(["x", "y"])
     key = dg.AssetKey(["orders"])
@@ -334,7 +334,7 @@ def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def():
 
 
 def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run():
-    """A failing blocking check with a `partitions_def` still fails the run, which #31 needs because it gives one to the column-schema check."""
+    """A failing blocking check with a `partitions_def` still fails the run, which `check_specs` needs because it gives one to the column-schema check."""
     days = dg.StaticPartitionsDefinition(["mon", "tue"])
     key = dg.AssetKey(["orders"])
 
