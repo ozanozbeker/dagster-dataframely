@@ -9,6 +9,7 @@ import dagster_dataframely as dd
 
 _PUBLIC = {
     "asset",
+    "collection_checks",
     "error_rows_spec",
     "errors",
     "wiring",
@@ -40,6 +41,8 @@ _ERRORS = {
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
     "DagsterDataframelyError",
+    "FailurePropagationError",
+    "InvalidMembersError",
     "InvalidSettingError",
     "InvalidSeverityError",
     "MaterializeResultFieldError",

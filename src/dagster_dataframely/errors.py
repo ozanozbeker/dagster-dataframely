@@ -13,7 +13,9 @@ __all__ = [
     "DagsterDataframelyError",
     "ErrorRowsDirError",
     "ErrorRowsKeyCollisionError",
+    "FailurePropagationError",
     "InvalidColumnNameError",
+    "InvalidMembersError",
     "InvalidSettingError",
     "InvalidSeverityError",
     "MaterializeResultFieldError",
@@ -145,7 +147,44 @@ class CollectionNotSupportedError(DagsterDataframelyError):
     def __init__(self, collection_name: str) -> None:
         """Name the Collection and what to declare instead."""
         super().__init__(
-            f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema."
+            f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema, then pass them to `dd.collection_checks`."
+        )
+
+
+class InvalidMembersError(DagsterDataframelyError):
+    """`members=` does not map a Collection's members to unpartitioned assets.
+
+    Raised when `dd.collection_checks` is called.
+    """
+
+    def __init__(
+        self, collection_name: str, problem: str, members: Sequence[str]
+    ) -> None:
+        """Name what is wrong with the mapping, then every member of the Collection.
+
+        Parameters
+        ----------
+        problem
+            The rest of a sentence whose subject is `members`, and any fix.
+        """
+        names: str = ", ".join(f"'{member}'" for member in members)
+        super().__init__(
+            f"`members` {problem} The members of {collection_name} are {names}."
+        )
+
+
+class FailurePropagationError(DagsterDataframelyError):
+    """A Collection member sets `propagate_row_failures=True`.
+
+    Raised when `dd.collection_checks` is called, because a check over the members' tables cannot evaluate failure propagation (`docs/out-of-scope/collection-assets.md`).
+    """
+
+    def __init__(self, collection_name: str, members: Sequence[str]) -> None:
+        """Name the members that set it."""
+        names: str = ", ".join(f"'{member}'" for member in members)
+        plural, verb = ("", "sets") if len(members) == 1 else ("s", "set")
+        super().__init__(
+            f"Member{plural} {names} of {collection_name} {verb} `propagate_row_failures=True`, which `dd.collection_checks` cannot check. A row that fails its member's own rules is not in the member's table, so a check over the tables would always pass. Remove the setting, or write a collection filter that states the condition."
         )
 
 

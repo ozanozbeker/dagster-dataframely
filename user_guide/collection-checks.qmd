@@ -1,0 +1,441 @@
+---
+title: "Collection checks"
+---
+
+```{python}
+#| label: setup-collection-checks
+#| code-fold: true
+#| code-summary: "Setup: the imports every example on this page uses"
+#| output: false
+import tempfile
+from typing import Annotated
+
+import dagster as dg
+import dataframely as dy
+import polars as pl
+from dagster_polars import PolarsParquetIOManager
+
+import dagster_dataframely as dd
+```
+
+A Dataframely `Collection` groups several tables.
+Its `@dy.filter` methods, its collection filters, state the relations between them.
+A foreign key is one such relation.
+`dd.collection_checks` reports each collection filter as an asset check on assets you already declare.
+
+The checks never change a table.
+A row that fails a collection filter stays in its table, and its check fails.
+
+## Declaring the checks
+
+Declare one asset per member, each with the member's own schema.
+Then pass the Collection and its member assets to `dd.collection_checks`:
+
+```{python}
+#| label: collection-checks-1
+class Customers(dy.Schema):
+    customer_id = dy.Int64(primary_key=True)
+    name = dy.String()
+
+
+class Orders(dy.Schema):
+    order_id = dy.Int64(primary_key=True)
+    customer_id = dy.Int64()
+
+
+class Shop(dy.Collection):
+    orders: dy.LazyFrame[Orders]
+    customers: Annotated[
+        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+    ]
+
+    @dy.filter()
+    def order_references_customer(self) -> pl.LazyFrame:
+        """Every order's customer exists."""
+        return self.orders.join(self.customers, on="customer_id", how="semi")
+
+
+@dd.asset(Customers)
+def customers() -> pl.DataFrame:
+    return pl.DataFrame({"customer_id": [1, 2], "name": ["Ada", "Bo"]})
+
+
+@dd.asset(Orders)
+def orders() -> pl.DataFrame:
+    return pl.DataFrame({"order_id": [10, 11, 12], "customer_id": [1, 2, 99]})
+
+
+shop_checks = dd.collection_checks(
+    Shop, members={"orders": orders, "customers": customers}
+)
+
+[
+    (spec.asset_key.to_user_string(), spec.name, spec.description)
+    for spec in shop_checks.check_specs
+]
+```
+
+`members` maps each member's name to its asset: the `dg.AssetsDefinition` that `dd.asset` returns, or a `dg.AssetSpec`.
+It returns one `dg.AssetChecksDefinition`, which goes in `dg.Definitions(asset_checks=[...])`.
+Dagster runs every check in it in one step, named after the Collection in snake case unless you pass `name=`.
+
+Each collection filter has one check on each member without `ignored_in_filters=True`:
+
+- **Its name is `dy_filter__<name>`.**
+  [Naming](naming.qmd) lists the other names in the reserved `dy_` namespace.
+- **It depends on the Collection's other members**, so the asset graph shows the check reading `customers`.
+- **Its description is the collection filter's docstring**, or the collection filter's name when it has none.
+
+### A foreign key needs `ignored_in_filters=True` on the table it references
+
+Dataframely compares members only on their common primary key.
+A Collection whose collection filters span members with no primary-key column in common raises when you define it:
+
+```{python}
+#| label: collection-checks-2
+try:
+
+    class NoSharedKey(dy.Collection):
+        orders: dy.LazyFrame[Orders]
+        customers: dy.LazyFrame[Customers]
+
+        @dy.filter()
+        def order_references_customer(self) -> pl.LazyFrame:
+            return self.orders.join(self.customers, on="customer_id", how="semi")
+
+except dy.exc.ImplementationError as error:
+    print(error)
+```
+
+So `Shop` sets `ignored_in_filters=True` on `customers`.
+The common primary key is then `order_id`, and the collection filter returns the orders to keep.
+Only `orders` has a check.
+
+### Members that share a primary key each have a check
+
+A parent and its children share a primary key, so neither member needs to be ignored:
+
+```{python}
+#| label: collection-checks-3
+class Invoices(dy.Schema):
+    invoice_id = dy.Int64(primary_key=True)
+
+
+class InvoiceLines(dy.Schema):
+    invoice_id = dy.Int64(primary_key=True)
+    line = dy.Int64(primary_key=True)
+
+
+class InvoiceBook(dy.Collection):
+    invoices: dy.LazyFrame[Invoices]
+    lines: dy.LazyFrame[InvoiceLines]
+
+    @dy.filter()
+    def invoice_has_lines(self) -> pl.LazyFrame:
+        return self.invoices.join(self.lines, on="invoice_id", how="semi")
+
+
+book_checks = dd.collection_checks(
+    InvoiceBook,
+    members={"invoices": dg.AssetSpec("invoices"), "lines": dg.AssetSpec("lines")},
+)
+
+[(spec.asset_key.to_user_string(), spec.name) for spec in book_checks.check_specs]
+```
+
+An invoice with no lines fails the check on `invoices`, and a line whose invoice does not exist fails the check on `lines`.
+
+## What a run reports
+
+The run below writes order 12, whose customer does not exist.
+It also materializes `order_count`, an asset downstream of `orders`:
+
+```{python}
+#| label: collection-checks-4
+@dg.asset
+def order_count(orders: pl.DataFrame) -> int:
+    return orders.height
+
+
+with tempfile.TemporaryDirectory() as storage:
+    result = dg.materialize(
+        [customers, orders, order_count, shop_checks],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=storage)},
+        raise_on_error=False,
+    )
+    orders_table = pl.read_parquet(f"{storage}/orders.parquet")
+
+[evaluation] = [
+    evaluation
+    for evaluation in result.get_asset_check_evaluations()
+    if evaluation.check_name.startswith("dy_filter__")
+]
+{
+    "passed": evaluation.passed,
+    "severity": evaluation.severity,
+    "dy_failed_count": evaluation.metadata["dy_failed_count"].value,
+    "dy_failed_sample": [
+        dict(record.data) for record in evaluation.metadata["dy_failed_sample"].records
+    ],
+}
+```
+
+The check reads each member's table as the member's asset wrote it.
+It calls `Collection.filter` with `skip_member_validation=True`, so it evaluates only the collection filters.
+Each member asset's own checks report the member's rules, so each table must already have passed its member's schema: declare it with `dd.asset`, or check it with `dd.wiring.asset_check_results`.
+
+A failing check's metadata has three keys:
+
+| key | value |
+| --- | --- |
+| `dy_filter` | the collection filter's name, which a passing check has too |
+| `dy_failed_count` | how many of the member's rows failed the collection filter |
+| `dy_failed_sample` | up to `max_failure_samples` of those rows |
+
+**A run writes the sample rows to the Dagster event log unredacted.**
+`max_failure_samples=` sets how many, and `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
+
+### A failing row stays in its table
+
+A failing `"error"` check fails the run and stops the assets downstream of `orders` in that run, so the run did not materialize `order_count`:
+
+```{python}
+#| label: collection-checks-5
+(
+    result.success,
+    sorted(
+        event.asset_key.to_user_string()
+        for event in result.get_asset_materialization_events()
+    ),
+)
+```
+
+Order 12 is still in the `orders` table:
+
+```{python}
+#| label: collection-checks-6
+orders_table
+```
+
+A later run that selects only `order_count` reads order 12.
+
+### A run evaluates the checks of the members it selects
+
+A run that selects `orders` alone evaluates the check on `orders`, and reads `customers` as the last run wrote it.
+A run that selects `customers` alone evaluates no check on `orders`, because Dagster selects a check by the asset it is on:
+
+```{python}
+#| label: collection-checks-7
+def evaluated(selection: str, storage: str) -> list[str]:
+    run = dg.materialize(
+        [customers, orders, shop_checks],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=storage)},
+        selection=selection,
+        raise_on_error=False,
+    )
+    return [
+        f"{evaluation.asset_key.to_user_string()}/{evaluation.check_name}"
+        for evaluation in run.get_asset_check_evaluations()
+        if evaluation.check_name.startswith("dy_filter__")
+    ]
+
+
+with tempfile.TemporaryDirectory() as storage:
+    evaluated("*", storage)
+    by_selection = {
+        selection: evaluated(selection, storage)
+        for selection in ("orders", "customers")
+    }
+
+by_selection
+```
+
+So a run that rewrites `customers` and has to check the foreign key selects the check too.
+
+## Severity
+
+A collection filter's severity is `"error"` unless the Collection declares `"warn"`, in the class attribute `__dagster_dataframely__`.
+It takes the forms a schema's attribute takes: one value for every collection filter, or a mapping from collection filter name to value.
+Write it without an annotation, because Dataframely raises for any Collection annotation that is not a frame:
+
+```{python}
+#| label: collection-checks-8
+class LenientShop(dy.Collection):
+    __dagster_dataframely__ = {"severity": {"order_references_customer": "warn"}}
+
+    orders: dy.LazyFrame[Orders]
+    customers: Annotated[
+        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+    ]
+
+    @dy.filter()
+    def order_references_customer(self) -> pl.LazyFrame:
+        return self.orders.join(self.customers, on="customer_id", how="semi")
+
+
+lenient_checks = dd.collection_checks(
+    LenientShop, members={"orders": orders, "customers": customers}
+)
+
+[(spec.name, spec.blocking) for spec in lenient_checks.check_specs]
+```
+
+An `"error"` check is blocking and fails at `ERROR`.
+A `"warn"` check is not blocking and fails at `WARN`, as dagster-dbt sets a dbt test.
+[Rule severity](rule-severity.qmd) covers the declaration on a schema.
+
+## How the checks read the members
+
+**Each input has the type the Collection declares.**
+A `dy.LazyFrame[...]` member is a `pl.LazyFrame` input, which `PolarsParquetIOManager` loads as a scan.
+A `dy.DataFrame[...]` member is a `pl.DataFrame` input.
+A pickling IO manager such as `dg.FilesystemIOManager` loads the `pl.DataFrame` the asset wrote.
+Dagster then fails the step with `DagsterTypeCheckDidNotPass` for a lazy member, so declare eager members when you use one:
+
+```{python}
+#| label: collection-checks-9
+class EagerShop(dy.Collection):
+    orders: dy.DataFrame[Orders]
+    customers: Annotated[
+        dy.DataFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+    ]
+
+    @dy.filter()
+    def order_references_customer(self) -> pl.LazyFrame:
+        return self.orders.join(self.customers, on="customer_id", how="semi").lazy()
+
+
+eager_checks = dd.collection_checks(
+    EagerShop, members={"orders": orders, "customers": customers}
+)
+
+with tempfile.TemporaryDirectory() as storage:
+    eager_result = dg.materialize(
+        [customers, orders, eager_checks],
+        resources={"io_manager": dg.FilesystemIOManager(base_dir=storage)},
+        raise_on_error=False,
+    )
+
+[
+    (evaluation.check_name, evaluation.passed)
+    for evaluation in eager_result.get_asset_check_evaluations()
+    if evaluation.check_name.startswith("dy_filter__")
+]
+```
+
+**The checks read every member's whole table**, so a partitioned member raises `InvalidMembersError`.
+A collection filter evaluated in each partition alone would report a customer in one partition whose orders are in another.
+
+**An optional member can be left out of `members`**, and the checks then do not read it:
+
+```{python}
+#| label: collection-checks-10
+class Promos(dy.Schema):
+    customer_id = dy.Int64(primary_key=True)
+
+
+class ShopWithPromos(dy.Collection):
+    orders: dy.LazyFrame[Orders]
+    customers: Annotated[
+        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+    ]
+    promos: Annotated[
+        dy.LazyFrame[Promos] | None, dy.CollectionMember(ignored_in_filters=True)
+    ]
+
+    @dy.filter()
+    def order_references_customer(self) -> pl.LazyFrame:
+        return self.orders.join(self.customers, on="customer_id", how="semi")
+
+
+promo_checks = dd.collection_checks(
+    ShopWithPromos, members={"orders": orders, "customers": customers}
+)
+
+[input_def.name for input_def in promo_checks.node_def.input_defs]
+```
+
+**A collection filter that returns a primary key twice can count a row twice.**
+Dataframely's `@dy.filter` docstring states that duplicate primary keys "might introduce duplicate rows".
+A semi-join returns each row once.
+
+## Errors
+
+`dd.collection_checks` raises when you call it.
+It raises `InvalidMembersError` for four mistakes in `members`, and the message lists the Collection's members:
+
+- a required member left out, including a member with `ignored_in_filters=True`, which Dataframely still requires;
+- a name that is not a member of the Collection;
+- a definition of several assets, such as a `@dg.multi_asset`, in place of the member's `dg.AssetSpec`;
+- a partitioned asset.
+
+```{python}
+#| label: collection-checks-11
+@dg.multi_asset(specs=[dg.AssetSpec("orders"), dg.AssetSpec("customers")])
+def warehouse(): ...
+
+
+daily = dg.DailyPartitionsDefinition("2026-01-01")
+mistakes = {
+    "left out": {"orders": orders},
+    "unknown": {"orders": orders, "customers": customers, "refunds": orders},
+    "several assets": {"orders": warehouse, "customers": customers},
+    "partitioned": {
+        "orders": dg.AssetSpec("orders", partitions_def=daily),
+        "customers": customers,
+    },
+}
+
+for mistake, members in mistakes.items():
+    try:
+        dd.collection_checks(Shop, members=members)
+    except dd.errors.InvalidMembersError as error:
+        print(f"{mistake}: {error}")
+```
+
+It raises `FailurePropagationError` for a member with `propagate_row_failures=True` and without `ignored_in_filters=True`:
+
+```{python}
+#| label: collection-checks-12
+class Propagating(dy.Collection):
+    invoices: dy.LazyFrame[Invoices]
+    lines: Annotated[
+        dy.LazyFrame[InvoiceLines], dy.CollectionMember(propagate_row_failures=True)
+    ]
+
+
+try:
+    dd.collection_checks(
+        Propagating,
+        members={"invoices": dg.AssetSpec("invoices"), "lines": dg.AssetSpec("lines")},
+    )
+except dd.errors.FailurePropagationError as error:
+    print(error)
+```
+
+A member left out of `members` is not read, so it does not raise, and neither does a member with `ignored_in_filters=True`.
+
+It raises `InvalidSeverityError` when `__dagster_dataframely__` names something that is not a collection filter:
+
+```{python}
+#| label: collection-checks-13
+class Misdeclared(dy.Collection):
+    __dagster_dataframely__ = {"severity": {"order_has_customer": "warn"}}
+
+    orders: dy.LazyFrame[Orders]
+    customers: Annotated[
+        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+    ]
+
+    @dy.filter()
+    def order_references_customer(self) -> pl.LazyFrame:
+        return self.orders.join(self.customers, on="customer_id", how="semi")
+
+
+try:
+    dd.collection_checks(
+        Misdeclared, members={"orders": orders, "customers": customers}
+    )
+except dd.errors.InvalidSeverityError as error:
+    print(error)
+```

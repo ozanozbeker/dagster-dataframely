@@ -87,6 +87,7 @@ A type checker rejects the five legacy forms, but nothing rejects them at run ti
 
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.
 Declare one asset per member instead, each with the member's own schema.
+Then pass them to `dd.collection_checks`, which reports the Collection's collection filters as asset checks, as [Collection checks](collection-checks.qmd) shows.
 
 The parts under [Hand-wiring](hand-wiring.qmd) cannot validate a Collection either, because `validation_results` takes a single schema.
 

@@ -127,6 +127,18 @@ It is the severity of the rule's failing check, as Dagster's `AssetCheckSeverity
 A row that fails an `"error"` rule is never written to the asset's table, and a row that fails only `"warn"` rules is.
 _Avoid_: blocking rule, aborting rule, strict rule, level
 
+**Collection filter**: A `@dy.filter` method of a Dataframely `Collection`.
+It returns the common primary key of every row that passes it.
+Dataframely uses this phrase, in the docstring of `Collection.filter`.
+A collection filter has one asset check, `dy_filter__<name>`, on each member without `ignored_in_filters=True`.
+Write "collection filter", never "filter" alone, because `filter=True` and `Schema.filter` use that word.
+_Avoid_: filter, cross-member rule, foreign key
+
+**`dd.collection_checks`**: The function that returns a Dataframely `Collection`'s asset checks, as one `dg.AssetChecksDefinition`.
+Each member of the Collection is an asset the user declares, and the checks report each collection filter on those assets.
+It reads every member's whole table and writes nothing.
+_Avoid_: collection asset, collection door
+
 **`DescribedRule`**: One rule with everything this package derives from it: its check name, its column and rule name, its docstring, and its expression.
 _Avoid_: parsed rule, rule info, rule spec, enriched rule
 

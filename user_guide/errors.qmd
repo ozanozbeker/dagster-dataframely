@@ -21,11 +21,13 @@ Every message names what failed and how to fix it.
 
 | error | raised | what to do |
 | --- | --- | --- |
-| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema |
+| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema, then pass them to `dd.collection_checks` |
+| `InvalidMembersError` | when `dd.collection_checks` is called | map every required member, and only the Collection's members, to an unpartitioned asset; the message lists the members |
+| `FailurePropagationError` | the same | remove `propagate_row_failures=True` from the member, or write a collection filter that states the condition |
 | `ReservedColumnError` | at decoration, and by every public function that takes a schema | rename the column that starts with `dy_` |
 | `InvalidColumnNameError` | the same | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
 | `CheckNameCollisionError` | the same | rename one of the two rules that produce the same check name |
-| `InvalidSeverityError` | the same | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms |
+| `InvalidSeverityError` | the same, and when `dd.collection_checks` is called | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms, and [Collection checks](collection-checks.qmd#severity) covers a Collection's |
 | `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
 | `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
 | `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |

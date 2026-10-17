@@ -9,7 +9,7 @@ import inspect
 import warnings
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, override
+from typing import Annotated, Any, override
 
 import dagster as dg
 import dataframely as dy
@@ -46,6 +46,28 @@ class Orders(dy.Schema):
     def paid_orders_have_amount(cls) -> pl.Expr:
         """Paid orders must carry a positive amount."""
         return (cls.status.col != "paid") | (cls.amount.col > 0)
+
+
+class Refunds(dy.Schema):
+    """A schema with the same primary key as `Orders`."""
+
+    order_id = dy.String(primary_key=True)
+
+
+class OrderBook(dy.Collection):
+    """A Collection with one collection filter, an eager member and an ignored optional member."""
+
+    orders: dy.LazyFrame[Orders]
+    refunds: dy.DataFrame[Refunds]
+    notes: Annotated[
+        dy.LazyFrame[Refunds] | None,
+        dy.CollectionMember(ignored_in_filters=True, propagate_row_failures=True),
+    ]
+
+    @dy.filter()
+    def refund_has_order(self) -> pl.LazyFrame:
+        """Every refund's order exists."""
+        return self.refunds.lazy().join(self.orders, on="order_id", how="semi")
 
 
 # One valid row, then rows that fail `amount|min`, `paid_orders_have_amount` and `primary_key`.
@@ -259,6 +281,46 @@ class TestDataframely:
         assert sum(cooccurrence.values()) == len(failure)
         assert cooccurrence[frozenset({"amount|min"})] == 1
 
+    def test_a_collection_keeps_each_filter_by_name_with_its_function(self):
+        """`Collection._filters()` maps each `@dy.filter` name to a `Filter` whose `logic` is the decorated function, which `_rules.collection_filter_severities` and `_collection` read."""
+        filters = OrderBook._filters()
+
+        assert list(filters) == ["refund_has_order"]
+        assert (
+            inspect.getdoc(filters["refund_has_order"].logic)
+            == "Every refund's order exists."
+        )
+
+    def test_a_collection_member_records_how_it_takes_part_in_the_filters(self):
+        """`Collection.members()` gives each member `is_lazy`, `is_optional`, `ignored_in_filters` and `propagate_row_failures`, which `_collection` reads."""
+        members = OrderBook.members()
+
+        assert members["orders"].is_lazy
+        assert not members["refunds"].is_lazy
+        assert members["notes"].is_optional
+        assert members["notes"].ignored_in_filters
+        assert members["notes"].propagate_row_failures
+        assert OrderBook.required_members() == {"orders", "refunds"}
+
+    def test_skipping_member_validation_counts_only_the_collection_filters(self):
+        """With `skip_member_validation=True`, `Collection.filter` runs no member rule and reports each collection filter on every non-ignored member, which `_collection` relies on."""
+        orders = pl.DataFrame({
+            "order_id": ["ORD-1", "ORD-2"],
+            "amount": [-1.0, 5.0],
+            "status": pl.Series(["new", "new"], dtype=pl.Enum(["new", "paid"])),
+        })
+        refunds = pl.DataFrame({"order_id": ["ORD-1", "ORD-9"]})
+
+        _, failure = OrderBook.filter(
+            {"orders": orders.lazy(), "refunds": refunds.lazy()},
+            skip_member_validation=True,
+        )
+
+        assert {member: info.counts() for member, info in failure.items()} == {
+            "orders": {"refund_has_order": 1},
+            "refunds": {"refund_has_order": 1},
+        }
+
 
 class TestPolars:
     """The Polars behaviour this package depends on."""
@@ -443,6 +505,46 @@ class TestDagster:
             )
 
         assert "failed type check for Dagster type DataFrame" in str(raised.value)
+
+    def test_a_multi_asset_check_reads_its_inputs_off_an_explicit_signature(
+        self, tmp_path: Path
+    ):
+        """`@dg.multi_asset_check` reads each input's name and type off a `__signature__` set on the function, which `_collection.collection_checks` sets because it receives the members only when it is called."""
+        loaded: dict[str, type] = {}
+
+        @dg.asset
+        def refunds() -> pl.DataFrame:
+            return pl.DataFrame({"order_id": ["ORD-1"]})
+
+        def checks(
+            context: dg.AssetCheckExecutionContext, **frames: object
+        ) -> Iterator[dg.AssetCheckResult]:
+            loaded.update({name: type(frame) for name, frame in frames.items()})
+            yield dg.AssetCheckResult(asset_key="refunds", check_name="c", passed=True)
+
+        checks.__signature__ = inspect.Signature([  # pyrefly: ignore[missing-attribute]
+            inspect.Parameter(
+                "context",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=dg.AssetCheckExecutionContext,
+            ),
+            inspect.Parameter(
+                "book_refunds",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=pl.LazyFrame,
+            ),
+        ])
+        definition = dg.multi_asset_check(
+            specs=[dg.AssetCheckSpec("c", asset="refunds")],
+            ins={"book_refunds": dg.AssetIn(key="refunds")},
+        )(checks)
+
+        dg.materialize(
+            [refunds, definition],
+            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+        )
+
+        assert loaded == {"book_refunds": pl.LazyFrame}
 
     def test_a_check_input_is_still_type_checked_against_its_annotation(self):
         """Dagster type-checks a `@dg.multi_asset_check` input, so `asset_check_results` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""

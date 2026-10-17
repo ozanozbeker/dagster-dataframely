@@ -81,12 +81,14 @@ ops:
 There are three.
 
 **`dy_`** starts every check name, every rule column in the error rows, and every check metadata key except `dataframely/error_rows_address`.
-These are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
+These are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, each collection filter's check `dy_filter__<name>`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_filter`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
 A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
 So a check name cannot contain a slash.
 
 A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
 `dd.wiring.asset_check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
+
+A collection filter's check name is `dy_filter__` plus the collection filter's name, as [Collection checks](collection-checks.qmd) shows.
 
 **`dataframely/`** starts every materialization metadata key this package names.
 A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.

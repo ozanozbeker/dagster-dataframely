@@ -780,6 +780,7 @@ class TestDefinitionTimeErrors:
             dd.asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
 
         assert "OrderBook" in str(raised.value)
+        assert "then pass them to `dd.collection_checks`" in str(raised.value)
 
     def test_a_non_schema_argument_is_left_to_fail_however_it_fails(self):
         """Only `dy.Collection` has a guard, because it is the one plausible wrong argument."""
