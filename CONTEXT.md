@@ -87,6 +87,10 @@ _Avoid_: execution context (Dagster's, but there it names `context` itself), and
 It is the only case with no step, which is why `file_writer` and `error_rows_dir` exist.
 _Avoid_: "test", which is one use of it, not what it is
 
+**`DirectInvocationResult`**: The asset's materialization, or `None` on a skip, and every check result keyed by check name, which `dd.testing.direct_invocation_result` returns from what a direct invocation yields.
+Dagster names its records this way: `dg.materialize` returns an `ExecuteInProcessResult`.
+_Avoid_: outcome (how a run ended), events, invoke result, test result
+
 **Hand-wiring**: Building a `@dg.asset` from `dd.wiring` instead of using `dd.asset`.
 _Avoid_: the kit, hand-wirer (write "you", or name the function called)
 
