@@ -171,7 +171,7 @@ class TestContextParameter:
 
         result = materialize(tmp_path, orders, partition_key="2026-01-02")
         error_rows = pl.read_parquet(
-            tmp_path / "orders_error_rows" / "2026-01-02.parquet"
+            tmp_path / "orders__error_rows" / "2026-01-02.parquet"
         )
 
         assert result.success
@@ -363,7 +363,7 @@ class TestFilterWithValidRows:
         assert result.success
         assert set(materializations(result)) == {_GOOD_KEY}
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
-        assert pl.read_parquet(tmp_path / "orders_error_rows.parquet").height == 3
+        assert pl.read_parquet(tmp_path / "orders__error_rows.parquet").height == 3
 
     def test_the_materialization_says_where_the_rest_went(self, tmp_path: Path):
         """The package computes the error-rows address, because the step never reads the IO manager's metadata for the error rows (ADR-0006)."""
@@ -372,7 +372,7 @@ class TestFilterWithValidRows:
         ].metadata
 
         assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
-            "orders_error_rows"
+            "orders__error_rows"
         )
         assert metadata["dataframely/error_rows_count"] == dg.MetadataValue.int(3)
         assert isinstance(
@@ -437,7 +437,7 @@ class TestFilterWithValidRows:
         tmp_path: Path,
     ):
         materialize(tmp_path, _filtered)
-        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
+        error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
         rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
@@ -451,7 +451,7 @@ class TestFilterWithValidRows:
     def test_the_rule_columns_are_cast_from_enum_to_string(self, tmp_path: Path):
         """Rule columns are strings, because the Delta writer panics on an `Enum` column."""
         materialize(tmp_path, _filtered)
-        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
+        error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
         rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
@@ -460,7 +460,7 @@ class TestFilterWithValidRows:
 
     def test_a_rule_column_says_which_rule_each_row_failed(self, tmp_path: Path):
         materialize(tmp_path, _filtered)
-        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet").sort(
+        error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet").sort(
             "order_id"
         )
         invalid_by_min = error_rows.filter(pl.col("dy_rule__amount__min") == "invalid")
@@ -540,7 +540,7 @@ class TestFilterWithNoValidRows:
 
         assert not result.success
         assert materializations(result) == {}
-        assert pl.read_parquet(tmp_path / "orders_error_rows.parquet").height == 2
+        assert pl.read_parquet(tmp_path / "orders__error_rows.parquet").height == 2
         assert not (tmp_path / "orders.parquet").exists()
 
     def test_no_valid_rows_leaves_the_last_known_good_table_intact(
@@ -561,7 +561,7 @@ class TestFilterWithNoValidRows:
 
         assert "All 2 rows failed an 'error' rule of Orders" in str(raised.value)
         assert "2 by 'amount|min'" in str(raised.value)
-        assert "orders_error_rows" in str(raised.value)
+        assert "orders__error_rows" in str(raised.value)
 
     def test_no_valid_rows_fails_every_failing_rule_check_at_error(
         self, tmp_path: Path
@@ -826,13 +826,13 @@ class TestCollapsedChecks:
     ):
         """The error rows have one rule column per rule at every granularity."""
         materialize(tmp_path, _by_column)
-        error_rows = pl.read_parquet(tmp_path / "orders_error_rows.parquet")
+        error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
 
         assert "dy_rule__amount__min" in error_rows.columns
         assert not [name for name in error_rows.columns if name.startswith("dy_col__")]
 
 
-_ADDRESS = "orders_error_rows"
+_ADDRESS = "orders__error_rows"
 
 
 def _drained(

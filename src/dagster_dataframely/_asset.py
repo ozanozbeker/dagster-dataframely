@@ -96,9 +96,9 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     Parameters
     ----------
     filter
-        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
+        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing, including the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-error`). `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
     error_rows_key
-        The error-rows key, which needs `filter=True`. `None` uses `<name>_error_rows` with the asset's key prefix. A string is one key part, as in `dg.AssetKey`.
+        The error-rows key, which needs `filter=True`. `None` uses `<name>__error_rows` with the asset's key prefix. A string is one key part, as in `dg.AssetKey`.
     error_rows_io_manager_key
         The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity

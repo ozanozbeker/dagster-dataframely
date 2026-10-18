@@ -138,7 +138,7 @@ A `UPathIOManager` writes one file per partition, with one path segment per dime
 orders/2026-01-01/eu.parquet
 orders/2026-01-01/us.parquet
 priority_orders/2026-01-01/eu.parquet
-priority_orders_error_rows/2026-01-01/eu.parquet
+priority_orders__error_rows/2026-01-01/eu.parquet
 ```
 
 **An unpartitioned asset downstream of a multi-partitioned one receives a flat dict, not a nested one.**

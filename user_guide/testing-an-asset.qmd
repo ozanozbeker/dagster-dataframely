@@ -54,7 +54,7 @@ def test_orders_filters_the_failing_lines(error_rows_dir):
     assert result.materialization is not None
     assert result.materialization.value.height == 12
     assert not result.checks["dy_rule__amount__min"].passed
-    assert pl.read_parquet(error_rows_dir / "orders_error_rows.parquet").height == 8
+    assert pl.read_parquet(error_rows_dir / "orders__error_rows.parquet").height == 8
 ```
 
 ```{python}

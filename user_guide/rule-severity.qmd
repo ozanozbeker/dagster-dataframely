@@ -18,7 +18,7 @@ A rule is `"error"` unless the schema declares `"warn"`.
 
 | severity | a row that fails the rule | the rule's check |
 | --- | --- | --- |
-| `"error"` | is not written to the table: the run fails, or with `filter=True` the package writes the row under `<name>_error_rows` | fails at `ERROR` |
+| `"error"` | is not written to the table: the run fails, or with `filter=True` the package writes the row under `<name>__error_rows` | fails at `ERROR` |
 | `"warn"` | is written to the table | fails at `WARN` |
 
 [Validation](validation.qmd) shows what each outcome writes, and [Advanced: `filter=True`](filtering-error-rows.qmd) shows the error rows.

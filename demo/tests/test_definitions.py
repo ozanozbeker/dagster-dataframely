@@ -42,14 +42,14 @@ EXPECTED_GROUPS = {
         "orders",
         "customers",
         "marketing_orders",
-        "marketing_orders_error_rows",
+        "marketing_orders__error_rows",
         "finance_orders",
         "partner_orders",
         "legacy_orders",
-        "legacy_orders_error_rows",
+        "legacy_orders__error_rows",
         "daily_orders",
         "regional_orders",
-        "regional_orders_error_rows",
+        "regional_orders__error_rows",
         "warehouse_orders",
     },
     "gold": {"weekly_orders", "high_value_orders", "orders_snapshot"},
@@ -59,9 +59,9 @@ EXPECTED_GROUPS = {
 EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 14, "legacy_orders": 2}
 
 EXPECTED_ERROR_ROWS = {
-    "marketing_orders_error_rows": "marketing_orders",
-    "legacy_orders_error_rows": "legacy_orders",
-    "regional_orders_error_rows": "regional_orders",
+    "marketing_orders__error_rows": "marketing_orders",
+    "legacy_orders__error_rows": "legacy_orders",
+    "regional_orders__error_rows": "regional_orders",
 }
 
 MARKETPLACE_BROKEN_RULES = {
@@ -144,7 +144,7 @@ def test_the_grid_error_rows_is_partitioned_like_its_asset(graph: AssetGraph):
         if key.to_user_string() in EXPECTED_ERROR_ROWS
         and graph.get(key).partitions_def is not None
     }
-    assert partitioned == {"regional_orders_error_rows"}
+    assert partitioned == {"regional_orders__error_rows"}
 
 
 def test_the_marketplace_feed_breaks_the_expected_rules():
@@ -230,7 +230,8 @@ def test_the_legacy_migration_writes_only_the_error_rows(error_rows_dir: Path):
             legacy_orders(dg.build_asset_context(), _data.legacy_orders())
         )
     assert (
-        pl.read_parquet(error_rows_dir / "legacy_orders_error_rows.parquet").height == 3
+        pl.read_parquet(error_rows_dir / "legacy_orders__error_rows.parquet").height
+        == 3
     )
 
 
@@ -241,7 +242,7 @@ def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Pa
     assert result.materialization is not None
     assert result.materialization.value.height == 12
     assert (
-        pl.read_parquet(error_rows_dir / "marketing_orders_error_rows.parquet").height
+        pl.read_parquet(error_rows_dir / "marketing_orders__error_rows.parquet").height
         == 8
     )
 

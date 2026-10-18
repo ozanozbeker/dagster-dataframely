@@ -13,4 +13,4 @@ def legacy_orders(raw_legacy_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_legacy_orders
 
 
-legacy_orders_error_rows = dd.error_rows_spec(Orders, legacy_orders)
+legacy_orders__error_rows = dd.error_rows_spec(Orders, legacy_orders)

@@ -261,7 +261,7 @@ class ValidationAbortError(DagsterDataframelyError):
         """
         plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"{error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. Nothing was written, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>_error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
+            f"{error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. Nothing was written, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
         )
 
 

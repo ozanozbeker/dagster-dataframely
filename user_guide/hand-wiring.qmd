@@ -93,7 +93,7 @@ The address is a string, not a path, because it can name a database table.
 When no row fails an `"error"` rule, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's error rows.
 
 In a run, `dd.asset` uses `delegating_writer(context)`.
-It passes the rows to the asset's own IO manager, under the asset key `<name>_error_rows`.
+It passes the rows to the asset's own IO manager, under the asset key `<name>__error_rows`.
 That IO manager writes them as it writes any asset with that key.
 The IO manager receives a copy of the step's output context with only the asset key changed, so a database IO manager still reads its connection settings from it.
 `delegating_writer` takes `error_rows_key=` and `error_rows_io_manager_key=`, which mean what they mean on `dd.asset`.
@@ -103,7 +103,7 @@ Nothing records the metadata the IO manager adds during that write, so the packa
 `file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
 
-`validate_error_rows_key(context)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes `<name>_error_rows`.
+`validate_error_rows_key(context)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes `<name>__error_rows`.
 
 `file_writer`, `validate_error_rows_key` and `error_rows_path` also take `error_rows_key=`.
 Pass each one the same value, so the writer, the check and the path use the same key.
@@ -233,7 +233,7 @@ This is the same asset without this package: the Columns tab, one check per rule
 ```{python}
 #| label: hand-wiring-3
 VALID = dg.AssetKey(["orders"])
-ERROR_ROWS = dg.AssetKey(["orders_error_rows"])
+ERROR_ROWS = dg.AssetKey(["orders__error_rows"])
 COLUMNS = Orders.columns()
 # Private in Dataframely: nothing public lists a schema's rules before it runs.
 RULES = list(Orders._validation_rules(with_cast=False))
@@ -263,7 +263,7 @@ COLUMN_SCHEMA = dg.TableSchema(
         "orders": dg.AssetOut(
             metadata={"dagster/column_schema": COLUMN_SCHEMA}, is_required=False
         ),
-        "orders_error_rows": dg.AssetOut(is_required=False),
+        "orders__error_rows": dg.AssetOut(is_required=False),
     },
     check_specs=[
         dg.AssetCheckSpec(name="dy_schema__columns", asset=VALID, blocking=True),

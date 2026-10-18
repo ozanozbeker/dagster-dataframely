@@ -33,7 +33,7 @@ class Shipments(dy.Schema):
 
 
 _KEY = dg.AssetKey(["shipments"])
-_ADDRESS = "shipments_error_rows"
+_ADDRESS = "shipments__error_rows"
 
 
 def _frame(*rows: tuple[str, int, str]) -> pl.DataFrame:

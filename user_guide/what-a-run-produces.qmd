@@ -38,7 +38,7 @@ The last four appear only on a run with `filter=True` that wrote error rows.
 So one bad upstream field that fails three rules appears as one group, not as three unrelated counts.
 It names rules as the error rows' rule columns do, so its names match the check names only at `rule` granularity.
 
-![The materialization of a run where 8 rows failed an `"error"` rule, and the writer wrote them under `marketing_orders_error_rows`. The third row of `dataframely/error_rows_by_rules` is one row that failed three rules, counted once, not three times.](../assets/images/error-rows-by-rules.png)
+![The materialization of a run where 8 rows failed an `"error"` rule, and the writer wrote them under `marketing_orders__error_rows`. The third row of `dataframely/error_rows_by_rules` is one row that failed three rules, counted once, not three times.](../assets/images/error-rows-by-rules.png)
 
 Every value that contains rows is a Dagster table value, not markdown, so the UI shows a sortable table.
 The two counts are integers, and the error-rows address is a string.

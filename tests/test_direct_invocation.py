@@ -151,7 +151,7 @@ def test_a_called_error_rows_writes_a_real_file_under_the_configured_root(
     asset = _orders(mixed_orders, filter=True)
 
     materialization = _materialization(_called(asset, filtering=True))
-    written = pl.read_parquet(error_rows_dir / "orders_error_rows.parquet")
+    written = pl.read_parquet(error_rows_dir / "orders__error_rows.parquet")
 
     assert materialization.asset_key == dg.AssetKey(["orders"])
     assert_frame_equal(materialization.value, clean_orders())
@@ -166,14 +166,14 @@ def test_a_call_writes_the_error_rows_under_the_error_rows_key_it_set(
     asset = _orders(
         mixed_orders,
         filter=True,
-        error_rows_key=["audit", "orders_error_rows"],
+        error_rows_key=["audit", "orders__error_rows"],
         error_rows_io_manager_key="audit",
     )
 
     called = dd.testing.direct_invocation_result(
         asset(dg.build_asset_context(resources={"audit": None}))
     )
-    path = error_rows_dir / "audit" / "orders_error_rows.parquet"
+    path = error_rows_dir / "audit" / "orders__error_rows.parquet"
 
     assert pl.read_parquet(path).height == 3
     assert (_materialization(called).metadata or {})[
@@ -218,7 +218,7 @@ def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
 
     _called(asset, filtering=True)
 
-    assert pl.read_parquet(directory / "orders_error_rows.parquet").height == 3
+    assert pl.read_parquet(directory / "orders__error_rows.parquet").height == 3
 
 
 def test_a_called_partitioned_error_rows_lands_under_its_partition(
@@ -232,7 +232,7 @@ def test_a_called_partitioned_error_rows_lands_under_its_partition(
         orders(dg.build_asset_context(partition_key="2026-01-02"))
     )
 
-    assert (error_rows_dir / "orders_error_rows" / "2026-01-02.parquet").exists()
+    assert (error_rows_dir / "orders__error_rows" / "2026-01-02.parquet").exists()
 
 
 def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_built_one():

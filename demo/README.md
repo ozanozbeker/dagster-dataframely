@@ -55,7 +55,7 @@ Dagster cannot run partitioned and unpartitioned assets together, so `daily_orde
 | | `raw_legacy_orders` | A one-off export from the old platform, which stored refunds as negative amounts. |
 | `silver` | **`orders`** | **Start here.** The Columns tab, filled from the schema before the first run. 24 checks, including the blocking column-schema check. Statistics and a row sample on the materialization. |
 | | `customers` | Three columns and eight checks make it the README's first example and the smallest use of the package. |
-| | `marketing_orders` | The marketplace feed with `filter=True`: seven checks fail at `ERROR`, none of them blocking, and the run writes the eight failing lines under `marketing_orders_error_rows` and succeeds. |
+| | `marketing_orders` | The marketplace feed with `filter=True`: seven checks fail at `ERROR`, none of them blocking, and the run writes the eight failing lines under `marketing_orders__error_rows` and succeeds. |
 | | `finance_orders` | The same feed with `filter=False`: the checks fail at `ERROR`, and the run raises `ValidationAbortError` and writes nothing. |
 | | `partner_orders` | The blocking `dy_schema__columns` check fails on `quantity`, and the run raises `ColumnSchemaError` before `Schema.filter` runs. |
 | | `legacy_orders` | Every row fails an `"error"` rule, so the run writes no table, not even an empty one, and raises `NoValidRowsError`. It uses `schema` granularity, so one check reports for every rule. |

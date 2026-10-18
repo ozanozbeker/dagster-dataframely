@@ -1,7 +1,7 @@
 """The settings, each resolved from three sources: the package default, then `DAGSTER_DATAFRAMELY_*`, then the argument.
 
 `_asset.py` resolves every setting where you declare the asset, and the `wiring` functions resolve the ones they use.
-There is no `set_default_*()` function, because Dagster loads code locations lazily and the default would depend on import order.
+There is no `set_default_*()` function, because Dagster loads code locations lazily and the default would depend on import order (`docs/out-of-scope/dbt-test-configs.md#severity-store_failures-and-schema-in-dbt_projectyml`).
 """
 
 import os

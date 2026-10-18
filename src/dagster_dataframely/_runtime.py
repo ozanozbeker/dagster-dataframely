@@ -1,7 +1,7 @@
 """What an asset built with `dd.asset` runs after its decorated function.
 
 Choosing an outcome requires collecting the valid and the invalid rows (`docs/pre-1.0.md`).
-`Schema.filter` removes every invalid row, so the rows that failed only `"warn"` rules are read back from `FailureInfo` and appended to the valid rows.
+`Schema.filter` removes every invalid row, so the rows that failed only `"warn"` rules are read back from `FailureInfo` and appended to the valid rows, not to the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-warn`).
 """
 
 from collections.abc import Iterator, Mapping
@@ -170,7 +170,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     valid_key
         The key the run materializes the table under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
     error_rows_writer
-        The writer for the rows that failed an `"error"` rule, called at most once, with the frame `error_rows_frame` returns. When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
+        The writer for the rows that failed an `"error"` rule, called at most once, with the frame `error_rows_frame` returns. It receives every such row, because the error rows are the only copy of the rows that a run with `filter=True` leaves out of the table (`docs/out-of-scope/dbt-test-configs.md#limit`). When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
         Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules

@@ -696,7 +696,7 @@ class TestDagster:
 
         assert result.success
         base = UPath(tmp_path)
-        assert filtered.relative_to(base / "orders_error_rows") == (
+        assert filtered.relative_to(base / "orders__error_rows") == (
             written["path"].relative_to(base / "orders").with_suffix(".parquet")
         )
 
@@ -825,11 +825,11 @@ class TestPrivateDagsterApis:
         )
 
         repointed = copy.copy(original)
-        repointed._asset_key = dg.AssetKey(["analytics", "orders_error_rows"])
+        repointed._asset_key = dg.AssetKey(["analytics", "orders__error_rows"])
         repointed.add_output_metadata({"path": "somewhere"})
 
         assert repointed is not original
-        assert repointed.asset_key.path == ["analytics", "orders_error_rows"]
+        assert repointed.asset_key.path == ["analytics", "orders__error_rows"]
         assert original.asset_key.path == ["analytics", "orders"]
         assert repointed.definition_metadata == original.definition_metadata
         assert "path" in repointed.get_logged_metadata()
@@ -873,14 +873,14 @@ class TestExecutableKeys:
             }
             return "ran"
 
-        @dg.asset(name="orders_error_rows")
+        @dg.asset(name="orders__error_rows")
         def sibling() -> str:
             return "ran"
 
         whole = dg.materialize([orders, sibling])
         subset = dg.materialize([orders, sibling], selection=[orders])
 
-        assert seen[whole.run_id] == {"orders", "orders_error_rows"}
+        assert seen[whole.run_id] == {"orders", "orders__error_rows"}
         assert seen[subset.run_id] == {"orders"}
 
     def test_a_bare_spec_is_still_unexecutable_beside_its_asset(self):
@@ -896,7 +896,7 @@ class TestExecutableKeys:
             .Definitions(
                 assets=[
                     orders,
-                    dg.AssetSpec(key=dg.AssetKey(["orders_error_rows"]), deps=[key]),
+                    dg.AssetSpec(key=dg.AssetKey(["orders__error_rows"]), deps=[key]),
                 ]
             )
             .get_repository_def()
@@ -904,4 +904,4 @@ class TestExecutableKeys:
         )
 
         assert graph.executable_asset_keys == {key}
-        assert graph.unexecutable_asset_keys == {dg.AssetKey(["orders_error_rows"])}
+        assert graph.unexecutable_asset_keys == {dg.AssetKey(["orders__error_rows"])}

@@ -32,7 +32,7 @@ Every message names what failed and how to fix it.
 | `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
 | `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
 | `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body |
-| `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>_error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
+| `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
 | `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
 | `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |
 | `ErrorRowsDirError` | under direct invocation only, when there are error rows to write | set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or run the asset |
@@ -52,9 +52,9 @@ The counts can add up to more than the number of failing rows, because one row c
 
 ## Three ways to get this wrong
 
-**Do not declare an asset keyed `<name>_error_rows` if `<name>` has `filter=True`.**
-`orders` with `filter=True` writes its error rows to the asset key `orders_error_rows`, through the same IO manager that writes `orders`.
-An asset of your own keyed `orders_error_rows` has the same address.
+**Do not declare an asset keyed `<name>__error_rows` if `<name>` has `filter=True`.**
+`orders` with `filter=True` writes its error rows to the asset key `orders__error_rows`, through the same IO manager that writes `orders`.
+An asset of your own keyed `orders__error_rows` has the same address.
 Both assets would write to the same table or file, and the second write would replace the first.
 With `error_rows_key`, the run checks that key instead.
 The run also raises when that key is the asset's own key.
@@ -62,7 +62,7 @@ So every run of `orders` checks for such an asset before the decorated function 
 
 ```text
 ErrorRowsKeyCollisionError: 'orders' declares `filter=True`, so its error rows are written to
-'orders_error_rows', which an asset in this code location already materializes. Rename that asset,
+'orders__error_rows', which an asset in this code location already materializes. Rename that asset,
 set `error_rows_key` on 'orders' to another key, or remove `filter=True` from 'orders'. If that asset
 is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the
 error rows themselves to the asset graph.

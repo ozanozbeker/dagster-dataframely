@@ -70,7 +70,7 @@ class TestPath:
         """`UPathIOManager` can write the asset's own `orders.parquet` to the same directory."""
         path = error_rows_path(_ORDERS, tmp_path)
 
-        assert path == UPath(tmp_path) / "orders_error_rows.parquet"
+        assert path == UPath(tmp_path) / "orders__error_rows.parquet"
 
     def test_a_path_is_a_upath_whatever_the_root_arrived_as(self, tmp_path: Path):
         paths = [
@@ -86,18 +86,18 @@ class TestPath:
     ):
         path = error_rows_path(dg.AssetKey(["sales", "orders"]), tmp_path)
 
-        assert path == UPath(tmp_path) / "sales" / "orders_error_rows.parquet"
+        assert path == UPath(tmp_path) / "sales" / "orders__error_rows.parquet"
 
     def test_an_asset_name_carrying_a_dot_keeps_it(self, tmp_path: Path):
         """`Path.with_suffix` would turn `orders.v2` into `orders.parquet`, which another asset writes."""
         path = error_rows_path(dg.AssetKey(["orders.v2"]), tmp_path)
 
-        assert path == UPath(tmp_path) / "orders.v2_error_rows.parquet"
+        assert path == UPath(tmp_path) / "orders.v2__error_rows.parquet"
 
     def test_a_partition_becomes_a_file_under_the_leaf(self, tmp_path: Path):
         path = error_rows_path(_ORDERS, tmp_path, "2026-01-02")
 
-        assert path == UPath(tmp_path) / "orders_error_rows" / "2026-01-02.parquet"
+        assert path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02.parquet"
 
     def test_a_multi_partition_key_is_formatted_in_dimension_name_order(
         self, tmp_path: Path
@@ -107,17 +107,17 @@ class TestPath:
         path = error_rows_path(_ORDERS, tmp_path, key)
 
         assert (
-            path == UPath(tmp_path) / "orders_error_rows" / "2026-01-02" / "eu.parquet"
+            path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02" / "eu.parquet"
         )
 
     @pytest.mark.parametrize(
         ("partition_key", "tail"),
         [
-            (None, "orders_error_rows.parquet"),
-            ("2026-01-02", "orders_error_rows/2026-01-02.parquet"),
+            (None, "orders__error_rows.parquet"),
+            ("2026-01-02", "orders__error_rows/2026-01-02.parquet"),
             (
                 dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"}),
-                "orders_error_rows/2026-01-02/eu.parquet",
+                "orders__error_rows/2026-01-02/eu.parquet",
             ),
         ],
         ids=["unpartitioned", "partitioned", "multi_partitioned"],
@@ -145,7 +145,7 @@ class TestPath:
         """A partition key can come from data."""
         path = error_rows_path(_ORDERS, tmp_path, partition_key)
 
-        assert path == UPath(tmp_path) / f"orders_error_rows/{tail}.parquet"
+        assert path == UPath(tmp_path) / f"orders__error_rows/{tail}.parquet"
         assert path.resolve().is_relative_to(UPath(tmp_path).resolve())
 
     @pytest.mark.parametrize(
@@ -187,9 +187,9 @@ class TestSpec:
     def test_the_spec_is_keyed_as_the_file_is_named(self):
         spec = error_rows_spec(Orders, orders)
 
-        assert spec.key == dg.AssetKey(["sales", "orders_error_rows"])
+        assert spec.key == dg.AssetKey(["sales", "orders__error_rows"])
         # Each against the literal, because `_suffixed` builds both and comparing them would pass for any `_LEAF_SUFFIX`.
-        assert error_rows_path(orders.key, "/warehouse").stem == "orders_error_rows"
+        assert error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
 
     def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from(self):
         (dep,) = error_rows_spec(Orders, orders).deps
@@ -270,12 +270,12 @@ class TestSpec:
     ):
         assert error_rows_spec(Orders, form).key == dg.AssetKey([
             "sales",
-            "orders_error_rows",
+            "orders__error_rows",
         ])
 
     def test_a_bare_string_is_a_single_key_part(self):
         assert error_rows_spec(Orders, "orders").key == dg.AssetKey([
-            "orders_error_rows"
+            "orders__error_rows"
         ])
 
     @pytest.mark.parametrize(
@@ -326,7 +326,7 @@ class TestSpec:
 
         spec = error_rows_spec(Orders, wired)
 
-        assert spec.key == dg.AssetKey(["wired_error_rows"])
+        assert spec.key == dg.AssetKey(["wired__error_rows"])
         assert spec.metadata["dagster/io_manager_key"] == "warehouse"
 
     def test_the_spec_keeps_the_assets_metadata_but_not_where_its_rows_go(self):
@@ -368,8 +368,8 @@ def _loaded(
     loaded: dict[str, pl.DataFrame] = {}
 
     @dg.asset(partitions_def=partitions_def)
-    def audit(orders_error_rows: pl.DataFrame) -> None:
-        loaded["rows"] = orders_error_rows
+    def audit(orders__error_rows: pl.DataFrame) -> None:
+        loaded["rows"] = orders__error_rows
 
     result = dg.materialize(
         [audit, error_rows_spec(Orders, "orders", partitions_def=partitions_def)],
@@ -489,9 +489,9 @@ class TestDelegatingWriter:
             aborts=aborts,
         )
         leaf = (
-            f"orders_error_rows/{_DAY}.parquet"
+            f"orders__error_rows/{_DAY}.parquet"
             if partitioned
-            else "orders_error_rows.parquet"
+            else "orders__error_rows.parquet"
         )
 
         assert pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height == invalid
@@ -515,12 +515,12 @@ class TestDelegatingWriter:
         )
         written = tables(tmp_path)
 
-        assert "orders_error_rows" in written
-        assert written["orders_error_rows"].height == invalid
-        assert "dy_rule__amount__min" in written["orders_error_rows"].columns
+        assert "orders__error_rows" in written
+        assert written["orders__error_rows"].height == invalid
+        assert "dy_rule__amount__min" in written["orders__error_rows"].columns
 
     def test_a_clean_rerun_empties_the_error_rows_file(self, tmp_path: Path):
-        path = tmp_path / WAREHOUSE_SCHEMA / "orders_error_rows.parquet"
+        path = tmp_path / WAREHOUSE_SCHEMA / "orders__error_rows.parquet"
         _run(
             _delegating(mixed_orders, partitioned=False),
             storage(tmp_path),
@@ -547,7 +547,7 @@ class TestDelegatingWriter:
             partitioned=False,
             aborts=False,
         )
-        dirty = tables(tmp_path)["orders_error_rows"]
+        dirty = tables(tmp_path)["orders__error_rows"]
 
         _run(
             _delegating(clean_orders, partitioned=False),
@@ -555,7 +555,7 @@ class TestDelegatingWriter:
             partitioned=False,
             aborts=False,
         )
-        clean = tables(tmp_path)["orders_error_rows"]
+        clean = tables(tmp_path)["orders__error_rows"]
 
         assert clean.height == 0
         assert (clean.columns, clean.types) == (dirty.columns, dirty.types)
@@ -574,7 +574,7 @@ class TestDelegatingWriter:
         )
 
         assert not unread.exists()
-        assert (tmp_path / WAREHOUSE_SCHEMA / "orders_error_rows.parquet").exists()
+        assert (tmp_path / WAREHOUSE_SCHEMA / "orders__error_rows.parquet").exists()
 
     def test_the_step_probe_does_not_widen_to_the_whole_writer(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -605,7 +605,7 @@ class TestDelegatingWriter:
                 resources=storage(tmp_path),
             )
 
-        assert (tmp_path / WAREHOUSE_SCHEMA / "orders_error_rows.parquet").exists()
+        assert (tmp_path / WAREHOUSE_SCHEMA / "orders__error_rows.parquet").exists()
 
     def test_a_partitioned_database_asset_fails_with_the_managers_own_error(
         self, tmp_path: Path
@@ -630,7 +630,7 @@ class TestDelegatingWriter:
         metadata = event.step_materialization_data.materialization.metadata
 
         assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
-            f"{WAREHOUSE_SCHEMA}/orders_error_rows"
+            f"{WAREHOUSE_SCHEMA}/orders__error_rows"
         )
 
     def test_the_managers_own_metadata_does_not_reach_the_materialization(
@@ -646,10 +646,10 @@ class TestDelegatingWriter:
 
         assert result.success
         assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
-        assert "orders_error_rows" not in str(metadata.get("path", ""))
+        assert "orders__error_rows" not in str(metadata.get("path", ""))
 
 
-_AUDIT_KEY = ["audit", "orders_error_rows"]
+_AUDIT_KEY = ["audit", "orders__error_rows"]
 """An error-rows key under another prefix than the asset's."""
 
 
@@ -683,11 +683,11 @@ class TestOverrides:
         )
 
         assert (
-            pl.read_parquet(tmp_path / "audit" / "orders_error_rows.parquet").height
+            pl.read_parquet(tmp_path / "audit" / "orders__error_rows.parquet").height
             == 3
         )
-        assert not (tmp_path / WAREHOUSE_SCHEMA / "orders_error_rows.parquet").exists()
-        assert _address(result) == dg.MetadataValue.text("audit/orders_error_rows")
+        assert not (tmp_path / WAREHOUSE_SCHEMA / "orders__error_rows.parquet").exists()
+        assert _address(result) == dg.MetadataValue.text("audit/orders__error_rows")
 
     @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
     def test_the_error_rows_io_manager_key_names_the_io_manager_that_writes_them(
@@ -705,8 +705,8 @@ class TestOverrides:
             aborts=False,
         )
 
-        assert tables(tmp_path)["orders_error_rows"].height == 3
-        assert list(tmp_path.rglob("orders_error_rows*")) == []
+        assert tables(tmp_path)["orders__error_rows"].height == 3
+        assert list(tmp_path.rglob("orders__error_rows*")) == []
 
     @pytest.mark.parametrize(
         ("metadata", "configured", "schema"),
@@ -744,7 +744,7 @@ class TestOverrides:
         with duckdb.connect(str(database)) as connection:
             written = connection.sql(
                 "select table_schema from information_schema.tables "
-                "where table_name = 'orders_error_rows'"
+                "where table_name = 'orders__error_rows'"
             ).fetchall()
         assert written == [(schema,)]
 
@@ -849,7 +849,7 @@ class TestFileWriter:
             )
         )
         (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
-        path = tmp_path / "orders_error_rows.parquet"
+        path = tmp_path / "orders__error_rows.parquet"
 
         assert (materialization.metadata or {})[
             "dataframely/error_rows_address"
@@ -861,12 +861,12 @@ class TestFileWriter:
 
         file_writer(key, tmp_path)(_invalid_rows())
 
-        assert (tmp_path / "sales" / "eu" / "orders_error_rows.parquet").exists()
+        assert (tmp_path / "sales" / "eu" / "orders__error_rows.parquet").exists()
 
     def test_the_file_writer_puts_a_partition_under_the_leaf(self, tmp_path: Path):
         file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
 
-        assert (tmp_path / "orders_error_rows" / "2026-01-02.parquet").exists()
+        assert (tmp_path / "orders__error_rows" / "2026-01-02.parquet").exists()
 
     def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
         address = file_writer(_ORDERS, tmp_path, error_rows_key=["audit", "orders"])(
@@ -894,11 +894,11 @@ class _Location(NamedTuple):
 def _collider() -> dg.AssetsDefinition:
     """Declare an asset with the error rows' key."""
 
-    @dg.asset(name="orders_error_rows", key_prefix=WAREHOUSE_SCHEMA)
-    def orders_error_rows() -> pl.DataFrame:
+    @dg.asset(name="orders__error_rows", key_prefix=WAREHOUSE_SCHEMA)
+    def orders__error_rows() -> pl.DataFrame:
         return pl.DataFrame({"sentinel": [1]})
 
-    return orders_error_rows
+    return orders__error_rows
 
 
 class TestReservedKey:
@@ -915,7 +915,7 @@ class TestReservedKey:
         message = str(raised.value)
 
         assert f"'{WAREHOUSE_SCHEMA}/orders'" in message
-        assert f"'{WAREHOUSE_SCHEMA}/orders_error_rows'" in message
+        assert f"'{WAREHOUSE_SCHEMA}/orders__error_rows'" in message
         assert "Rename that asset" in message
         assert (
             f"set `error_rows_key` on '{WAREHOUSE_SCHEMA}/orders' to another key"
@@ -958,7 +958,7 @@ class TestReservedKey:
         with pytest.raises(ErrorRowsKeyCollisionError) as raised:
             dg.materialize([orders, audit_rows], resources=storage(tmp_path))
 
-        assert "'audit/orders_error_rows'" in str(raised.value)
+        assert "'audit/orders__error_rows'" in str(raised.value)
         assert ran == []
 
     def test_an_error_rows_key_equal_to_the_assets_own_key_raises(self, tmp_path: Path):
@@ -1000,7 +1000,7 @@ class TestReservedKey:
         with pytest.raises(ErrorRowsKeyCollisionError):
             validate_error_rows_key(
                 location,  # pyrefly: ignore[bad-argument-type]
-                error_rows_key=[WAREHOUSE_SCHEMA, "orders_error_rows"],
+                error_rows_key=[WAREHOUSE_SCHEMA, "orders__error_rows"],
             )
 
     def test_a_error_rows_spec_stands_for_the_error_rows_rather_than_competing(self):
@@ -1014,6 +1014,6 @@ class TestReservedKey:
         )
 
         assert (
-            dg.AssetKey([WAREHOUSE_SCHEMA, "orders_error_rows"])
+            dg.AssetKey([WAREHOUSE_SCHEMA, "orders__error_rows"])
             not in repository.asset_graph.executable_asset_keys
         )

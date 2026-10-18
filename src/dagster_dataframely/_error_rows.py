@@ -32,7 +32,8 @@ from dagster_dataframely.errors import ErrorRowsDirError, ErrorRowsKeyCollisionE
 type ErrorRowsWriter = Callable[[pl.DataFrame], str]
 """A writer: a function that writes the error rows and returns the error-rows address, such as an asset key or a file path, as a string."""
 
-_LEAF_SUFFIX = "_error_rows"
+# A suffix, not a key part, because `DbIOManager` takes the table name from the last key part only (`docs/out-of-scope/dbt-test-configs.md#store_failures-writes-to-schema_dbt_test__audit`).
+_LEAF_SUFFIX = "__error_rows"
 
 _EXTENSION = ".parquet"
 
@@ -42,14 +43,14 @@ _IO_MANAGER_KEY_ENTRY = "dataframely/error_rows_io_manager_key"
 
 
 def _suffixed(parts: Sequence[str]) -> tuple[str, ...]:
-    """Add `_error_rows` to the last part of a key."""
+    """Add `__error_rows` to the last part of a key."""
     return (*parts[:-1], f"{parts[-1]}{_LEAF_SUFFIX}")
 
 
 def _error_rows_key(
     key: dg.AssetKey, error_rows_key: dg.AssetKey | str | Sequence[str] | None = None
 ) -> dg.AssetKey:
-    """Return the error-rows key: `error_rows_key`, or else `key` with `_error_rows` added."""
+    """Return the error-rows key: `error_rows_key`, or else `key` with `__error_rows` added."""
     if error_rows_key is None:
         return dg.AssetKey(list(_suffixed(key.path)))
     if isinstance(error_rows_key, dg.AssetKey):
@@ -95,7 +96,7 @@ def validate_error_rows_key(
     Parameters
     ----------
     error_rows_key
-        The value the asset's writer receives. `None` checks `<name>_error_rows`.
+        The value the asset's writer receives. `None` checks `<name>__error_rows`.
 
     Raises
     ------
@@ -141,11 +142,11 @@ def error_rows_path(
     partition_key
         A `dg.MultiPartitionKey` becomes its dimension keys joined by `/`, in dimension-name order. Escaping a `..` and a leading `/` keeps the file under `error_rows_dir`.
     error_rows_key
-        `None` uses `key` with `_error_rows` added to its last part.
+        `None` uses `key` with `__error_rows` added to its last part.
 
     Returns
     -------
-    `<error_rows_dir>/<key part>/.../<name>_error_rows.parquet`, or `<error_rows_dir>/<key part>/.../<name>_error_rows/<partition>.parquet` for a partition. With `error_rows_key`, its parts replace `<key part>/.../<name>_error_rows`. `error_rows_path` creates no parent directories.
+    `<error_rows_dir>/<key part>/.../<name>__error_rows.parquet`, or `<error_rows_dir>/<key part>/.../<name>__error_rows/<partition>.parquet` for a partition. With `error_rows_key`, its parts replace `<key part>/.../<name>__error_rows`. `error_rows_path` creates no parent directories.
     """
     path: UPath = UPath(error_rows_dir).joinpath(
         *coerce_to_relative_parts(UPath(*_error_rows_key(key, error_rows_key).path))
@@ -173,7 +174,7 @@ def delegating_writer(
     context
         Its asset definition must have exactly one asset, as a `@dg.asset` does.
     error_rows_key
-        `None` uses `<name>_error_rows`, with the asset's key prefix.
+        `None` uses `<name>__error_rows`, with the asset's key prefix.
     error_rows_io_manager_key
         The op must require this resource key, because `context.resources` holds only the resources its op requires. The writer passes that IO manager its own config, because a `DbIOManager` reads its connection from the context. It passes the asset's definition metadata unchanged.
 
@@ -228,7 +229,7 @@ def file_writer(
     key
         The asset key of the asset whose rows failed validation, not the error-rows key.
     error_rows_key
-        `None` uses `key` with `_error_rows` added to its last part.
+        `None` uses `key` with `__error_rows` added to its last part.
 
     Returns
     -------

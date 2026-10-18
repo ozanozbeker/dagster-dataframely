@@ -735,8 +735,8 @@ class TestErrorRows:
     @pytest.mark.parametrize(
         ("overrides", "error_rows_key", "error_rows_io_manager_key"),
         [
-            ({}, ["kept_error_rows"], "io_manager"),
-            ({"io_manager_key": "warehouse"}, ["kept_error_rows"], "warehouse"),
+            ({}, ["kept__error_rows"], "io_manager"),
+            ({"io_manager_key": "warehouse"}, ["kept__error_rows"], "warehouse"),
             (
                 {
                     "error_rows_key": ["audit", "kept"],
@@ -867,7 +867,7 @@ class TestDefinitionTimeErrors:
     @pytest.mark.parametrize(
         ("overrides", "named"),
         [
-            ({"error_rows_key": ["audit", "orders_error_rows"]}, "`error_rows_key`."),
+            ({"error_rows_key": ["audit", "orders__error_rows"]}, "`error_rows_key`."),
             ({"error_rows_io_manager_key": "audit"}, "`error_rows_io_manager_key`."),
             (
                 {"error_rows_key": "audit", "error_rows_io_manager_key": "audit"},

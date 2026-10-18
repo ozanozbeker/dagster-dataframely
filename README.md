@@ -135,7 +135,7 @@ Four things now exist that did not before:
 - A table, written by your IO manager.
 
 To write the rows that fail an `"error"` rule to a separate table instead of failing the run, declare `@dd.asset(Customers, filter=True)`.
-The same IO manager writes them, under the asset's key with `_error_rows` appended.
+The same IO manager writes them, under the asset's key with `__error_rows` appended.
 Each of those rows has one added column per rule, which shows whether the row failed that rule.
 The run succeeds, so downstream assets read the other rows, and each failing `"error"` rule's check still fails at `ERROR`.
 
