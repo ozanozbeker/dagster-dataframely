@@ -96,12 +96,20 @@ In a run, `dd.asset` uses `delegating_writer(context)`.
 It passes the rows to the asset's own IO manager, under the asset key `<name>_error_rows`.
 That IO manager writes them as it writes any asset with that key.
 The IO manager receives a copy of the step's output context with only the asset key changed, so a database IO manager still reads its connection settings from it.
+`delegating_writer` takes `error_rows_key=` and `error_rows_io_manager_key=`, which mean what they mean on `dd.asset`.
+With `error_rows_io_manager_key=`, list the key in your asset's `required_resource_keys`.
 Nothing records the metadata the IO manager adds during that write, so the package reports the error-rows address itself.
 
 `file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
 
 `validate_error_rows_key(context)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes `<name>_error_rows`.
+
+`file_writer`, `validate_error_rows_key` and `error_rows_path` also take `error_rows_key=`.
+Pass each one the same value, so the writer, the check and the path use the same key.
+
+`error_rows_spec(schema, definition)` reads the error-rows key and the IO manager key from two metadata entries that only `dd.asset` writes.
+So for a hand-wired asset that passes either keyword, set both on the spec yourself, with Dagster's own methods: `error_rows_spec(schema, orders).replace_attributes(key=...).with_io_manager_key(...)`.
 
 `dd.wiring` also exports two lower-level functions.
 `error_rows_frame(schema, failure)` returns the frame every writer receives: the rows that failed an `"error"` rule, then one `String` rule column per rule, named in the reserved namespace.

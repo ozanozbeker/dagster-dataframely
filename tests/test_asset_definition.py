@@ -732,6 +732,66 @@ class TestErrorRows:
 
         assert kept.op.required_resource_keys == frozenset()
 
+    @pytest.mark.parametrize(
+        ("overrides", "error_rows_key", "error_rows_io_manager_key"),
+        [
+            ({}, ["kept_error_rows"], "io_manager"),
+            ({"io_manager_key": "warehouse"}, ["kept_error_rows"], "warehouse"),
+            (
+                {
+                    "error_rows_key": ["audit", "kept"],
+                    "error_rows_io_manager_key": "audit",
+                },
+                ["audit", "kept"],
+                "audit",
+            ),
+        ],
+        ids=["default", "the_assets_io_manager", "overridden"],
+    )
+    def test_the_definition_records_where_a_run_writes_the_error_rows(
+        self,
+        overrides: dict[str, Any],
+        error_rows_key: list[str],
+        error_rows_io_manager_key: str,
+    ):
+        """`error_rows_spec` reads both entries, so the spec loads the rows from where the writer wrote them."""
+
+        @dd.asset(Orders, filter=True, **overrides)
+        def kept() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        metadata = kept.get_asset_spec().metadata
+
+        assert metadata["dataframely/error_rows_key"] == dg.MetadataValue.asset(
+            dg.AssetKey(error_rows_key)
+        )
+        assert metadata["dataframely/error_rows_io_manager_key"] == (
+            dg.MetadataValue.text(error_rows_io_manager_key)
+        )
+
+    def test_an_asset_without_filter_records_nothing_about_error_rows(self):
+        assert not any(
+            name.startswith("dataframely/error_rows")
+            for name in orders.get_asset_spec().metadata
+        )
+
+    def test_the_error_rows_io_manager_is_a_required_resource(self):
+        """A step's resources hold only the keys its op requires, so the writer finds the IO manager there."""
+
+        @dd.asset(
+            Orders,
+            filter=True,
+            error_rows_io_manager_key="audit",
+            required_resource_keys={"warehouse"},
+        )
+        def kept() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        assert kept.op.required_resource_keys == {"audit", "warehouse"}
+        with pytest.raises(dg.DagsterInvalidDefinitionError) as raised:
+            dg.Definitions.validate_loadable(dg.Definitions(assets=[kept]))
+        assert "resource with key 'audit' required by op 'kept'" in str(raised.value)
+
 
 class TestDefinitionTimeErrors:
     """The errors `dd.asset` raises while it builds the definition."""
@@ -803,6 +863,31 @@ class TestDefinitionTimeErrors:
                 return pl.DataFrame()
 
         assert "check_granularity" in str(raised.value)
+
+    @pytest.mark.parametrize(
+        ("overrides", "named"),
+        [
+            ({"error_rows_key": ["audit", "orders_error_rows"]}, "`error_rows_key`."),
+            ({"error_rows_io_manager_key": "audit"}, "`error_rows_io_manager_key`."),
+            (
+                {"error_rows_key": "audit", "error_rows_io_manager_key": "audit"},
+                "`error_rows_key` and `error_rows_io_manager_key`.",
+            ),
+        ],
+        ids=["key", "io_manager_key", "both"],
+    )
+    def test_an_error_rows_override_without_filter_raises_at_definition_time(
+        self, overrides: dict[str, Any], named: str
+    ):
+        with pytest.raises(dg.DagsterInvalidDefinitionError) as raised:
+
+            @dd.asset(Orders, name="unfiltered", **overrides)
+            def _unfiltered() -> pl.DataFrame:
+                return pl.DataFrame()
+
+        assert str(raised.value) == (
+            f"Only an asset with `filter=True` writes error rows. Pass `filter=True`, or remove {named}"
+        )
 
     @pytest.mark.parametrize("filtering", [False, True], ids=["plain", "filtered"])
     def test_a_malformed_error_rows_dir_raises_at_definition_time(
@@ -887,6 +972,8 @@ class TestUnderlyingOp:
 _NO_DG_ASSET_COUNTERPART = {
     "schema",
     "filter",
+    "error_rows_key",
+    "error_rows_io_manager_key",
     "check_granularity",
     "schema_rules",
     "max_failure_samples",

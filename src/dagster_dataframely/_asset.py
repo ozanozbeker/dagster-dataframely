@@ -21,6 +21,7 @@ from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     error_rows_writer,
     validate_error_rows_key,
+    writer_metadata,
 )
 from dagster_dataframely._metadata import schema_metadata
 from dagster_dataframely._returns import (
@@ -55,6 +56,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     /,
     *,
     filter: bool = False,  # noqa: A002 - Dataframely's `Schema.filter` is the same operation
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
+    error_rows_io_manager_key: str | None = None,
     check_granularity: Granularity | None = None,
     schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
@@ -93,7 +96,11 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     Parameters
     ----------
     filter
-        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the asset key `<name>_error_rows`, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
+        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing. `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
+    error_rows_key
+        The error-rows key, which needs `filter=True`. `None` uses `<name>_error_rows` with the asset's key prefix. A string is one key part, as in `dg.AssetKey`.
+    error_rows_io_manager_key
+        The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity
         How many asset checks report the schema's rules: one per rule at `rule`, one per column with rules at `column`, and one for the schema at `schema`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
@@ -105,13 +112,15 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     row_sample
         The materialization metadata has at most this many rows of the table, and this many error rows. **A run writes the rows to the Dagster event log unredacted.** `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
     key_prefix
-        The error rows' asset key has the same prefix.
+        The default error-rows key has the same prefix.
     metadata
         Definition metadata. The schema's `dagster/column_schema` entry replaces a key of the same name.
     description
         `None` uses the schema's docstring, or the decorated function's docstring if the schema has none.
+    required_resource_keys
+        With `error_rows_io_manager_key`, the asset also requires that key.
     io_manager_key
-        In a run, `delegating_writer` passes the error rows to the same IO manager.
+        In a run, `delegating_writer` passes the error rows to the same IO manager, unless `error_rows_io_manager_key` names another.
     partitions_def
         The writer writes the error rows under the same partition key, and every check spec has the same partitions.
 
@@ -123,6 +132,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     ------
     CollectionNotSupportedError
         `schema` is a `dy.Collection`.
+    dg.DagsterInvalidDefinitionError
+        `error_rows_key` or `error_rows_io_manager_key` is set and `filter` is `False`.
     ReservedColumnError
         A column name is in the reserved `dy_` namespace.
     InvalidColumnNameError
@@ -168,6 +179,18 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     validate_namespace(schema)
 
+    overrides: list[str] = [
+        f"`{name}`"
+        for name, value in [
+            ("error_rows_key", error_rows_key),
+            ("error_rows_io_manager_key", error_rows_io_manager_key),
+        ]
+        if value is not None
+    ]
+    if overrides and not filter:
+        unfiltered = f"Only an asset with `filter=True` writes error rows. Pass `filter=True`, or remove {' and '.join(overrides)}."
+        raise dg.DagsterInvalidDefinitionError(unfiltered)
+
     # Resolved once, here, for both the check specs and the run.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
@@ -183,7 +206,11 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         "tags": tags,
         "description": description or inspect.cleandoc(schema.__doc__ or "") or None,
         "config_schema": config_schema,
-        "required_resource_keys": required_resource_keys,
+        "required_resource_keys": (
+            {*(required_resource_keys or ()), error_rows_io_manager_key}
+            if error_rows_io_manager_key is not None
+            else required_resource_keys
+        ),
         "resource_defs": resource_defs,
         "hooks": hooks,
         "io_manager_key": io_manager_key,
@@ -236,8 +263,12 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> AssetYield:
-                validate_error_rows_key(context)
-                writer = error_rows_writer(context)
+                validate_error_rows_key(context, error_rows_key=error_rows_key)
+                writer = error_rows_writer(
+                    context,
+                    error_rows_key=error_rows_key,
+                    error_rows_io_manager_key=error_rows_io_manager_key,
+                )
                 returned: DecoratedReturn = (
                     fn(context, *args, **kwargs)
                     if declares_context
@@ -271,7 +302,20 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             name=asset_name,
             key_prefix=prefix or None,
             output_required=False,
-            metadata={**(metadata or {}), **schema_metadata(schema)},
+            metadata={
+                **(metadata or {}),
+                **schema_metadata(schema),
+                **(
+                    writer_metadata(
+                        key,
+                        io_manager_key,
+                        error_rows_key=error_rows_key,
+                        error_rows_io_manager_key=error_rows_io_manager_key,
+                    )
+                    if filter
+                    else {}
+                ),
+            },
             check_specs=asset_check_specs(
                 schema,
                 asset=key,

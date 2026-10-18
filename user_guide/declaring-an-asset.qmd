@@ -16,7 +16,7 @@ from dagster_dataframely_demo.schema import Orders
 ```
 
 The schema is the only required argument, and it is positional.
-Every other argument is `filter`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
+Every other argument is `filter`, `error_rows_key`, `error_rows_io_manager_key`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
 
 You write the decorated function as you would for `@dg.asset`:
 
@@ -63,7 +63,7 @@ The asset's description comes from the schema's docstring, as [Naming](naming.qm
 
 A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
 The asset's IO manager writes the table.
-With `filter=True`, a writer writes the rows that failed an `"error"` rule, the error rows, under `<name>_error_rows`.
+With `filter=True`, a writer writes the rows that failed an `"error"` rule, the error rows, under `<name>_error_rows` unless `error_rows_key` sets another key.
 Each check reports a result.
 Not every run writes the table: [Validation](validation.qmd) lists the outcomes and what each one writes.
 

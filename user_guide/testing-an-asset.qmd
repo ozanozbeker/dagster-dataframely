@@ -92,6 +92,8 @@ In a run too, the IO manager writes the error rows, and Dagster records no mater
 Pass the context first and the upstream frames after it, as Dagster does.
 A call has no IO manager, so it writes the error rows to the directory in `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` instead.
 It reads that variable only when some rows failed an `"error"` rule.
+An asset with `error_rows_io_manager_key` still requires that resource.
+Pass any value for it in `dg.build_asset_context(resources=...)`, because the call does not use it.
 
 An asset without `filter=True` needs neither the context nor the directory:
 

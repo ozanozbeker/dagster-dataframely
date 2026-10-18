@@ -26,6 +26,7 @@ It writes every other row to the asset's table, and the run succeeds.
 [Validation](validation.qmd) covers the default, and this page covers what `filter=True` changes:
 
 - **The package writes the rows that failed an `"error"` rule under `<name>_error_rows`**, and writes the rest of the frame to the table.
+  `error_rows_key` sets another key.
 - **The run succeeds** when some rows fail an `"error"` rule, and fails with `NoValidRowsError` when every row does.
 - **No rule's check is blocking**, but a failing `"error"` rule's check still fails at `ERROR`, so the asset shows "Degraded".
 - **The materialization** reports the error-rows address, count and sample.
@@ -115,13 +116,105 @@ So direct invocation of the asset needs a `dg.build_asset_context()` as the firs
 See [Testing an asset](testing-an-asset.qmd).
 An asset with `filter=False` keeps the signature you wrote.
 
+## Two keywords change the key and the IO manager
+
+`error_rows_key` sets the error-rows key.
+`error_rows_io_manager_key` names the resource key of the IO manager that writes the error rows in a run.
+Both need `filter=True`.
+With `filter=False`, `dd.asset` raises `dg.DagsterInvalidDefinitionError` where you declare the asset.
+Neither is a setting, so no `DAGSTER_DATAFRAMELY_*` variable sets them.
+
+```{python}
+#| label: filtering-error-rows-2
+from dagster_duckdb_polars import DuckDBPolarsIOManager
+
+
+@dd.asset(
+    Orders,
+    filter=True,
+    error_rows_key=["audit", "orders_error_rows"],
+    error_rows_io_manager_key="audit",
+)
+def audited_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders
+
+
+defs = dg.Definitions(
+    assets=[raw_orders, audited_orders, dd.error_rows_spec(Orders, audited_orders)],
+    resources={
+        "io_manager": PolarsParquetIOManager(base_dir="data/warehouse"),
+        "audit": DuckDBPolarsIOManager(database="data/warehouse.duckdb"),
+    },
+)
+```
+
+```{python}
+#| label: filtering-error-rows-3
+#| echo: false
+#| output: false
+# The cell above only declares the asset, so the build runs it here and checks what the page states.
+import tempfile
+
+import duckdb
+
+from dagster_dataframely_demo._data import marketplace_orders
+
+
+@dg.asset(name="raw_orders")
+def marketplace_raw() -> pl.DataFrame:
+    return marketplace_orders()
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    checked = dg.materialize(
+        [marketplace_raw, audited_orders],
+        resources={
+            "io_manager": PolarsParquetIOManager(base_dir=tmp),
+            "audit": DuckDBPolarsIOManager(database=f"{tmp}/warehouse.duckdb"),
+        },
+    )
+    (event,) = [
+        e
+        for e in checked.get_asset_materialization_events()
+        if e.asset_key == audited_orders.key
+    ]
+    metadata = event.step_materialization_data.materialization.metadata
+    assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
+        "audit/orders_error_rows"
+    )
+    with duckdb.connect(f"{tmp}/warehouse.duckdb") as connection:
+        written = connection.sql("select count(*) from audit.orders_error_rows")
+        assert written.fetchone() == (8,)
+```
+
+`PolarsParquetIOManager` writes the table to `audited_orders.parquet`.
+`DuckDBPolarsIOManager` writes the error rows to the table `orders_error_rows` in the schema `audit`.
+The error-rows address is `audit/orders_error_rows`.
+
+**`dd.asset` adds `error_rows_io_manager_key` to the asset's `required_resource_keys`.**
+So loading the definitions raises if no resource has that key.
+The IO manager receives its own config and the asset's definition metadata, such as `partition_expr`.
+
+**A database IO manager reads the schema from the metadata first.**
+`DbIOManager` takes the schema from `metadata["schema"]`, then from its own `schema` config, then from the key prefix.
+So `error_rows_key` changes the schema only when the asset has no `schema` metadata and the IO manager has no `schema` config.
+The table name is always the key's last part.
+
+**The collision check reads the error-rows key.**
+Before the decorated function runs, a run raises `ErrorRowsKeyCollisionError` if another asset materializes the key `error_rows_key` sets.
+The run also raises when that key is the asset's own key.
+
+**A direct invocation writes under `error_rows_dir`, at a path built from the error-rows key.**
+It has no IO manager, so `error_rows_io_manager_key` changes nothing there.
+Dagster still checks the asset's required resources, so pass a value for that resource key, such as `dg.build_asset_context(resources={"audit": None})`.
+
 ## The error rows are not an asset
 
 They are a record of a run.
 They are not in the asset graph, so no asset can depend on them until you add them with `error_rows_spec`:
 
 ```{python}
-#| label: filtering-error-rows-2
+#| label: filtering-error-rows-4
 defs = dg.Definitions(
     assets=[raw_orders, orders, dd.error_rows_spec(Orders, orders)],
     resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
@@ -141,7 +234,10 @@ The primary key is absent too, because rows with a duplicate key are among the e
 
 Pass `error_rows_spec` the asset definition, and the spec uses its partitions and its asset group.
 So the catalog lists the error rows in the same group as the asset.
+The spec also uses the error-rows key, the IO manager key and the definition metadata the writer used, so a downstream asset loads the rows from where they were written.
+`dd.asset` records the first two in the definition metadata, under `dataframely/error_rows_key` and `dataframely/error_rows_io_manager_key`.
 Pass an asset key instead, and set the partitions with `partitions_def=`.
+The spec then has `<name>_error_rows` and Dagster's default IO manager key, `io_manager`, so call `.with_io_manager_key()` on it for an asset whose IO manager has another key.
 Passing both an asset definition and `partitions_def=` raises `dg.DagsterInvariantViolationError`.
 
 `group_name=` sets the error rows' group.
@@ -169,9 +265,9 @@ A call with no error rows never reads it and writes no file.
 If the variable is unset, a call with error rows raises `ErrorRowsDirError`.
 There is no default directory.
 
-There is no per-asset override.
+There is no per-asset override, for the reason [the out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/error-rows-dir-argument.md) gives.
 
-Under that directory, the file path follows `UPathIOManager`'s layout, built from the asset key and the partition key:
+Under that directory, the file path follows `UPathIOManager`'s layout, built from the error-rows key and the partition key:
 
 ```text
 <error_rows_dir>/<key part>/.../<name>_error_rows.parquet

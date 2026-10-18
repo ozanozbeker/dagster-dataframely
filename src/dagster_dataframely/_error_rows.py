@@ -1,5 +1,6 @@
-"""The error rows' asset key, path, writers and asset spec.
+"""The error-rows key, path, writers and asset spec.
 
+`dd.asset` records where its writer writes in the definition metadata, and `error_rows_spec` reads it back.
 `error_rows_path` escapes partition keys as `FilesystemIOManager` does, not as `UPathIOManager` does, so the path for `../../etc/x` is still under `error_rows_dir`.
 """
 
@@ -35,15 +36,41 @@ _LEAF_SUFFIX = "_error_rows"
 
 _EXTENSION = ".parquet"
 
+_KEY_ENTRY = "dataframely/error_rows_key"
+
+_IO_MANAGER_KEY_ENTRY = "dataframely/error_rows_io_manager_key"
+
 
 def _suffixed(parts: Sequence[str]) -> tuple[str, ...]:
     """Add `_error_rows` to the last part of a key."""
     return (*parts[:-1], f"{parts[-1]}{_LEAF_SUFFIX}")
 
 
-def _error_rows_key(key: dg.AssetKey) -> dg.AssetKey:
-    """Return the error rows' asset key."""
-    return dg.AssetKey(list(_suffixed(key.path)))
+def _error_rows_key(
+    key: dg.AssetKey, error_rows_key: dg.AssetKey | str | Sequence[str] | None = None
+) -> dg.AssetKey:
+    """Return the error-rows key: `error_rows_key`, or else `key` with `_error_rows` added."""
+    if error_rows_key is None:
+        return dg.AssetKey(list(_suffixed(key.path)))
+    if isinstance(error_rows_key, dg.AssetKey):
+        return error_rows_key
+    return dg.AssetKey(error_rows_key)
+
+
+def writer_metadata(
+    key: dg.AssetKey,
+    io_manager_key: str | None,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None,
+    error_rows_io_manager_key: str | None,
+) -> dict[str, dg.DagsterAssetMetadataValue | dg.TextMetadataValue]:
+    """Return the definition metadata that records where a run writes the error rows, which `error_rows_spec` reads."""
+    return {
+        _KEY_ENTRY: dg.MetadataValue.asset(_error_rows_key(key, error_rows_key)),
+        _IO_MANAGER_KEY_ENTRY: dg.MetadataValue.text(
+            error_rows_io_manager_key or io_manager_key or "io_manager"
+        ),
+    }
 
 
 def _executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.AssetKey]:
@@ -56,17 +83,26 @@ def _executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.AssetK
         return frozenset()
 
 
-def validate_error_rows_key(context: dg.AssetExecutionContext) -> None:
-    """Raise if another asset already materializes the error rows' asset key.
+def validate_error_rows_key(
+    context: dg.AssetExecutionContext,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
+) -> None:
+    """Raise if an asset already materializes the error-rows key.
 
     Call it at the start of a hand-wired asset's function when the asset writes error rows, as `dd.asset` does. In a direct invocation it does nothing.
+
+    Parameters
+    ----------
+    error_rows_key
+        The value the asset's writer receives. `None` checks `<name>_error_rows`.
 
     Raises
     ------
     ErrorRowsKeyCollisionError
-        Another asset in the code location materializes `<name>_error_rows`.
+        An asset in the code location materializes the error-rows key. The asset itself counts, so the function raises for an `error_rows_key` equal to the asset's own key.
     """
-    key: dg.AssetKey = _error_rows_key(context.asset_key)
+    key: dg.AssetKey = _error_rows_key(context.asset_key, error_rows_key)
     if key in _executable_keys(context):
         raise ErrorRowsKeyCollisionError(
             context.asset_key.to_user_string(), key.to_user_string()
@@ -89,6 +125,8 @@ def error_rows_path(
     key: dg.AssetKey,
     error_rows_dir: UPath | Path | str,
     partition_key: str | None = None,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
 ) -> UPath:
     """Return the path of the parquet file `file_writer` writes an asset's error rows to.
 
@@ -97,18 +135,20 @@ def error_rows_path(
     Parameters
     ----------
     key
-        The asset key of the asset whose rows failed validation, not the error rows' key.
+        The asset key of the asset whose rows failed validation, not the error-rows key.
     error_rows_dir
         Any path `UPath` accepts, such as a local directory or `s3://bucket/prefix`. Credentials for a remote path come from the environment.
     partition_key
         A `dg.MultiPartitionKey` becomes its dimension keys joined by `/`, in dimension-name order. Escaping a `..` and a leading `/` keeps the file under `error_rows_dir`.
+    error_rows_key
+        `None` uses `key` with `_error_rows` added to its last part.
 
     Returns
     -------
-    `<error_rows_dir>/<key part>/.../<name>_error_rows.parquet`, or `<error_rows_dir>/<key part>/.../<name>_error_rows/<partition>.parquet` for a partition. `error_rows_path` creates no parent directories.
+    `<error_rows_dir>/<key part>/.../<name>_error_rows.parquet`, or `<error_rows_dir>/<key part>/.../<name>_error_rows/<partition>.parquet` for a partition. With `error_rows_key`, its parts replace `<key part>/.../<name>_error_rows`. `error_rows_path` creates no parent directories.
     """
     path: UPath = UPath(error_rows_dir).joinpath(
-        *_suffixed(coerce_to_relative_parts(UPath(*key.path)))
+        *coerce_to_relative_parts(UPath(*_error_rows_key(key, error_rows_key).path))
     )
     if partition_key is not None:
         path = path / escape_dotdot_segments(
@@ -117,16 +157,25 @@ def error_rows_path(
     return path.with_suffix(f"{path.suffix}{_EXTENSION}")
 
 
-def delegating_writer(context: dg.AssetExecutionContext) -> ErrorRowsWriter:
-    """Return a writer that passes the error rows to the asset's own IO manager.
+def delegating_writer(
+    context: dg.AssetExecutionContext,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
+    error_rows_io_manager_key: str | None = None,
+) -> ErrorRowsWriter:
+    """Return a writer that passes the error rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
 
-    The manager stores the rows under the asset key `<name>_error_rows`, as it stores any other asset: `PolarsParquetIOManager` writes a parquet file beside the table, and `DuckDBPolarsIOManager` writes a table beside it.
+    The manager stores the rows under the error-rows key, as it stores any other asset: `PolarsParquetIOManager` writes a parquet file beside the table, and `DuckDBPolarsIOManager` writes a table beside it.
     The writer discards the metadata the manager emits for this write.
 
     Parameters
     ----------
     context
         Its asset definition must have exactly one asset, as a `@dg.asset` does.
+    error_rows_key
+        `None` uses `<name>_error_rows`, with the asset's key prefix.
+    error_rows_io_manager_key
+        The op must require this resource key, because `context.resources` holds only the resources its op requires. The writer passes that IO manager its own config, because a `DbIOManager` reads its connection from the context. It passes the asset's definition metadata unchanged.
 
     Returns
     -------
@@ -142,13 +191,21 @@ def delegating_writer(context: dg.AssetExecutionContext) -> ErrorRowsWriter:
     (output_name,) = context.assets_def.keys_by_output_name
     handle = StepOutputHandle(step.step.key, output_name)
     original: dg.OutputContext = step.get_output_context(handle)
-    manager = step.get_io_manager(handle)
-    key = _error_rows_key(context.asset_key)
+    if error_rows_io_manager_key is None:
+        manager = step.get_io_manager(handle)
+        resource_config = original.resource_config
+    else:
+        manager = getattr(context.resources, error_rows_io_manager_key)
+        # Dagster's own `get_output_context` reads a manager's config the same way.
+        resources = step.resolved_run_config.resources
+        resource_config = resources[error_rows_io_manager_key].config
+    key = _error_rows_key(context.asset_key, error_rows_key)
 
     def address(frame: pl.DataFrame) -> str:
         # Copied per write, because `add_output_metadata` raises on a key an earlier write added.
         repointed = copy.copy(original)
         repointed._asset_key = key  # noqa: SLF001 - no setter; a characterization test pins it
+        repointed._resource_config = resource_config  # noqa: SLF001 - the same
         manager.handle_output(repointed, frame)
         return key.to_user_string()
 
@@ -159,21 +216,27 @@ def file_writer(
     key: dg.AssetKey,
     error_rows_dir: UPath | Path | str,
     partition_key: str | None = None,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
 ) -> ErrorRowsWriter:
     """Return a writer that writes the error rows to a parquet file under `error_rows_dir`.
 
-    Use it in a direct invocation, where `delegating_writer` raises because there is no step. The file is at `error_rows_path(key, error_rows_dir, partition_key)`.
+    Use it in a direct invocation, where `delegating_writer` raises because there is no step. The file is at `error_rows_path(key, error_rows_dir, partition_key, error_rows_key=error_rows_key)`.
 
     Parameters
     ----------
     key
-        The asset key of the asset whose rows failed validation, not the error rows' key.
+        The asset key of the asset whose rows failed validation, not the error-rows key.
+    error_rows_key
+        `None` uses `key` with `_error_rows` added to its last part.
 
     Returns
     -------
     A writer that takes the error rows and returns the file's path as a string.
     """
-    path: UPath = error_rows_path(key, error_rows_dir, partition_key)
+    path: UPath = error_rows_path(
+        key, error_rows_dir, partition_key, error_rows_key=error_rows_key
+    )
 
     def address(frame: pl.DataFrame) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +248,12 @@ def file_writer(
     return address
 
 
-def error_rows_writer(context: dg.AssetExecutionContext) -> ErrorRowsWriter:
+def error_rows_writer(
+    context: dg.AssetExecutionContext,
+    *,
+    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
+    error_rows_io_manager_key: str | None = None,
+) -> ErrorRowsWriter:
     """Return a writer that calls `delegating_writer` in a run and `file_writer` otherwise.
 
     Without a step it skips a zero-row frame, so a clean call needs no `error_rows_dir`.
@@ -197,7 +265,11 @@ def error_rows_writer(context: dg.AssetExecutionContext) -> ErrorRowsWriter:
         except DagsterInvalidPropertyError:
             pass
         else:
-            return delegating_writer(context)(frame)
+            return delegating_writer(
+                context,
+                error_rows_key=error_rows_key,
+                error_rows_io_manager_key=error_rows_io_manager_key,
+            )(frame)
         if frame.is_empty():
             return ""
         error_rows_dir: str | None = ERROR_ROWS_DIR.resolve(None)
@@ -207,6 +279,7 @@ def error_rows_writer(context: dg.AssetExecutionContext) -> ErrorRowsWriter:
             context.asset_key,
             error_rows_dir,
             context.partition_key if context.has_partition_key else None,
+            error_rows_key=error_rows_key,
         )(frame)
 
     return address
@@ -226,7 +299,7 @@ def error_rows_spec(
     Parameters
     ----------
     asset
-        The asset the error rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions and group.
+        The asset the error rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions and group, and the error-rows key, IO manager key and definition metadata of its writer.
     partitions_def
         The error rows' partitions, when `asset` is a key.
     group_name
@@ -234,7 +307,7 @@ def error_rows_spec(
 
     Returns
     -------
-    A spec keyed `<name>_error_rows` that depends on `asset`, to pass to `dg.Definitions(assets=[...])`.
+    A spec keyed by the error-rows key that depends on `asset`, to pass to `dg.Definitions(assets=[...])`.
 
     Raises
     ------
@@ -277,6 +350,9 @@ def error_rows_spec(
     Pass the spec, not its key, to `dg.Definitions(assets=[...])` with `orders`. A downstream asset can then declare the error rows as an input.
     """
     validate_namespace(schema)
+    # The writer passes this metadata to the IO manager, so a load needs it too.
+    definition_metadata: dict[str, object] = {}
+    io_manager_key: str | None = None
     if isinstance(asset, dg.AssetsDefinition):
         if partitions_def is not None:
             both = f"`error_rows_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
@@ -284,15 +360,30 @@ def error_rows_spec(
         parent, partitions_def = asset.key, asset.partitions_def
         if group_name is None:
             group_name = asset.group_names_by_key[parent]
+        definition_metadata = dict(asset.get_asset_spec().metadata)
+        recorded_key = definition_metadata.pop(_KEY_ENTRY, None)
+        recorded_io_manager_key = definition_metadata.pop(_IO_MANAGER_KEY_ENTRY, None)
+        key = (
+            recorded_key.asset_key
+            if isinstance(recorded_key, dg.DagsterAssetMetadataValue)
+            else _error_rows_key(parent)
+        )
+        io_manager_key = (
+            recorded_io_manager_key.text
+            if isinstance(recorded_io_manager_key, dg.TextMetadataValue)
+            else asset.get_io_manager_key_for_asset_key(parent)
+        )
     else:
         parent = asset if isinstance(asset, dg.AssetKey) else dg.AssetKey(asset)
+        key = _error_rows_key(parent)
 
     rendered: str = "/".join(parent.path)
-    return dg.AssetSpec(
-        key=_error_rows_key(parent),
+    spec = dg.AssetSpec(
+        key=key,
         deps=[parent],
         description=f"Rows from {rendered} that failed an 'error' rule, with one column per rule.",
-        metadata=error_rows_metadata(schema),
+        metadata={**definition_metadata, **error_rows_metadata(schema)},
         partitions_def=partitions_def,
         group_name=group_name,
     )
+    return spec if io_manager_key is None else spec.with_io_manager_key(io_manager_key)

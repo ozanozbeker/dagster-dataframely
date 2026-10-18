@@ -15,7 +15,7 @@ import dagster_dataframely as dd
 from dagster_dataframely_demo.schema import Orders
 ```
 
-Every error this package raises is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
+Every error this package defines is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
 Catch one by name, or catch `DagsterDataframelyError` to catch every one.
 Every message names what failed and how to fix it.
 
@@ -34,8 +34,12 @@ Every message names what failed and how to fix it.
 | `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body |
 | `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>_error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
 | `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
-| `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |
+| `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |
 | `ErrorRowsDirError` | under direct invocation only, when there are error rows to write | set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or run the asset |
+
+The package also raises two of Dagster's errors.
+`dd.asset` raises `dg.DagsterInvalidDefinitionError` at decoration when `error_rows_key` or `error_rows_io_manager_key` is set and `filter` is `False`.
+`error_rows_spec` raises `dg.DagsterInvariantViolationError` when it receives both an asset definition and a `partitions_def`.
 
 `ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
 The failing check's `dy_schema__errors` table lists the same columns.
@@ -52,13 +56,16 @@ The counts can add up to more than the number of failing rows, because one row c
 `orders` with `filter=True` writes its error rows to the asset key `orders_error_rows`, through the same IO manager that writes `orders`.
 An asset of your own keyed `orders_error_rows` has the same address.
 Both assets would write to the same table or file, and the second write would replace the first.
+With `error_rows_key`, the run checks that key instead.
+The run also raises when that key is the asset's own key.
 So every run of `orders` checks for such an asset before the decorated function runs, and raises:
 
 ```text
 ErrorRowsKeyCollisionError: 'orders' declares `filter=True`, so its error rows are written to
-'orders_error_rows', which another asset in this code location already materializes. Rename that
-asset, or remove `filter=True` from 'orders'. If that asset is your own table for the error rows,
-delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph.
+'orders_error_rows', which an asset in this code location already materializes. Rename that asset,
+set `error_rows_key` on 'orders' to another key, or remove `filter=True` from 'orders'. If that asset
+is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the
+error rows themselves to the asset graph.
 ```
 
 **A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**

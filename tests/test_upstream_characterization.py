@@ -25,6 +25,7 @@ from dagster._core.storage.upath_io_manager import (
     escape_dotdot_segments,
     escape_leading_slash,
 )
+from dagster_duckdb_polars import DuckDBPolarsIOManager
 from dagster_polars import PolarsParquetIOManager
 from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
@@ -701,7 +702,7 @@ class TestDagster:
 
 
 class TestPrivateDagsterApis:
-    """The private Dagster APIs ADR-0006 lists."""
+    """The private Dagster APIs that the writers, `error_rows_spec` and `dd.asset` read."""
 
     def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use(
         self,
@@ -736,6 +737,45 @@ class TestPrivateDagsterApis:
         assert borrowed["metadata"]["owner"] == "finance"
         assert borrowed["resource_config"] is not None
         assert borrowed["manager"] == "PolarsParquetIOManager"
+
+    def test_a_steps_run_config_still_holds_each_resources_config(self, tmp_path: Path):
+        """A step's `resolved_run_config.resources` holds the config of each resource its op requires, which `_error_rows.delegating_writer` reads for `error_rows_io_manager_key`."""
+        database = str(tmp_path / "errors.duckdb")
+        seen: dict[str, Any] = {}
+
+        @dg.asset(name="orders", required_resource_keys={"audit"})
+        def orders(context: dg.AssetExecutionContext) -> None:
+            step = context.get_step_execution_context()
+            seen["config"] = step.resolved_run_config.resources["audit"].config
+
+        result = dg.materialize(
+            [orders], resources={"audit": DuckDBPolarsIOManager(database=database)}
+        )
+
+        assert result.success
+        assert seen["config"]["database"] == database
+
+    def test_an_output_context_still_reads_its_resource_config_off_one_attribute(self):
+        """`resource_config` returns `_resource_config`, which `_error_rows.delegating_writer` sets on its copy for `error_rows_io_manager_key`."""
+        original = dg.build_output_context(resource_config={"base_dir": "/warehouse"})
+
+        repointed = copy.copy(original)
+        repointed._resource_config = {"database": "errors.duckdb"}
+
+        assert repointed.resource_config == {"database": "errors.duckdb"}
+        assert original.resource_config == {"base_dir": "/warehouse"}
+
+    def test_a_definition_still_names_the_io_manager_key_of_its_output(self):
+        """`get_io_manager_key_for_asset_key` returns an output's IO manager key, which `_error_rows.error_rows_spec` reads off a hand-wired definition."""
+
+        @dg.asset(name="orders", io_manager_key="warehouse")
+        def orders() -> None: ...
+
+        @dg.asset(name="refunds")
+        def refunds() -> None: ...
+
+        assert orders.get_io_manager_key_for_asset_key(orders.key) == "warehouse"
+        assert refunds.get_io_manager_key_for_asset_key(refunds.key) == "io_manager"
 
     def test_a_directly_invoked_asset_still_has_no_step(self):
         """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.error_rows_writer` catches to use `file_writer`."""

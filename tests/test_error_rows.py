@@ -4,16 +4,21 @@ The delegation tests run on a `UPathIOManager` and a `DbIOManager`, because one 
 `test_upstream_characterization.py` checks the multi-partition path format against `UPathIOManager`'s own.
 """
 
+import datetime as dt
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import dagster as dg
+import dataframely as dy
+import duckdb
 import polars as pl
 import pytest
 
 # The error a context property raises when there is no step.
 from dagster._core.errors import DagsterInvalidPropertyError
+from dagster_duckdb_polars import DuckDBPolarsIOManager
+from dagster_polars import PolarsParquetIOManager
 from polars.testing import assert_frame_equal
 from upath import UPath
 
@@ -142,6 +147,25 @@ class TestPath:
 
         assert path == UPath(tmp_path) / f"orders_error_rows/{tail}.parquet"
         assert path.resolve().is_relative_to(UPath(tmp_path).resolve())
+
+    @pytest.mark.parametrize(
+        "error_rows_key",
+        [dg.AssetKey(["audit", "orders"]), ["audit", "orders"]],
+        ids=["asset_key", "sequence"],
+    )
+    def test_an_error_rows_key_replaces_the_suffixed_key(
+        self, tmp_path: Path, error_rows_key: dg.AssetKey | Sequence[str]
+    ):
+        path = error_rows_path(
+            _ORDERS, tmp_path, "2026-01-02", error_rows_key=error_rows_key
+        )
+
+        assert path == UPath(tmp_path) / "audit" / "orders" / "2026-01-02.parquet"
+
+    def test_a_bare_string_error_rows_key_is_a_single_key_part(self, tmp_path: Path):
+        path = error_rows_path(_ORDERS, tmp_path, error_rows_key="rejected_orders")
+
+        assert path == UPath(tmp_path) / "rejected_orders.parquet"
 
 
 # `error_rows_path` keeps a `..` inside a name, as in `my..backup`; `test_upstream_characterization.py` pins it.
@@ -294,6 +318,33 @@ class TestSpec:
 
         assert graph.get(spec.key).group_name == "default"
 
+    def test_a_hand_wired_definition_gives_the_spec_its_own_io_manager(self):
+        """A downstream asset then loads the rows through the IO manager that wrote them."""
+
+        @dg.asset(io_manager_key="warehouse")
+        def wired() -> None: ...
+
+        spec = error_rows_spec(Orders, wired)
+
+        assert spec.key == dg.AssetKey(["wired_error_rows"])
+        assert spec.metadata["dagster/io_manager_key"] == "warehouse"
+
+    def test_the_spec_keeps_the_assets_metadata_but_not_where_its_rows_go(self):
+        """The writer passes the asset's metadata to the IO manager, so a load needs the same."""
+
+        @dd.asset(Orders, filter=True, metadata={"schema": "sales"})
+        def kept() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        metadata = error_rows_spec(Orders, kept).metadata
+
+        assert metadata["schema"] == "sales"
+        assert (
+            metadata[_COLUMN_SCHEMA_KEY]
+            == (error_rows_spec(Orders, "kept").metadata[_COLUMN_SCHEMA_KEY])
+        )
+        assert not any(name.startswith("dataframely/") for name in metadata)
+
     def test_a_definition_and_a_partitions_def_together_raise(self):
         with pytest.raises(dg.DagsterInvariantViolationError) as raised:
             error_rows_spec(Orders, orders, partitions_def=_DAYS)
@@ -381,8 +432,9 @@ def _delegating(
     *,
     partitioned: bool,
     partition_expr: bool = True,
+    **overrides: Any,
 ) -> dg.AssetsDefinition:
-    """Declare the asset the delegation tests run."""
+    """Declare the asset the delegation tests run, with `overrides` passed to `dd.asset`."""
 
     @dd.asset(
         Orders,
@@ -391,6 +443,7 @@ def _delegating(
         filter=True,
         partitions_def=_ONE_DAY if partitioned else None,
         metadata=_PARTITION_EXPR if partition_expr else None,
+        **overrides,
     )
     def orders() -> pl.DataFrame:
         return frame()
@@ -596,6 +649,193 @@ class TestDelegatingWriter:
         assert "orders_error_rows" not in str(metadata.get("path", ""))
 
 
+_AUDIT_KEY = ["audit", "orders_error_rows"]
+"""An error-rows key under another prefix than the asset's."""
+
+
+def _address(result: dg.ExecuteInProcessResult) -> dg.MetadataValue[Any]:
+    """Return the error-rows address of the run's one materialization."""
+    (event,) = result.get_asset_materialization_events()
+    return event.step_materialization_data.materialization.metadata[
+        "dataframely/error_rows_address"
+    ]
+
+
+def _parquet_under_warehouse(tmp_path: Path) -> dict[str, Any]:
+    """Build resources whose parquet IO manager has a key other than `io_manager`."""
+    return {"warehouse": PolarsParquetIOManager(base_dir=str(tmp_path))}
+
+
+def _parquet_with_database_audit(tmp_path: Path) -> dict[str, Any]:
+    """Build resources with a parquet `io_manager` and a database IO manager under `audit`."""
+    return {**storage(tmp_path), "audit": warehouse(tmp_path)["io_manager"]}
+
+
+class TestOverrides:
+    """A run of an asset that sets `error_rows_key` or `error_rows_io_manager_key`."""
+
+    def test_the_error_rows_key_sets_where_the_assets_io_manager_writes(
+        self, tmp_path: Path
+    ):
+        result = dg.materialize(
+            [_delegating(mixed_orders, partitioned=False, error_rows_key=_AUDIT_KEY)],
+            resources=storage(tmp_path),
+        )
+
+        assert (
+            pl.read_parquet(tmp_path / "audit" / "orders_error_rows.parquet").height
+            == 3
+        )
+        assert not (tmp_path / WAREHOUSE_SCHEMA / "orders_error_rows.parquet").exists()
+        assert _address(result) == dg.MetadataValue.text("audit/orders_error_rows")
+
+    @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
+    def test_the_error_rows_io_manager_key_names_the_io_manager_that_writes_them(
+        self, tmp_path: Path, partitioned: bool
+    ):
+        """A `DbIOManager` reads its connection from the context, so this also checks the context has its config and not the asset's IO manager's."""
+        resources = _parquet_with_database_audit(tmp_path)
+
+        _run(
+            _delegating(
+                mixed_orders, partitioned=partitioned, error_rows_io_manager_key="audit"
+            ),
+            resources,
+            partitioned=partitioned,
+            aborts=False,
+        )
+
+        assert tables(tmp_path)["orders_error_rows"].height == 3
+        assert list(tmp_path.rglob("orders_error_rows*")) == []
+
+    @pytest.mark.parametrize(
+        ("metadata", "configured", "schema"),
+        [
+            ({}, {}, "audit"),
+            ({}, {"schema": "configured"}, "configured"),
+            ({"schema": "sales"}, {"schema": "configured"}, "sales"),
+        ],
+        ids=["key_prefix", "manager_config", "schema_metadata"],
+    )
+    def test_a_database_reads_the_schema_from_metadata_then_config_then_key_prefix(
+        self,
+        tmp_path: Path,
+        metadata: dict[str, str],
+        configured: dict[str, Any],
+        schema: str,
+    ):
+        """`error_rows_key` sets the schema only when neither the metadata nor the IO manager's config does."""
+        database = tmp_path / "errors.duckdb"
+        audit = DuckDBPolarsIOManager(database=str(database), **configured)
+
+        @dd.asset(
+            Orders,
+            name="orders",
+            filter=True,
+            metadata=metadata,
+            error_rows_key=_AUDIT_KEY,
+            error_rows_io_manager_key="audit",
+        )
+        def orders() -> pl.DataFrame:
+            return mixed_orders()
+
+        dg.materialize([orders], resources={**storage(tmp_path), "audit": audit})
+
+        with duckdb.connect(str(database)) as connection:
+            written = connection.sql(
+                "select table_schema from information_schema.tables "
+                "where table_name = 'orders_error_rows'"
+            ).fetchall()
+        assert written == [(schema,)]
+
+
+class _Ledger(dy.Schema):
+    """A schema with no `Duration` column, because Polars loads DuckDB's INTERVAL only with an unstable environment variable set."""
+
+    order_id = dy.String(primary_key=True)
+    amount = dy.Float64(min=0.0)
+    ordered_at = dy.Datetime()
+
+
+def _ledger() -> pl.DataFrame:
+    """One valid row and two that fail `amount|min`."""
+    return pl.DataFrame({
+        "order_id": ["ORD-1", "ORD-2", "ORD-3"],
+        "amount": [10.0, -1.0, -2.0],
+        "ordered_at": [dt.datetime(2026, 8, 1, 12)] * 3,  # noqa: DTZ001 - the schema declares no time zone
+    })
+
+
+_LOADS = [
+    pytest.param({}, storage, None, id="default"),
+    pytest.param(
+        {"io_manager_key": "warehouse"},
+        _parquet_under_warehouse,
+        None,
+        id="the_assets_io_manager",
+    ),
+    pytest.param(
+        {"metadata": {"schema": "sales"}}, warehouse, None, id="schema_metadata"
+    ),
+    pytest.param(
+        # A cast, so the partition's date matches the rows' 12:00 timestamps.
+        {
+            "metadata": {"partition_expr": "CAST(ordered_at AS DATE)"},
+            "partitions_def": _ONE_DAY,
+        },
+        warehouse,
+        _DAY,
+        id="partitioned_database",
+    ),
+    pytest.param(
+        {"error_rows_key": _AUDIT_KEY, "error_rows_io_manager_key": "audit"},
+        _parquet_with_database_audit,
+        None,
+        id="both_overrides",
+    ),
+]
+"""Each set of `dd.asset` arguments that changes where or how the writer writes, with the resources and partition its run needs."""
+
+
+class TestLoadedErrorRows:
+    """The error rows a downstream asset loads through `error_rows_spec(schema, definition)` after a run wrote them."""
+
+    @pytest.mark.parametrize(("arguments", "resources", "partition_key"), _LOADS)
+    def test_a_downstream_asset_loads_the_rows_from_where_the_writer_wrote_them(
+        self,
+        tmp_path: Path,
+        arguments: dict[str, Any],
+        resources: Callable[[Path], dict[str, Any]],
+        partition_key: str | None,
+    ):
+        loaded: dict[str, pl.DataFrame] = {}
+
+        @dd.asset(
+            _Ledger,
+            name="orders",
+            key_prefix=WAREHOUSE_SCHEMA,
+            filter=True,
+            **arguments,
+        )
+        def orders() -> pl.DataFrame:
+            return _ledger()
+
+        spec = error_rows_spec(_Ledger, orders)
+
+        @dg.asset(
+            ins={"rows": dg.AssetIn(spec.key)}, partitions_def=orders.partitions_def
+        )
+        def audit(rows: pl.DataFrame) -> None:
+            loaded["rows"] = rows
+
+        bound = resources(tmp_path)
+        dg.materialize([orders], resources=bound, partition_key=partition_key)
+        dg.materialize([audit, spec], resources=bound, partition_key=partition_key)
+
+        assert loaded["rows"]["order_id"].to_list() == ["ORD-2", "ORD-3"]
+        assert "dy_rule__amount__min" in loaded["rows"].columns
+
+
 class TestFileWriter:
     """The writer `file_writer` returns."""
 
@@ -627,6 +867,14 @@ class TestFileWriter:
         file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
 
         assert (tmp_path / "orders_error_rows" / "2026-01-02.parquet").exists()
+
+    def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
+        address = file_writer(_ORDERS, tmp_path, error_rows_key=["audit", "orders"])(
+            _invalid_rows()
+        )
+
+        assert address == str(tmp_path / "audit" / "orders.parquet")
+        assert_frame_equal(pl.read_parquet(address), _invalid_rows())
 
     def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(
         self, tmp_path: Path
@@ -669,6 +917,10 @@ class TestReservedKey:
         assert f"'{WAREHOUSE_SCHEMA}/orders'" in message
         assert f"'{WAREHOUSE_SCHEMA}/orders_error_rows'" in message
         assert "Rename that asset" in message
+        assert (
+            f"set `error_rows_key` on '{WAREHOUSE_SCHEMA}/orders' to another key"
+            in message
+        )
 
     def test_the_collision_error_is_raised_before_the_body_runs(self, tmp_path: Path):
         ran: list[int] = []
@@ -682,6 +934,41 @@ class TestReservedKey:
             dg.materialize([orders, _collider()], resources=storage(tmp_path))
 
         assert ran == []
+
+    def test_a_run_raises_when_another_asset_owns_the_error_rows_key_it_set(
+        self, tmp_path: Path
+    ):
+        ran: list[int] = []
+
+        @dd.asset(
+            Orders,
+            name="orders",
+            key_prefix=WAREHOUSE_SCHEMA,
+            filter=True,
+            error_rows_key=_AUDIT_KEY,
+        )
+        def orders() -> pl.DataFrame:
+            ran.append(1)
+            return mixed_orders()
+
+        @dg.asset(key=_AUDIT_KEY)
+        def audit_rows() -> pl.DataFrame:
+            return pl.DataFrame({"sentinel": [1]})
+
+        with pytest.raises(ErrorRowsKeyCollisionError) as raised:
+            dg.materialize([orders, audit_rows], resources=storage(tmp_path))
+
+        assert "'audit/orders_error_rows'" in str(raised.value)
+        assert ran == []
+
+    def test_an_error_rows_key_equal_to_the_assets_own_key_raises(self, tmp_path: Path):
+        """Otherwise the error rows and the table would replace each other."""
+        own = _delegating(
+            mixed_orders, partitioned=False, error_rows_key=[WAREHOUSE_SCHEMA, "orders"]
+        )
+
+        with pytest.raises(ErrorRowsKeyCollisionError):
+            dg.materialize([own], resources=storage(tmp_path))
 
     def test_a_run_with_no_invalid_rows_fails_on_the_key_too(self, tmp_path: Path):
         with pytest.raises(ErrorRowsKeyCollisionError):
@@ -698,6 +985,22 @@ class TestReservedKey:
         with pytest.raises(ErrorRowsKeyCollisionError):
             validate_error_rows_key(
                 _Location(asset.key, defs.get_repository_def())  # pyrefly: ignore[bad-argument-type]
+            )
+
+    def test_the_error_rows_key_is_the_key_checked(self):
+        """`_collider` owns the default key, so only the key passed collides."""
+        asset = _delegating(mixed_orders, partitioned=False)
+        defs = dg.Definitions(assets=[asset, _collider()])
+        location = _Location(asset.key, defs.get_repository_def())
+
+        validate_error_rows_key(
+            location,  # pyrefly: ignore[bad-argument-type]
+            error_rows_key=_AUDIT_KEY,
+        )
+        with pytest.raises(ErrorRowsKeyCollisionError):
+            validate_error_rows_key(
+                location,  # pyrefly: ignore[bad-argument-type]
+                error_rows_key=[WAREHOUSE_SCHEMA, "orders_error_rows"],
             )
 
     def test_a_error_rows_spec_stands_for_the_error_rows_rather_than_competing(self):

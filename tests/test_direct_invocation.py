@@ -159,6 +159,28 @@ def test_a_called_error_rows_writes_a_real_file_under_the_configured_root(
     assert "dy_rule__amount__min" in written.columns
 
 
+def test_a_call_writes_the_error_rows_under_the_error_rows_key_it_set(
+    error_rows_dir: Path,
+):
+    """A call writes under `error_rows_key` and does not use `error_rows_io_manager_key`."""
+    asset = _orders(
+        mixed_orders,
+        filter=True,
+        error_rows_key=["audit", "orders_error_rows"],
+        error_rows_io_manager_key="audit",
+    )
+
+    called = dd.testing.direct_invocation_result(
+        asset(dg.build_asset_context(resources={"audit": None}))
+    )
+    path = error_rows_dir / "audit" / "orders_error_rows.parquet"
+
+    assert pl.read_parquet(path).height == 3
+    assert (_materialization(called).metadata or {})[
+        "dataframely/error_rows_address"
+    ] == str(path)
+
+
 def test_a_called_error_rows_with_no_root_says_so_rather_than_choosing_one():
     asset = _orders(mixed_orders, filter=True)
 

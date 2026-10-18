@@ -107,9 +107,10 @@ So `dd.asset` raises them where you declare the asset, and a hand-wired asset ra
 A column name with such characters almost always comes from `dy.Column(alias=...)`, which Dataframely provides for a name that is not a Python identifier.
 A `|` is one of them, and Dataframely also uses it to separate a column from its rule name.
 
-**`<name>_error_rows`** is the third: the asset key a writer writes the error rows under.
+**`<name>_error_rows`** is the third: the default error-rows key, which a writer writes the error rows under.
 You also choose asset keys in this key space, so another asset can already have this key.
-Before the decorated function runs, a run of an asset with `filter=True` checks that no other asset in the code location materializes this key.
+Before the decorated function runs, a run of an asset with `filter=True` checks that no other asset in the code location materializes the error-rows key.
 If one does, the run raises `ErrorRowsKeyCollisionError`.
 
-No setting changes any of the three, so they are the same in every project.
+No setting changes any of the three.
+`error_rows_key` replaces the third for one asset, as [Advanced: `filter=True`](filtering-error-rows.qmd#two-keywords-change-the-key-and-the-io-manager) describes.

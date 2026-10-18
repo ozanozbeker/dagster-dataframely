@@ -292,7 +292,7 @@ class NoValidRowsError(DagsterDataframelyError):
 
 
 class ErrorRowsKeyCollisionError(DagsterDataframelyError):
-    """Another asset already materializes the error rows' asset key.
+    """An asset already materializes the error-rows key.
 
     Raised before the decorated function runs, on every run of an asset with `filter=True` (ADR-0007). Otherwise both assets would write to the same key, and the second write would replace the first.
     """
@@ -300,7 +300,7 @@ class ErrorRowsKeyCollisionError(DagsterDataframelyError):
     def __init__(self, asset: str, error_rows: str) -> None:
         """Name both assets and each fix."""
         super().__init__(
-            f"'{asset}' declares `filter=True`, so its error rows are written to '{error_rows}', which another asset in this code location already materializes. Rename that asset, or remove `filter=True` from '{asset}'. If that asset is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph."
+            f"'{asset}' declares `filter=True`, so its error rows are written to '{error_rows}', which an asset in this code location already materializes. Rename that asset, set `error_rows_key` on '{asset}' to another key, or remove `filter=True` from '{asset}'. If that asset is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph."
         )
 
 
