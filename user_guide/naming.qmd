@@ -35,6 +35,7 @@ def orders() -> pl.DataFrame:
 
 The catalog shows `A customer order line: one row per product on one order.` as the description.
 The schema's docstring takes precedence over the function's, because it describes the table, not the code.
+Assets that share a schema share its description, and `description=` gives one of them its own.
 `dd.asset` reads the schema's own docstring only, and ignores one inherited from a parent class, including `dy.Schema`'s.
 
 The spec from `error_rows_spec` has its own description: `Rows from <asset> that failed an 'error' rule, with one column per rule.`
