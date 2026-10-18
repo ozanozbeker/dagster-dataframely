@@ -64,7 +64,7 @@ The two tables never share a row, so their row counts add up to the frame's.
 It writes no table rather than an empty one, so an empty table never replaces the last-known-good table.
 It writes every row under `<name>_error_rows` before it raises `NoValidRowsError`, so you can read them after the run fails.
 
-![The Checks tab for an asset with `filter=True` after some rows failed. The selected check shows its rendered constraint, the rule's expression, and the rows that failed the rule.](../assets/images/error-rows-checks.png)
+![The Checks tab for an asset with `filter=True` after some rows failed. The selected check is non-blocking, and it shows its rendered constraint, the rule's expression, and the rows that failed the rule.](../assets/images/error-rows-checks.png)
 
 ## The asset's IO manager writes the error rows
 

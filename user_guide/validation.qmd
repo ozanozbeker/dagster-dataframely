@@ -49,7 +49,7 @@ Each row of the table is one of the five outcomes a run can have.
 A failing check has its rule's severity in every outcome, so a check's history shows only its own rule's failures.
 When the column-schema check fails, its severity is always `ERROR`.
 
-![The Checks tab of an asset after some rows failed an `"error"` rule. The failing checks have severity `ERROR`.](../assets/images/severity-error.png)
+![The Checks tab of `finance_orders`, which has `filter=False`, after some rows failed an `"error"` rule. The selected check is blocking, and it failed.](../assets/images/severity-error.png)
 
 ![The run log shows the step failure. The `ValidationAbortError` message lists how many rows failed each rule. The counts add up to more than the number of failing rows, because one row can fail several rules.](../assets/images/error-validation-abort.png)
 

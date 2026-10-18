@@ -100,8 +100,8 @@ shoot split-checks             "$ASSETS/warehouse_orders?view=checks"           
 shoot partitions-grid          "$ASSETS/regional_orders?view=partitions&partition=2026-08-01%7Cus" 1600 900 0 1700
 shoot materialization-metadata "$ASSETS/orders?view=events"                        2100 1500    0 2900
 shoot returned-result-metadata "$ASSETS/orders_snapshot?view=events"               2100 1200    0 1750
-# The invalid-row keys are below five statistics tables, so this crop starts partway down the page.
-shoot invalid-by-rules         "$ASSETS/marketing_orders?view=events"              2100 2050 2660  805
+# The error-rows keys are below five statistics tables, so this crop starts partway down the page.
+shoot error-rows-by-rules      "$ASSETS/marketing_orders?view=events"              2100 2050 2660  805
 
 # The error messages come from the failed runs, because a check's own page does not show the
 # raised error. Each crop ends above `Stack Trace:`, whose stack frames show local file paths.

@@ -139,7 +139,7 @@ The same IO manager writes them, under the asset's key with `_error_rows` append
 Each of those rows has one added column per rule, which shows whether the row failed that rule.
 The run succeeds, so downstream assets read the other rows, and each failing `"error"` rule's check still fails at `ERROR`.
 
-![The Checks tab for an asset with `filter=True` after some rows failed. The selected check shows its rendered constraint, the rule's expression, and the two rows that failed the rule.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-checks.png)
+![The Checks tab for an asset with `filter=True` after some rows failed. The selected check is non-blocking, and it shows its rendered constraint, the rule's expression, and the two rows that failed the rule.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-checks.png)
 
 ## Documentation
 
