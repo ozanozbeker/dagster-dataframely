@@ -3,6 +3,87 @@
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
 Each release below carries the migration, not just the list.
 
+## 0.10.0 - 2026-10-18
+
+### Breaking in 0.10
+
+**A schema declares each rule's severity, and `filter=True` replaces `quarantine=True`.**
+A rule is `"error"` unless the schema declares `"warn"`, so a schema that declares nothing validates as before.
+A row that fails only `"warn"` rules is written to the table, and its check fails at `WARN`.
+With `filter=True`, the package writes the rows that failed an `"error"` rule under `<name>__error_rows`.
+[Rule severity](https://ozanozbeker.com/dagster-dataframely/user-guide/rule-severity.html) shows where a severity goes.
+
+**The error rows have a new asset key.**
+A run no longer writes to `<name>_quarantine`, and nothing removes the rows an earlier run wrote there.
+To keep the old key, pass it as `error_rows_key`, such as `error_rows_key=["sales", "orders_quarantine"]`.
+
+**A check for an `"error"` rule fails at `ERROR` with `filter=True`.**
+In 0.9 the same check failed at `WARN` when the quarantine took the rows.
+Downstream assets still run, because with `filter=True` no check is blocking.
+With `filter=False`, a check for a `"warn"` rule is not blocking, where in 0.9 every check was.
+
+**`dd.wiring.asset_check_results` no longer takes `severity`.**
+It reads each rule's severity from the schema.
+
+The check names are unchanged, so check history carries over.
+Every other `quarantine` name becomes `error_rows`:
+
+| 0.9 | 0.10 |
+| --- | --- |
+| `@dd.asset(Orders, quarantine=True)` | `@dd.asset(Orders, filter=True)` |
+| `<name>_quarantine` | `<name>__error_rows` |
+| `dd.quarantine_spec` | `dd.error_rows_spec` |
+| `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` | `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` |
+| `dd.errors.QuarantineDirError` | `dd.errors.ErrorRowsDirError` |
+| `dd.errors.QuarantineKeyCollisionError` | `dd.errors.ErrorRowsKeyCollisionError` |
+| `dd.wiring.QuarantineWriter` | `dd.wiring.ErrorRowsWriter` |
+| `dd.wiring.quarantine_frame` | `dd.wiring.error_rows_frame` |
+| `dd.wiring.quarantine_path(..., quarantine_dir=...)` | `dd.wiring.error_rows_path(..., error_rows_dir=...)` |
+| `dd.wiring.file_writer(..., quarantine_dir=...)` | `dd.wiring.file_writer(..., error_rows_dir=...)` |
+| `dd.wiring.validation_results(..., quarantine_writer=...)` | `dd.wiring.validation_results(..., error_rows_writer=...)` |
+| `dd.wiring.validate_quarantine_key` | `dd.wiring.validate_error_rows_key` |
+| `dd.wiring.check_specs` | `dd.wiring.asset_check_specs` |
+| `dd.wiring.check_results` | `dd.wiring.asset_check_results` |
+| `dd.wiring.check_name` | `dd.wiring.asset_check_name` |
+| `dataframely/quarantine_address` | `dataframely/error_rows_address` |
+| `dataframely/invalid_count` | `dataframely/error_rows_count` |
+| `dataframely/invalid_sample` | `dataframely/error_rows_sample` |
+| `dataframely/invalid_by_rules` | `dataframely/error_rows_by_rules` |
+| `dataframely/valid_sample` | `dataframely/table_sample` |
+| `dataframely/valid_statistics/<group>` | `dataframely/table_statistics/<group>` |
+
+### Added in 0.10
+
+`dd.collection_checks(collection, members=...)` checks a Collection's filters over the tables its member assets wrote.
+It returns one asset check for each filter on each member, named `dy_filter__<name>`.
+The check reports a failing row and never removes it.
+`InvalidMembersError` and `FailurePropagationError` are new with it.
+
+`dd.testing.direct_invocation_result` reads what a direct call of an asset built with `dd.asset` returns.
+A test gets the materialization and each check result by check name, with no cast.
+
+`dd.asset` takes `error_rows_key` and `error_rows_io_manager_key`, to write the error rows under another key or through another IO manager.
+`error_rows_spec` reads both from the definition.
+
+A partitioned asset's checks have the asset's partitions, so each check evaluation records its partition.
+
+`error_rows_spec` puts the error rows in the asset's group, so the catalog lists them beside the asset.
+`group_name=` sets another group.
+
+### Fixed in 0.10
+
+A run with no error rows writes the error rows empty.
+Before, they kept the last failing run's rows while the materialization reported a clean run.
+A direct call skips the empty write, so a clean call still needs no `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`.
+
+`error_rows_spec` copies the asset's definition metadata.
+Before, a downstream load of the error rows failed for an asset with a non-default `io_manager_key`, or with `schema` or `partition_expr` metadata on a database IO manager.
+
+### Documentation in 0.10
+
+The guide has new pages for validation, rule severity, `filter=True` and Collection checks.
+The site has a logo and the Nord palette, and every screenshot uses the light theme.
+
 ## 0.9.0 - 2026-09-22
 
 ### Breaking in 0.9
