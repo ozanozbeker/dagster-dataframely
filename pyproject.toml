@@ -63,7 +63,7 @@ dev = [
 docs = ["great-docs>=0.17"]
 
 [build-system]
-requires = ["uv_build>=0.12.00,<0.13.0"]
+requires = ["uv_build>=0.12.0"]
 build-backend = "uv_build"
 
 [tool.pytest.ini_options]
@@ -72,7 +72,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 
 [tool.uv]
-required-version = ">=0.12,<0.14"
+required-version = ">=0.12"
 
 # In the workspace, so both projects use one `uv.lock` and the demo runs this working tree,
 # not a published wheel. A root `uv sync` skips the demo, so CI tests without its webserver.
