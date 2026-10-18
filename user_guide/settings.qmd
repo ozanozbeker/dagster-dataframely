@@ -45,6 +45,38 @@ Case does not matter, so `TRUE` is the same as `true`.
 
 There is no fourth source and no `set_default_*()` function.
 
+## `functools.partial` sets defaults for many assets
+
+`functools.partial` binds arguments to `dd.asset` once, for every asset that uses the result.
+A call can still override a bound argument:
+
+```{python}
+#| label: settings-2
+from functools import partial
+
+audited = partial(dd.asset, filter=True, max_failure_samples=10)
+
+
+@audited(Orders)
+def marketing_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders
+
+
+@audited(Orders, filter=False)
+def finance_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders
+```
+
+`marketing_orders` has `filter=True`, and `finance_orders` overrides it with `filter=False`.
+For both, at most 10 of the rows that failed a rule appear in that rule's check.
+A bound argument is an argument to `dd.asset`, the third source.
+So `max_failure_samples=10` overrides `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`.
+To use `audited` in several modules, define it in one module and import it.
+
+In dbt, a `+` config in `dbt_project.yml` sets a default for many tests.
+A `partial` is the nearest equivalent.
+The reasons there is no project-wide default are in [the out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/dbt-test-configs.md#severity-store_failures-and-schema-in-dbt_projectyml).
+
 ## Changing `check_granularity` starts a new check history
 
 `rule` gives each rule its own check and its own history.
