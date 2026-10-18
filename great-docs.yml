@@ -55,6 +55,7 @@ user_guide:
       - testing-an-asset.qmd
       - partitioning.qmd
       - lazyframes.qmd
+      - collection-checks.qmd
   - section: Reference
     contents:
       - settings.qmd
@@ -73,10 +74,12 @@ reference:
     - title: Core
       desc: >-
         `dd.asset` builds an asset from a schema, and `error_rows_spec` adds that asset's
-        error rows to the asset graph.
+        error rows to the asset graph. `collection_checks` reports a Collection's
+        collection filters as asset checks on its member assets.
       contents:
         - asset
         - error_rows_spec
+        - collection_checks
         - Granularity
         - SchemaRules
 
@@ -105,6 +108,8 @@ reference:
       contents:
         - errors.DagsterDataframelyError
         - errors.CollectionNotSupportedError
+        - errors.InvalidMembersError
+        - errors.FailurePropagationError
         - errors.ReservedColumnError
         - errors.InvalidColumnNameError
         - errors.CheckNameCollisionError
