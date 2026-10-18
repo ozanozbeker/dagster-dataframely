@@ -71,7 +71,7 @@ This package reports the error-rows address and never the location of the asset'
 _Avoid_: location, destination, and `path`, which assumes a filesystem
 
 **Error-rows key**: The asset key a writer writes the error rows under.
-It is `<name>_error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
+It is `<name>__error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
 `delegating_writer` passes it to the IO manager, and `file_writer` turns it into a path under `error_rows_dir`.
 _Avoid_: error-rows asset, because the error rows are not an asset
 
@@ -196,7 +196,7 @@ So the decorator is `dd.asset`, not `dy_asset`.
 The error-rows address is the exception: when the package writes no table, there is no materialization, so each check result has `dataframely/error_rows_address`, the same key the materialization uses (ADR-0004).
 `dataframely/` starts every materialization and definition metadata key this package names, as `dagster/` does for Dagster.
 The valid row count is the exception, because Dagster already has a key for it: `dagster/row_count`.
-`<name>_error_rows` is the default error-rows key.
+`<name>__error_rows` is the default error-rows key.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.
 Namespace, never prefix, even where the string is one.
