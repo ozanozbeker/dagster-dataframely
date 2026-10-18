@@ -83,6 +83,14 @@ reference:
         - Granularity
         - SchemaRules
 
+    - title: Testing
+      desc: >-
+        `direct_invocation_result` separates what a direct invocation of an asset built with
+        `dd.asset` yields into its materialization and its check results.
+      contents:
+        - testing.direct_invocation_result
+        - testing.DirectInvocationResult
+
     - title: Hand-wiring
       desc: >-
         `dd.asset` assembles these parts. Use them to build a `@dg.asset` yourself, where

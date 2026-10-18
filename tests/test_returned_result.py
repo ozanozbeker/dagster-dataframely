@@ -23,15 +23,20 @@ from tests.scenario import (
     Orders,
     clean_orders,
     cooccurring_orders,
-    events,
     materializations,
     materialize,
     mixed_orders,
     no_valid_orders,
-    results,
 )
 
 _VALID = dg.AssetKey(["orders"])
+
+
+def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
+    """Return the materialization a call yielded."""
+    materialization = dd.testing.direct_invocation_result(called).materialization
+    assert materialization is not None
+    return materialization
 
 
 class TestMaterialization:
@@ -44,7 +49,7 @@ class TestMaterialization:
                 value=clean_orders(), metadata={"source": "stripe", "batch": 7}
             )
 
-        metadata = results(events(orders))[_VALID].metadata or {}
+        metadata = _materialization(orders()).metadata or {}
 
         assert metadata["source"] == "stripe"
         assert metadata["batch"] == 7
@@ -71,7 +76,7 @@ class TestMaterialization:
             )
 
         # A call, not a run: in a run the IO manager writes `dagster/row_count` last.
-        called = results(events(orders))[_VALID].metadata or {}
+        called = _materialization(orders()).metadata or {}
 
         assert called["dagster/row_count"] == 3
 
@@ -84,7 +89,7 @@ class TestMaterialization:
                 tags={"run/flavour": "backfill"},
             )
 
-        result = results(events(orders))[_VALID]
+        result = _materialization(orders())
 
         assert result.data_version == dg.DataVersion("v1")
         assert result.tags == {"run/flavour": "backfill"}
@@ -112,7 +117,7 @@ class TestMaterialization:
         def orders() -> dg.MaterializeResult[pl.LazyFrame]:
             return dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
 
-        result = results(events(orders))[_VALID]
+        result = _materialization(orders())
 
         assert (result.metadata or {})["m"] == 1
         assert_frame_equal(result.value, clean_orders())
@@ -147,7 +152,7 @@ class TestMaterialization:
         def orders() -> pl.DataFrame:
             return clean_orders()
 
-        result = results(events(orders))[_VALID]
+        result = _materialization(orders())
 
         assert result.data_version is None
         assert result.tags is None
@@ -244,7 +249,7 @@ class TestErrors:
         self, fn: Callable[[], object], error: type[Exception], message: str
     ):
         with pytest.raises(error, match=re.escape(message)):
-            events(_orders_asset(fn))
+            dd.testing.direct_invocation_result(_orders_asset(fn)())
 
     @pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
     def test_a_rejected_return_fails_the_run_and_writes_nothing(
@@ -283,12 +288,12 @@ class TestErrors:
             )
 
         with pytest.raises(ValidationAbortError):
-            events(orders)
+            dd.testing.direct_invocation_result(orders())
 
     def test_the_frame_guard_names_every_route_out(self):
         """The error for a return that is not a frame names every accepted return and the hand-wired alternative."""
         with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-            events(_orders_asset(lambda: "orders"))
+            dd.testing.direct_invocation_result(_orders_asset(lambda: "orders")())
         message = str(raised.value)
 
         assert "Polars DataFrame or LazyFrame" in message

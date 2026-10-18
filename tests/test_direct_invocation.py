@@ -15,15 +15,13 @@ from polars.testing import assert_frame_equal
 
 import dagster_dataframely as dd
 from dagster_dataframely.errors import ColumnSchemaError, ErrorRowsDirError
+from dagster_dataframely.testing import DirectInvocationResult
 from tests.scenario import (
     Orders,
-    Yielded,
     clean_orders,
     cooccurring_orders,
-    events,
     materialize,
     mixed_orders,
-    results,
     wrong_dtype_orders,
 )
 
@@ -41,9 +39,11 @@ def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefi
     return orders
 
 
-def _called(asset: dg.AssetsDefinition, *, filtering: bool) -> Yielded:
+def _called(asset: dg.AssetsDefinition, *, filtering: bool) -> DirectInvocationResult:
     """Call the asset, passing a context when `filter=True` adds a `context` parameter."""
-    return events(asset, *((dg.build_asset_context(),) if filtering else ()))
+    return dd.testing.direct_invocation_result(
+        asset(*((dg.build_asset_context(),) if filtering else ()))
+    )
 
 
 # The two failure policies; `cooccurring_orders` has 3 valid rows and 1 invalid, so a row count shows which rows a call returned.
@@ -61,18 +61,20 @@ def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return directory
 
 
-def _tables(events: Yielded) -> dict[dg.AssetKey, pl.DataFrame]:
-    """The frame each output produced, keyed by asset."""
-    return {key: result.value for key, result in results(events).items()}
+def _materialization(
+    result: DirectInvocationResult,
+) -> dg.MaterializeResult[pl.DataFrame]:
+    """Return the materialization the call yielded."""
+    assert result.materialization is not None
+    return result.materialization
 
 
-def _checks(events: Yielded) -> dict[dg.AssetCheckKey, bool]:
-    """Every check result's `passed`, keyed by `dg.AssetCheckKey`."""
+def _checks(result: DirectInvocationResult) -> dict[dg.AssetCheckKey, bool]:
+    """Return every check result's `passed`, keyed by `dg.AssetCheckKey` like a run's evaluations."""
     return {
-        dg.AssetCheckKey(event.asset_key, event.check_name): event.passed
-        for event in events
-        if isinstance(event, dg.AssetCheckResult)
-        if event.asset_key is not None and event.check_name is not None
+        dg.AssetCheckKey(check.asset_key, name): check.passed
+        for name, check in result.checks.items()
+        if check.asset_key is not None
     }
 
 
@@ -82,10 +84,9 @@ def test_calling_the_asset_returns_its_frame(
 ):
     asset = _orders(frame, filter=filtering)
 
-    tables = _tables(_called(asset, filtering=filtering))
+    materialization = _materialization(_called(asset, filtering=filtering))
 
-    assert tables
-    assert_frame_equal(next(iter(tables.values())), clean_orders())
+    assert_frame_equal(materialization.value, clean_orders())
 
 
 @pytest.mark.parametrize(("frame", "filtering"), _SHAPES)
@@ -108,12 +109,10 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
 ):
     asset = _orders(frame, filter=filtering)
     result = materialize(tmp_path, asset)
+    called = _materialization(_called(asset, filtering=filtering))
 
     assert result.success
-    assert {
-        key: len(table)
-        for key, table in _tables(_called(asset, filtering=filtering)).items()
-    } == {
+    assert {called.asset_key: len(called.value)} == {
         event.asset_key: event.step_materialization_data.materialization.metadata[
             "dagster/row_count"
         ].value
@@ -141,7 +140,7 @@ def test_a_column_schema_drift_raises_out_of_the_call():
     asset = _orders(wrong_dtype_orders)
 
     with pytest.raises(ColumnSchemaError) as raised:
-        events(asset)
+        dd.testing.direct_invocation_result(asset())
 
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
@@ -151,11 +150,11 @@ def test_a_called_error_rows_writes_a_real_file_under_the_configured_root(
 ):
     asset = _orders(mixed_orders, filter=True)
 
-    tables = _tables(_called(asset, filtering=True))
+    materialization = _materialization(_called(asset, filtering=True))
     written = pl.read_parquet(error_rows_dir / "orders_error_rows.parquet")
 
-    assert set(tables) == {dg.AssetKey(["orders"])}
-    assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
+    assert materialization.asset_key == dg.AssetKey(["orders"])
+    assert_frame_equal(materialization.value, clean_orders())
     assert written.height == 3
     assert "dy_rule__amount__min" in written.columns
 
@@ -173,9 +172,9 @@ def test_a_called_error_rows_with_no_root_says_so_rather_than_choosing_one():
 def test_a_call_with_every_row_valid_needs_no_root_at_all():
     asset = _orders(clean_orders, filter=True)
 
-    tables = _tables(_called(asset, filtering=True))
+    materialization = _materialization(_called(asset, filtering=True))
 
-    assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
+    assert_frame_equal(materialization.value, clean_orders())
 
 
 def test_a_call_with_every_row_valid_writes_nothing_under_error_rows_dir(
@@ -207,7 +206,9 @@ def test_a_called_partitioned_error_rows_lands_under_its_partition(
     def orders() -> pl.DataFrame:
         return mixed_orders()
 
-    events(orders, dg.build_asset_context(partition_key="2026-01-02"))
+    dd.testing.direct_invocation_result(
+        orders(dg.build_asset_context(partition_key="2026-01-02"))
+    )
 
     assert (error_rows_dir / "orders_error_rows" / "2026-01-02.parquet").exists()
 
@@ -221,10 +222,14 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
         seen["partition"] = context.partition_key
         return clean_orders()
 
-    tables = _tables(events(orders, dg.build_asset_context(partition_key="2026-01-02")))
+    materialization = _materialization(
+        dd.testing.direct_invocation_result(
+            orders(dg.build_asset_context(partition_key="2026-01-02"))
+        )
+    )
 
     assert seen == {"partition": "2026-01-02"}
-    assert set(tables) == {dg.AssetKey(["orders"])}
+    assert materialization.asset_key == dg.AssetKey(["orders"])
 
 
 def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too():
@@ -237,6 +242,10 @@ def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too
         assert isinstance(context, dg.AssetExecutionContext)
         return raw_orders
 
-    tables = _tables(events(orders, dg.build_asset_context(), clean_orders()))
+    materialization = _materialization(
+        dd.testing.direct_invocation_result(
+            orders(dg.build_asset_context(), clean_orders())
+        )
+    )
 
-    assert_frame_equal(tables[dg.AssetKey(["orders"])], clean_orders())
+    assert_frame_equal(materialization.value, clean_orders())

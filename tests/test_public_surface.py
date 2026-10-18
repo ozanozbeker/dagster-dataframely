@@ -1,4 +1,4 @@
-"""The public names of `dagster_dataframely`, `dd.errors` and `dd.wiring`.
+"""The public names of `dagster_dataframely`, `dd.errors`, `dd.testing` and `dd.wiring`.
 
 Each set lists its names rather than reading them from `__all__`, so every new public name needs a line in this file.
 """
@@ -12,6 +12,7 @@ _PUBLIC = {
     "collection_checks",
     "error_rows_spec",
     "errors",
+    "testing",
     "wiring",
     # At the root rather than in a namespace, because annotated code uses them often.
     "Granularity",
@@ -33,6 +34,11 @@ _WIRING = {
     "table_schema",
     "validate_error_rows_key",
 }
+
+_TESTING = {"DirectInvocationResult", "direct_invocation_result"}
+
+# Imported by `dd.testing`, and listed so a new import fails a test.
+_TESTING_IMPORTS = {"Iterable", "dataclass", "dg", "pl"}
 
 # Imported by `dd.errors` for its annotations, and listed so a third import fails a test.
 _ERROR_IMPORTS = {"Mapping", "Sequence"}
@@ -65,6 +71,10 @@ def test_the_error_module_exports_exactly_its_family():
     assert set(dd.errors.__all__) == _ERRORS
 
 
+def test_the_testing_module_exports_exactly_the_record_and_its_function():
+    assert set(dd.testing.__all__) == _TESTING
+
+
 def test_the_wiring_module_exports_exactly_the_assembled_parts():
     assert set(dd.wiring.__all__) == _WIRING
 
@@ -73,14 +83,16 @@ def test_nothing_public_leaks_past_any_export_list():
     """`__all__` controls only `import *`, so this also compares each module's attributes."""
     reachable = {name for name in vars(dd) if not name.startswith("_")}
     errors = {name for name in vars(dd.errors) if not name.startswith("_")}
+    testing = {name for name in vars(dd.testing) if not name.startswith("_")}
     wiring = {name for name in vars(dd.wiring) if not name.startswith("_")}
 
     assert reachable == _PUBLIC
     assert errors == _ERRORS | _ERROR_IMPORTS
+    assert testing == _TESTING | _TESTING_IMPORTS
     assert wiring == _WIRING
 
 
-def test_only_errors_and_wiring_have_public_module_names():
+def test_only_errors_testing_and_wiring_have_public_module_names():
     """Every other module is private, so renaming or splitting one does not break an import."""
     public = [
         module.name
@@ -88,7 +100,7 @@ def test_only_errors_and_wiring_have_public_module_names():
         if not module.name.startswith("_")
     ]
 
-    assert sorted(public) == ["errors", "wiring"]
+    assert sorted(public) == ["errors", "testing", "wiring"]
 
 
 def test_the_error_family_is_exported_whole():

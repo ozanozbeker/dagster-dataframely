@@ -27,8 +27,8 @@ storefront_orders().write_parquet("raw/orders/2026-01-02.parquet")
 To test an asset, call it.
 Direct invocation is Dagster's documented way to unit-test an asset.
 It needs no run, no IO manager and no instance.
-A call returns the same materializations and check results a run yields, as ordinary Python objects.
-The validated frame is the materialization's `value`:
+A call returns the same materialization and check results a run yields, as ordinary Python objects.
+`dd.testing.direct_invocation_result` separates them into the materialization and the check results:
 
 ```{python}
 #| label: testing-an-asset-1
@@ -47,20 +47,13 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 def test_orders_filters_the_failing_lines(error_rows_dir):
-    events = list(orders(dg.build_asset_context(), marketplace_orders()))
-    tables = {
-        event.asset_key: event.value
-        for event in events
-        if isinstance(event, dg.MaterializeResult)
-    }
-    checks = {
-        event.check_name: event.passed
-        for event in events
-        if isinstance(event, dg.AssetCheckResult)
-    }
+    result = dd.testing.direct_invocation_result(
+        orders(dg.build_asset_context(), marketplace_orders())
+    )
 
-    assert tables[dg.AssetKey(["orders"])].height == 12
-    assert not checks["dy_rule__amount__min"]
+    assert result.materialization is not None
+    assert result.materialization.value.height == 12
+    assert not result.checks["dy_rule__amount__min"].passed
     assert pl.read_parquet(error_rows_dir / "orders_error_rows.parquet").height == 8
 ```
 
@@ -68,8 +61,8 @@ def test_orders_filters_the_failing_lines(error_rows_dir):
 #| label: testing-an-asset-4
 #| echo: false
 #| output: false
-# A cell cannot run a pytest test, so the three assertions above would otherwise ship
-# unchecked on the one page that teaches testing. Call the body directly: only the fixture
+# A cell cannot run a pytest test, so the assertions on this page would otherwise ship
+# unchecked on the one page that teaches testing. Call the bodies directly: only the fixture
 # carries a decorator, and what it supplies is a directory and an environment variable.
 import os
 import tempfile
@@ -79,8 +72,20 @@ with tempfile.TemporaryDirectory() as tmp:
     test_orders_filters_the_failing_lines(Path(tmp))
 ```
 
+**`materialization` is `None` when the decorated function returns `None`.**
+So a test asserts that it is not `None` before it reads the frame.
+The assertion also narrows its type to `dg.MaterializeResult` for a type checker.
+The validated frame is its `value`.
+Its `metadata` has the keys a run writes, such as `dataframely/error_rows_count`.
+
+**`checks` holds each `dg.AssetCheckResult` whole, keyed by check name.**
+A failing rule's result has the failing rows in its `dy_failed_sample` metadata, so a test can assert which rows a rule failed.
+
+**Pass the helper the call's return value, not a list of it.**
+Dagster annotates the call as returning `object`, so a type checker rejects `list(orders(...))`.
+
 **A writer writes the error rows, and the call does not yield them.**
-The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from an event.
+The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from the result.
 In a run too, the IO manager writes the error rows, and Dagster records no materialization for them.
 
 **An asset with `filter=True` takes a `context` parameter**, even when your function does not declare one.
@@ -98,7 +103,7 @@ def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 clean = storefront_orders()
-events = list(plain_orders(clean))
+result = dd.testing.direct_invocation_result(plain_orders(clean))
 ```
 
 The call yields a separate `dg.AssetCheckResult` for every check the asset declares, with its asset key set.
@@ -115,11 +120,35 @@ def daily_orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     return pl.read_parquet(f"raw/orders/{context.partition_key}.parquet")
 
 
-events = list(daily_orders(dg.build_asset_context(partition_key="2026-01-02")))
+result = dd.testing.direct_invocation_result(
+    daily_orders(dg.build_asset_context(partition_key="2026-01-02"))
+)
 ```
 
-An asset that aborts raises the error from the call.
+**An asset that aborts raises the error from the helper, not from the call.**
+The call returns a generator, and the package validates the frame only when something iterates it.
+The helper iterates it, so put the helper inside `pytest.raises`:
+
+```{python}
+#| label: testing-an-asset-5
+def test_plain_orders_stops_at_a_failing_line():
+    with pytest.raises(dd.errors.ValidationAbortError):
+        dd.testing.direct_invocation_result(plain_orders(marketplace_orders()))
+```
+
+```{python}
+#| label: testing-an-asset-6
+#| echo: false
+#| output: false
+test_plain_orders_stops_at_a_failing_line()
+```
+
 Test a failing `"error"` rule with `pytest.raises(dd.errors.ValidationAbortError)`, and a frame whose columns or dtypes differ from the schema with `pytest.raises(dd.errors.ColumnSchemaError)`.
+
+**The helper raises `TypeError` for anything that calling an asset built with `dd.asset` does not return.**
+That covers the asset itself, uncalled, and the frame or `dg.MaterializeResult` a plain `@dg.asset` returns.
+It also covers a second materialization and a repeated check name.
+The check results of `dd.collection_checks` repeat each check name, once per member.
 
 **Direct invocation does not support metadata added through the context.**
 `context.add_asset_metadata` raises when you call the asset directly:
@@ -129,4 +158,4 @@ AttributeError: 'DirectAssetExecutionContext' object has no attribute '_step_exe
 ```
 
 A plain `@dg.asset` raises the same error, so the limit is Dagster's, not this package's.
-Return a `dg.MaterializeResult` instead: a call yields it with its metadata, tags and data version, so a test can read them.
+Return a `dg.MaterializeResult` instead: a call yields it with its metadata, tags and data version, so a test reads them from `result.materialization`.

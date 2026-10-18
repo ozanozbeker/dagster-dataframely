@@ -1,4 +1,4 @@
-from dagster_dataframely import errors, wiring
+from dagster_dataframely import errors, testing, wiring
 from dagster_dataframely._asset import asset
 from dagster_dataframely._collection import collection_checks
 from dagster_dataframely._error_rows import error_rows_spec
@@ -11,5 +11,6 @@ __all__ = [
     "collection_checks",
     "error_rows_spec",
     "errors",
+    "testing",
     "wiring",
 ]

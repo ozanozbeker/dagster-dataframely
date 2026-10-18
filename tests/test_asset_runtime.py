@@ -62,8 +62,11 @@ class TestCleanFrame:
 
     def test_a_clean_run_emits_row_count(self):
         # Called directly, because in a run `dagster-polars` writes the same key.
-        yielded = results(orders(clean_orders()))  # pyrefly: ignore[bad-argument-type]
-        metadata = yielded[dg.AssetKey(["orders"])].metadata or {}
+        materialization = dd.testing.direct_invocation_result(
+            orders(clean_orders())
+        ).materialization
+        assert materialization is not None
+        metadata = materialization.metadata or {}
 
         assert metadata["dagster/row_count"] == 3
 

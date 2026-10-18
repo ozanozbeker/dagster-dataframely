@@ -88,15 +88,8 @@ def graph(defs: dg.Definitions) -> AssetGraph:
     return defs.resolve_asset_graph()
 
 
-Yielded = list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-
-
 def _names(keys: Iterable[dg.AssetKey]) -> set[str]:
     return {key.to_user_string() for key in keys}
-
-
-def _events(asset: dg.AssetsDefinition, *args: object) -> Yielded:
-    return list(asset(*args))  # pyrefly: ignore[bad-argument-type]
 
 
 def test_every_group_holds_the_assets_the_readme_lists(graph: AssetGraph):
@@ -215,34 +208,38 @@ def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_apac_skips_the_days_before_it_opened():
     key = dg.MultiPartitionKey({"day": "2026-08-02", "region": "apac"})
     context = dg.build_asset_context(partition_key=key)
-    events = _events(regional_orders, context, _data.storefront_orders())
-    assert not any(isinstance(event, dg.MaterializeResult) for event in events)
+    result = dd.testing.direct_invocation_result(
+        regional_orders(context, _data.storefront_orders())
+    )
+    assert result.materialization is None
 
 
 def test_finance_stops_the_load_on_one_invalid_line():
     with pytest.raises(dd.errors.ValidationAbortError):
-        _events(finance_orders, _data.marketplace_orders())
+        dd.testing.direct_invocation_result(finance_orders(_data.marketplace_orders()))
 
 
 def test_the_partner_feed_stops_at_the_column_schema_check():
     with pytest.raises(dd.errors.ColumnSchemaError, match="quantity"):
-        _events(partner_orders, _data.partner_orders())
+        dd.testing.direct_invocation_result(partner_orders(_data.partner_orders()))
 
 
 def test_the_legacy_migration_writes_only_the_error_rows(error_rows_dir: Path):
     with pytest.raises(dd.errors.NoValidRowsError):
-        _events(legacy_orders, dg.build_asset_context(), _data.legacy_orders())
+        dd.testing.direct_invocation_result(
+            legacy_orders(dg.build_asset_context(), _data.legacy_orders())
+        )
     assert (
         pl.read_parquet(error_rows_dir / "legacy_orders_error_rows.parquet").height == 3
     )
 
 
 def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Path):
-    events = _events(
-        marketing_orders, dg.build_asset_context(), _data.marketplace_orders()
+    result = dd.testing.direct_invocation_result(
+        marketing_orders(dg.build_asset_context(), _data.marketplace_orders())
     )
-    materialization = next(e for e in events if isinstance(e, dg.MaterializeResult))
-    assert materialization.value.height == 12
+    assert result.materialization is not None
+    assert result.materialization.value.height == 12
     assert (
         pl.read_parquet(error_rows_dir / "marketing_orders_error_rows.parquet").height
         == 8
@@ -250,8 +247,10 @@ def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Pa
 
 
 def test_a_returned_result_is_inspectable_by_calling_the_asset():
-    events = _events(orders_snapshot, _data.storefront_orders())
-    materialization = next(e for e in events if isinstance(e, dg.MaterializeResult))
+    materialization = dd.testing.direct_invocation_result(
+        orders_snapshot(_data.storefront_orders())
+    ).materialization
+    assert materialization is not None
     metadata = materialization.metadata or {}
 
     assert materialization.value.height == 12
