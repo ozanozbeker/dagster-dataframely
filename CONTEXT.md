@@ -50,7 +50,7 @@ The package validates nothing, nothing materializes, the partition stays unmater
 Dagster has no noun for it, only `output_required=False` and "the function can conditionally not `yield` a result".
 _Avoid_: empty run, no-op, conditional materialization
 
-**Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the asset key `<name>_error_rows` when the asset has `filter=True`.
+**Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the error-rows key when the asset has `filter=True`.
 They are not an asset, and they are not in the asset graph unless `error_rows_spec` adds them.
 With `filter=True`, a run writes the other rows to the asset's table, so the two tables never share a row.
 With `filter=False`, a row that fails an `"error"` rule fails the run, and the package writes nothing.
@@ -59,7 +59,8 @@ _Avoid_: quarantine, invalid rows (Dataframely's, and it includes rows that fail
 
 **Writer**: A function that writes the error rows and returns the error-rows address.
 `validation_results` receives only that address.
-`delegating_writer` passes the rows to the asset's own IO manager, and `file_writer` writes a parquet file under `error_rows_dir`.
+`delegating_writer` passes the rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
+`file_writer` writes a parquet file under `error_rows_dir`.
 Name the one you mean.
 _Avoid_: sink, emitter, exporter, router, dispatcher, resolver, and **the fallback** for `file_writer`
 
@@ -69,8 +70,13 @@ Dagster uses the word address, in `TableMetadataSet.extract_storage_address`.
 This package reports the error-rows address and never the location of the asset's table.
 _Avoid_: location, destination, and `path`, which assumes a filesystem
 
+**Error-rows key**: The asset key a writer writes the error rows under.
+It is `<name>_error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
+`delegating_writer` passes it to the IO manager, and `file_writer` turns it into a path under `error_rows_dir`.
+_Avoid_: error-rows asset, because the error rows are not an asset
+
 **`error_rows_dir`**: The directory `file_writer` writes under.
-The asset key and the partition key form the rest of the file path.
+The error-rows key and the partition key form the rest of the file path.
 Set by `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` and nothing else.
 _Avoid_: root, base dir, output dir
 
@@ -188,9 +194,9 @@ _Avoid_: preview, example, head
 `dy_` starts every check name, rule column and check-result metadata key this package generates, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
 The error-rows address is the exception: when the package writes no table, there is no materialization, so each check result has `dataframely/error_rows_address`, the same key the materialization uses (ADR-0004).
-`dataframely/` starts every materialization metadata key this package names, as `dagster/` does for Dagster.
+`dataframely/` starts every materialization and definition metadata key this package names, as `dagster/` does for Dagster.
 The valid row count is the exception, because Dagster already has a key for it: `dagster/row_count`.
-`<name>_error_rows` is the asset key of the error rows.
+`<name>_error_rows` is the default error-rows key.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.
 Namespace, never prefix, even where the string is one.
