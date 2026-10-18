@@ -80,9 +80,12 @@ launch --assets "key:finance_orders"
 FINANCE_RUN=$(latest_failure)
 launch --assets "key:legacy_orders"
 
+# Without `preferredColorScheme=1`, headless Chrome renders in the macOS appearance, and the
+# screenshots use the light theme. Chrome has no `--force-light-mode` switch.
 # name url css_width css_height crop_top crop_height
 shoot() {
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
+    --blink-settings=preferredColorScheme=1 \
     --force-device-scale-factor=2 --window-size="$3,$4" \
     --virtual-time-budget=25000 --screenshot="$RAW/$1.png" "$2" 2>/dev/null
   sips --cropOffset "$5" "$NAV" -c "$6" "$(( $3 * 2 - NAV ))" \
