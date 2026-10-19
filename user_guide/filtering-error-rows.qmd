@@ -94,9 +94,15 @@ The first is a `UPathIOManager` and the second is a `DbIOManager`.
 Nearly every first-party IO manager subclasses one of the two.
 
 The error rows have the original columns, then one `String` rule column per rule, with `valid`, `invalid` or `unknown` in each row.
-A rule column takes its rule's name, so it matches the check's name only at the default `rule` granularity.
+A rule column has the check name its rule gets at the default `rule` granularity, such as `dy_rule__amount__min`.
 At `column` or `schema` granularity, use the rule column, not a check, to find the rows that failed a rule.
 Check samples have at most `max_failure_samples` rows per rule, so the rule columns are the only complete record of which rules each row failed.
+
+The error rows are not in the format `FailureInfo.write_parquet` writes, so `FailureInfo.read_parquet` and `FailureInfo.scan_parquet` cannot read them.
+Both read the names of the rule columns from the parquet metadata key `rule_columns`.
+The package passes the error rows to the asset's IO manager, which can write them to a database table.
+A database table has no parquet metadata to hold that key.
+The rule columns also have check names, not the name Dataframely gives each rule, such as `amount|min`.
 
 The table's materialization has the error-rows address, the number of error rows, and which sets of rules they failed together.
 See [What a run produces](what-a-run-produces.qmd).
