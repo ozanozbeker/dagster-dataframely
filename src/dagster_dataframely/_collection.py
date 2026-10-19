@@ -13,6 +13,7 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
+from dagster_dataframely._checks import failed_rows_description
 from dagster_dataframely._naming import collection_filter_check_name
 from dagster_dataframely._rules import Severity, collection_filter_severities, quoted
 from dagster_dataframely._samples import sample_metadata, sample_rows
@@ -188,6 +189,7 @@ def collection_checks(
                 severity=dg.AssetCheckSeverity.ERROR
                 if severities[check.filter_name] == "error"
                 else dg.AssetCheckSeverity.WARN,
+                description=failed_rows_description(failed),
                 metadata=metadata,
             )
 

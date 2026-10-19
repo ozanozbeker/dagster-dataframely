@@ -97,6 +97,18 @@ So in a collapsed check, a rule that a thousand rows failed cannot fill the samp
 
 A run that raises `NoValidRowsError` yields no materialization for the table, so the package copies `dataframely/error_rows_address` onto every check result instead.
 
+Each check result also has a description, which the Checks tab shows on each evaluation row.
+It repeats the counts and names in the result's metadata.
+
+| check | failed | passed |
+| --- | --- | --- |
+| a check reporting for one rule | `3 rows failed.` | `No row failed.` |
+| a collapsed check | `2 rules failed: paid_orders_have_amount (1 row), primary_key (3 rows).` | `No rule failed.` |
+| the column-schema check | `2 columns do not match: amount, status.` | `Every column matches.` |
+
+A check reporting for one rule does not name the rule.
+A collapsed check names only the rules that failed.
+
 The Columns tab shows the schema from the asset definition before the first run.
 After a run, it shows the `dagster/column_schema` on the latest materialization, with the descriptions and tags from the definition.
 That entry replaces any column schema your IO manager writes.

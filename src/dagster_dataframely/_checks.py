@@ -3,7 +3,7 @@
 Specs and results both group the rules with `_rule_sets`, so they name the same checks only when given the same settings.
 """
 
-from collections.abc import Generator, Iterator, Sequence
+from collections.abc import Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import dagster as dg
@@ -193,6 +193,11 @@ def _column_schema_problems(
     ]
 
 
+def _counted(count: int, noun: str) -> str:
+    """Return `count` and `noun`, plural unless `count` is 1."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def column_schema_result(
     problems: Sequence[dict[str, str]] = (), *, asset_key: dg.AssetKey
 ) -> dg.AssetCheckResult:
@@ -202,13 +207,19 @@ def column_schema_result(
     """
     if not problems:
         return dg.AssetCheckResult(
-            check_name=COLUMN_SCHEMA_CHECK, asset_key=asset_key, passed=True
+            check_name=COLUMN_SCHEMA_CHECK,
+            asset_key=asset_key,
+            passed=True,
+            description="Every column matches.",
         )
+    columns: str = ", ".join(problem["column"] for problem in problems)
+    verb: str = "does" if len(problems) == 1 else "do"
     return dg.AssetCheckResult(
         check_name=COLUMN_SCHEMA_CHECK,
         asset_key=asset_key,
         passed=False,
         severity=dg.AssetCheckSeverity.ERROR,
+        description=f"{_counted(len(problems), 'column')} {verb} not match: {columns}.",
         metadata={
             "dataframely/column_schema_errors": dg.MetadataValue.table([
                 dg.TableRecord(problem) for problem in problems
@@ -266,6 +277,24 @@ def _failed_rows(
         rule: sample_rows(details.filter(pl.col(rule) == _INVALID).drop(columns), limit)
         for rule in counts
     }
+
+
+def failed_rows_description(failed: int) -> str:
+    """Describe the result of a check for one rule or one collection filter.
+
+    It omits the rule, because the spec's description already shows it.
+    """
+    return f"{_counted(failed, 'row')} failed." if failed else "No row failed."
+
+
+def _failed_rules_description(failed: dict[str, int]) -> str:
+    """Describe the result of a check for several rules, naming each rule that failed."""
+    counts: list[str] = [
+        f"{rule} ({_counted(count, 'row')})" for rule, count in failed.items() if count
+    ]
+    if not counts:
+        return "No rule failed."
+    return f"{_counted(len(counts), 'rule')} failed: {', '.join(counts)}."
 
 
 def _rule_metadata(
@@ -329,6 +358,16 @@ def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
             rule.name: counts.get(rule.name, 0) for rule in rule_set.rules
         }
         first: DescribedRule = rule_set.rules[0]
+        if rule_set.collapsed:
+            description: str = _failed_rules_description(failed)
+            metadata: Mapping[str, str | int | dg.TableMetadataValue] = (
+                _collapsed_metadata(rule_set.rules, failed, sampled)
+            )
+        else:
+            description = failed_rows_description(failed[first.name])
+            metadata = _rule_metadata(
+                first, failed[first.name], sampled.get(first.name, [])
+            )
         results.append(
             dg.AssetCheckResult(
                 check_name=rule_set.name,
@@ -340,11 +379,8 @@ def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
                     for rule in rule_set.rules
                 )
                 else dg.AssetCheckSeverity.WARN,
-                metadata=_collapsed_metadata(rule_set.rules, failed, sampled)
-                if rule_set.collapsed
-                else _rule_metadata(
-                    first, failed[first.name], sampled.get(first.name, [])
-                ),
+                description=description,
+                metadata=metadata,
             )
         )
     return results

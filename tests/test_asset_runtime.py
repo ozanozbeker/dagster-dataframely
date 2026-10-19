@@ -22,6 +22,7 @@ from dagster_dataframely.errors import (
 )
 from dagster_dataframely.wiring import (
     AssetYield,
+    asset_check_results,
     asset_check_specs,
     schema_metadata,
     table_schema,
@@ -430,6 +431,16 @@ class TestFilterWithValidRows:
             {"dataframely/rule", "dataframely/rule_expr"} <= set(e.metadata)
             for e in rules
         )
+
+    def test_every_evaluation_records_the_description_a_direct_call_returns(
+        self, tmp_path: Path
+    ):
+        evaluations = check_evaluations(materialize(tmp_path, _filtered))
+        direct = asset_check_results(Orders, mixed_orders(), asset_key=_GOOD_KEY)
+
+        assert {name: e.description for name, e in evaluations.items()} == {
+            result.check_name: result.description for result in direct
+        }
 
     def test_downstream_proceeds_on_the_data_that_is_fine(self, tmp_path: Path):
         """The rules' checks are not blocking, so the downstream asset runs on the valid rows."""

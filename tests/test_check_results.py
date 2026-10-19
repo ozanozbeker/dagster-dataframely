@@ -1,6 +1,6 @@
 """Tests for `asset_check_results`, mostly called directly, with no run.
 
-`test_asset_runtime.py` asserts the result contents, which come from the same functions `validation_results` uses. This file asserts the check names, the severity and the asset key, and `test_severity_outcomes.py` asserts each rule's severity.
+`test_asset_runtime.py` asserts the result contents, which come from the same functions `validation_results` uses. This file asserts the check names, the severity, the asset key and the description, and `test_severity_outcomes.py` asserts each rule's severity.
 """
 
 from collections.abc import Callable, Iterator
@@ -63,6 +63,16 @@ def _results(
             **settings,  # pyrefly: ignore[bad-argument-type]
         )
     )
+
+
+def _descriptions(
+    frame: pl.DataFrame | pl.LazyFrame, **settings: object
+) -> dict[str, str | None]:
+    return {
+        result.check_name: result.description
+        for result in _results(frame, **settings)
+        if result.check_name is not None
+    }
 
 
 def _rules(results: list[dg.AssetCheckResult]) -> list[dg.AssetCheckResult]:
@@ -162,6 +172,62 @@ class TestDirectCall:
 
     def test_a_lazy_frame_reports_exactly_what_an_eager_one_does(self):
         assert _results(mixed_orders().lazy()) == _results(mixed_orders())
+
+
+class TestDescription:
+    """The sentence each result's `description` holds."""
+
+    @pytest.mark.parametrize(
+        ("frame", "expected"),
+        [
+            (mixed_orders, "1 row failed."),
+            (no_valid_orders, "2 rows failed."),
+            (clean_orders, "No row failed."),
+        ],
+    )
+    def test_a_one_rule_result_counts_the_rows_that_failed(
+        self, frame: Callable[[], pl.DataFrame], expected: str
+    ):
+        assert _descriptions(frame())["dy_rule__amount__min"] == expected
+
+    @pytest.mark.parametrize(
+        ("frame", "expected"),
+        [
+            (
+                mixed_orders,
+                (
+                    "3 rules failed: paid_orders_have_amount (1 row),"
+                    " email|check__lowercase (1 row), amount|min (1 row)."
+                ),
+            ),
+            (no_valid_orders, "1 rule failed: amount|min (2 rows)."),
+            (clean_orders, "No rule failed."),
+        ],
+    )
+    def test_a_collapsed_result_names_only_the_rules_that_failed(
+        self, frame: Callable[[], pl.DataFrame], expected: str
+    ):
+        descriptions = _descriptions(frame(), check_granularity="schema")
+
+        assert descriptions["dy_schema__rules"] == expected
+
+    @pytest.mark.parametrize(
+        ("frame", "expected"),
+        [
+            (wrong_dtype_orders, "1 column does not match: quantity."),
+            (
+                lambda: wrong_dtype_orders().drop("note"),
+                "2 columns do not match: quantity, note.",
+            ),
+        ],
+    )
+    def test_a_failed_column_schema_result_names_the_columns_that_do_not_match(
+        self, frame: Callable[[], pl.DataFrame], expected: str
+    ):
+        assert _before_the_raise(frame())[0].description == expected
+
+    def test_a_passing_column_schema_result_reports_that_every_column_matches(self):
+        assert _descriptions(clean_orders())[COLUMN_SCHEMA] == "Every column matches."
 
 
 @dg.asset(name="orders", metadata=schema_metadata(Orders))
