@@ -208,7 +208,7 @@ The run also raises when that key is the asset's own key.
 It has no IO manager, so `error_rows_io_manager_key` changes nothing there.
 Dagster still checks the asset's required resources, so pass a value for that resource key, such as `dg.build_asset_context(resources={"audit": None})`.
 
-## The error rows are not an asset
+## `error_rows_spec` adds the error rows to the asset graph
 
 They are a record of a run.
 They are not in the asset graph, so no asset can depend on them until you add them with `error_rows_spec`:
@@ -221,7 +221,7 @@ defs = dg.Definitions(
 )
 ```
 
-![The lineage view shows the error rows' node. Its one edge comes from `marketing_orders`, the asset with `filter=True`, not from the upstream `raw_marketplace_orders`. The node has a dashed border because nothing materializes it.](../assets/images/error-rows-lineage.png)
+![The lineage view shows the error rows' node. Its one edge comes from `marketing_orders`, the asset with `filter=True`, not from the upstream `raw_marketplace_orders`. Dagster draws the node with a dashed border because it is an external asset, and it shows the materialization that the step of `marketing_orders` logged.](../assets/images/error-rows-lineage.png)
 
 `error_rows_spec` returns a `dg.AssetSpec` keyed `orders__error_rows` that depends on `orders` and has its own Columns tab.
 It has no compute function, because the decorator already writes the rows.
@@ -245,8 +245,43 @@ With an asset definition, it overrides the asset's group and does not raise.
 For example, pass `group_name="error_rows"` on every call to list every asset's error rows in one group.
 With an asset key and no `group_name=`, the error rows are in the `default` group.
 
-**The error rows never receive a materialization event, even with a spec.**
-If you want to automate on error rows, see [Automation](partitioning.qmd#automation).
+**With the spec, every write materializes the error rows.**
+The asset's own step logs the materialization after the IO manager writes the rows.
+It logs one for each outcome that writes them: a clean run's empty write, a run where some rows failed, and the write before `NoValidRowsError`.
+The materialization has the IO manager's metadata for the write, such as `path` or `dagster/table_name`, and the row count.
+The row count is under `dagster/partition_row_count` for a partition, and under `dagster/row_count` otherwise.
+
+```{python}
+#| label: filtering-error-rows-5
+import tempfile
+
+from dagster_dataframely_demo._data import marketplace_orders
+
+
+@dg.asset(name="raw_orders")
+def marketplace_raw() -> pl.DataFrame:
+    return marketplace_orders()
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    result = dg.materialize(
+        [marketplace_raw, orders, dd.error_rows_spec(Orders, orders)],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
+    )
+
+{
+    event.asset_key.to_user_string(): event.materialization.metadata[
+        "dagster/row_count"
+    ].value
+    for event in result.get_asset_materialization_events()
+}
+```
+
+The error rows then have a materialization history, so a downstream asset can automate on them.
+See [Automation](partitioning.qmd#automation).
+
+**Without the spec, a run launched from a code location records no materialization for the error rows**, so the catalog does not list them as an asset with no definition.
+A run of `dg.materialize` or `execute_in_process` has no code location to read, so it records the materialization with or without the spec.
 
 ## `error_rows_dir` is for calling, not running
 

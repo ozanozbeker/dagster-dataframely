@@ -225,12 +225,30 @@ Dagster records these results with no `target_materialization_data`, so it never
 
 `dd.asset` passes `automation_condition` and `freshness_policy` to `dg.asset` unchanged, and they apply to the asset only.
 
-You cannot automate on the error rows.
-The writer writes them inside the asset's own step.
-The error rows have no materialization events.
-So `dg.AutomationCondition.eager()` on a downstream asset never requests a run because of the error rows, however you declare the dependency.
+**An asset downstream of the error rows' spec can automate on the error rows.**
+With the spec, every write materializes the error rows, so `dg.AutomationCondition.eager()` requests a run after each one:
 
-**Automate on the check instead.**
+```{python}
+#| label: partitioning-9
+@dd.asset(Orders, filter=True)
+def checked_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+    return raw_orders
+
+
+checked_orders__error_rows = dd.error_rows_spec(Orders, checked_orders)
+
+
+@dg.asset(
+    deps=[checked_orders__error_rows],
+    automation_condition=dg.AutomationCondition.eager(),
+)
+def triage_queue() -> None: ...
+```
+
+**A clean run materializes the error rows too**, because it writes them empty.
+So `triage_queue` runs after every run of `checked_orders` that writes the error rows, not only after a run where rows failed.
+
+**Automate on the check to run only when rows failed.**
 Each failed rule is a failed asset check with its own history.
 You can also add your own asset check to the asset:
 

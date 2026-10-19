@@ -98,7 +98,8 @@ That IO manager writes them as it writes any asset with that key.
 The IO manager receives a copy of the step's output context with only the asset key changed, so a database IO manager still reads its connection settings from it.
 `delegating_writer` takes `error_rows_key=` and `error_rows_io_manager_key=`, which mean what they mean on `dd.asset`.
 With `error_rows_io_manager_key=`, list the key in your asset's `required_resource_keys`.
-Nothing records the metadata the IO manager adds during that write, so the package reports the error-rows address itself.
+After the write, the writer logs a materialization for the error-rows key with the metadata the IO manager added, as [Advanced: `filter=True`](filtering-error-rows.qmd) describes.
+That metadata does not appear in the table's materialization, so the package reports the error-rows address itself.
 
 `file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
@@ -155,6 +156,7 @@ sequenceDiagram
     V->>V: Schema.filter
     opt a writer was passed
         V->>W: error rows
+        W-->>D: the error rows' AssetMaterialization
         W-->>V: error-rows address
     end
     opt the table was written
@@ -165,7 +167,8 @@ sequenceDiagram
 
 `orders` passes the frame and the writer to `validation_results`.
 `validation_results` calls the writer with the error rows, which have zero rows when no row failed an `"error"` rule.
-The writer returns the error-rows address.
+The writer logs the error rows' materialization unless the code location has no spec for them.
+It then returns the error-rows address.
 `validation_results` then yields the `MaterializeResult` if it wrote the asset's table, and one result for each check.
 `orders` passes each one to Dagster with `yield from`.
 

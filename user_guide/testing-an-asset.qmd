@@ -86,7 +86,7 @@ Dagster annotates the call as returning `object`, so a type checker rejects `lis
 
 **A writer writes the error rows, and the call does not yield them.**
 The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from the result.
-In a run too, the IO manager writes the error rows, and Dagster records no materialization for them.
+A run also records a materialization for the error rows, but a call has no step to record one.
 
 **An asset with `filter=True` takes a `context` parameter**, even when your function does not declare one.
 Pass the context first and the upstream frames after it, as Dagster does.

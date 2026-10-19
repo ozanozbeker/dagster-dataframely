@@ -96,7 +96,7 @@ A metadata key can contain a slash, so this namespace has the same form as Dagst
 This package's keys then sort together, apart from Dagster's keys and your IO manager's.
 
 `dataframely/error_rows_address` is the one `dataframely/` key that also appears on check results.
-When every row fails an `"error"` rule, the run raises `NoValidRowsError` and has no materialization.
+When every row fails an `"error"` rule, the run raises `NoValidRowsError` and the table has no materialization.
 So each check result has the error-rows address under that key.
 
 Every public function that takes a schema raises three errors for names this package cannot use ([ADR-0008](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it)).

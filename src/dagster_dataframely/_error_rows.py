@@ -167,7 +167,9 @@ def delegating_writer(
     """Return a writer that passes the error rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
 
     The manager stores the rows under the error-rows key, as it stores any other asset: `PolarsParquetIOManager` writes a parquet file beside the table, and `DuckDBPolarsIOManager` writes a table beside it.
-    The writer discards the metadata the manager emits for this write.
+    After each write, the writer logs a materialization for the error-rows key, so the spec from `error_rows_spec` has a history.
+    It logs one for the empty write of a clean run too, so the history matches the stored rows.
+    It logs none when the run's code location has no spec for the key, so the catalog does not list a key that nobody declared.
 
     Parameters
     ----------
@@ -201,6 +203,16 @@ def delegating_writer(
         resources = step.resolved_run_config.resources
         resource_config = resources[error_rows_io_manager_key].config
     key = _error_rows_key(context.asset_key, error_rows_key)
+    partition = context.partition_key if context.has_partition_key else None
+    # Dagster defines `dagster/row_count` as the whole table's count.
+    count_key = (
+        "dagster/row_count" if partition is None else "dagster/partition_row_count"
+    )
+    # Only a code location shows that no spec exists, and a run of `dg.materialize` has none.
+    try:
+        logs_event = key in context.repository_def.asset_graph.unexecutable_asset_keys
+    except CheckError:
+        logs_event = True
 
     def address(frame: pl.DataFrame) -> str:
         # Copied per write, because `add_output_metadata` raises on a key an earlier write added.
@@ -208,6 +220,14 @@ def delegating_writer(
         repointed._asset_key = key  # noqa: SLF001 - no setter; a characterization test pins it
         repointed._resource_config = resource_config  # noqa: SLF001 - the same
         manager.handle_output(repointed, frame)
+        if logs_event:
+            context.log_event(
+                dg.AssetMaterialization(
+                    asset_key=key,
+                    partition=partition,
+                    metadata={**repointed.get_logged_metadata(), count_key: len(frame)},
+                )
+            )
         return key.to_user_string()
 
     return address
@@ -295,7 +315,7 @@ def error_rows_spec(
 ) -> dg.AssetSpec:
     """Return an asset spec that adds an asset's error rows to the asset graph.
 
-    The asset writes the error rows whether or not the spec exists. The spec never receives a materialization event, because nothing materializes it.
+    The asset writes the error rows whether or not the spec exists.
 
     Parameters
     ----------

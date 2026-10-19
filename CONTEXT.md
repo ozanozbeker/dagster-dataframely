@@ -51,7 +51,8 @@ Dagster has no noun for it, only `output_required=False` and "the function can c
 _Avoid_: empty run, no-op, conditional materialization
 
 **Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the error-rows key when the asset has `filter=True`.
-They are not an asset, and they are not in the asset graph unless `error_rows_spec` adds them.
+They are not an executable asset: they have no step of their own.
+`error_rows_spec` adds them to the asset graph, and then `delegating_writer` logs a materialization for the error-rows key after each write.
 With `filter=True`, a run writes the other rows to the asset's table, so the two tables never share a row.
 With `filter=False`, a row that fails an `"error"` rule fails the run, and the package writes nothing.
 ADR-0004, ADR-0006 and ADR-0007 call it the quarantine, and the argument `quarantine`, their names at the time.
@@ -73,7 +74,7 @@ _Avoid_: location, destination, and `path`, which assumes a filesystem
 **Error-rows key**: The asset key a writer writes the error rows under.
 It is `<name>__error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
 `delegating_writer` passes it to the IO manager, and `file_writer` turns it into a path under `error_rows_dir`.
-_Avoid_: error-rows asset, because the error rows are not an asset
+_Avoid_: error-rows asset, because nothing executes the error rows; say _the error rows' spec_ for the `dg.AssetSpec`
 
 **`error_rows_dir`**: The directory `file_writer` writes under.
 The error-rows key and the partition key form the rest of the file path.
@@ -193,7 +194,7 @@ _Avoid_: preview, example, head
 **Reserved namespace**: Three namespaces.
 `dy_` starts every check name, rule column and check-result metadata key this package generates, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
-The error-rows address is the exception: when the package writes no table, there is no materialization, so each check result has `dataframely/error_rows_address`, the same key the materialization uses (ADR-0004).
+The error-rows address is the exception: when the package writes no table, the table has no materialization, so each check result has `dataframely/error_rows_address`, the same key the table's materialization uses (ADR-0004).
 `dataframely/` starts every materialization and definition metadata key this package names, as `dagster/` does for Dagster.
 The valid row count is the exception, because Dagster already has a key for it: `dagster/row_count`.
 `<name>__error_rows` is the default error-rows key.

@@ -30,6 +30,7 @@ from tests.scenario import (
 )
 
 _VALID = dg.AssetKey(["orders"])
+_ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
 def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
@@ -122,12 +123,10 @@ class TestMaterialization:
         assert (result.metadata or {})["m"] == 1
         assert_frame_equal(result.value, clean_orders())
 
-    def test_with_error_rows_the_result_is_merged_into_the_one_materialization(
+    def test_with_error_rows_the_result_is_merged_into_the_tables_materialization_only(
         self,
         tmp_path: Path,
     ):
-        """The run writes the error rows and does not materialize them, so the asset's materialization is the only one."""
-
         @dd.asset(Orders, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
@@ -138,14 +137,15 @@ class TestMaterialization:
             )
 
         recorded = materializations(materialize(tmp_path, orders))
-        (event,) = recorded.values()
+        event = recorded[_VALID]
         tags = event.tags or {}
 
-        assert set(recorded) == {_VALID}
         assert event.metadata["source"] == dg.MetadataValue.text("stripe")
         assert event.metadata["dataframely/error_rows_count"] == dg.MetadataValue.int(1)
         assert tags["dagster/data_version"] == "v1"
         assert tags["run/flavour"] == "backfill"
+        assert "source" not in recorded[_ERROR_ROWS_KEY].metadata
+        assert "run/flavour" not in (recorded[_ERROR_ROWS_KEY].tags or {})
 
     def test_a_bare_frame_has_no_data_version_and_no_tags(self):
         @dd.asset(Orders, name="orders")

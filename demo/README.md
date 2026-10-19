@@ -67,7 +67,7 @@ Dagster cannot run partitioned and unpartitioned assets together, so `daily_orde
 | | `orders_snapshot` | A returned `dg.MaterializeResult`, whose metadata, tags and data version the package copies onto the materialization. |
 
 The error rows of the three assets with `filter=True` appear beside them in `silver`.
-The lineage view draws them with a dashed outline, because nothing materializes them.
+The lineage view draws them with a dashed outline, because they are external assets: the step of the asset beside them writes them and logs their materialization.
 
 ## The code
 

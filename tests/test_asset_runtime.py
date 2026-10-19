@@ -346,6 +346,7 @@ class TestErrorRowsWithoutFilter:
 
 
 _GOOD_KEY = dg.AssetKey(["orders"])
+_ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
 @dd.asset(Orders, name="orders", filter=True)
@@ -357,16 +358,16 @@ class TestFilterWithValidRows:
     """A run with `filter=True` where some rows pass every `"error"` rule."""
 
     def test_the_valid_rows_are_written_and_the_rest_are_filtered(self, tmp_path: Path):
-        """The run materializes only the asset, because the error rows are not an asset (ADR-0004)."""
+        """An in-process run also materializes the error rows, because it has no code location to show that their spec is missing."""
         result = materialize(tmp_path, _filtered)
 
         assert result.success
-        assert set(materializations(result)) == {_GOOD_KEY}
+        assert set(materializations(result)) == {_GOOD_KEY, _ERROR_ROWS_KEY}
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
         assert pl.read_parquet(tmp_path / "orders__error_rows.parquet").height == 3
 
     def test_the_materialization_says_where_the_rest_went(self, tmp_path: Path):
-        """The package computes the error-rows address, because the step never reads the IO manager's metadata for the error rows (ADR-0006)."""
+        """The package computes the error-rows address, because the IO manager's metadata for the error rows appears only in their own materialization."""
         metadata = materializations(materialize(tmp_path, _filtered))[
             _GOOD_KEY
         ].metadata
@@ -380,7 +381,7 @@ class TestFilterWithValidRows:
         )
 
     def test_an_upstream_and_a_error_rows_leave_the_graph_alone(self, tmp_path: Path):
-        """Error rows add no asset and no step."""
+        """Error rows add no step: the asset's own step writes them and logs their materialization."""
 
         @dd.asset(Orders, name="orders", filter=True)
         def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
@@ -389,7 +390,11 @@ class TestFilterWithValidRows:
         result = materialize(tmp_path, _raw_orders, downstream)
 
         assert result.success
-        assert set(materializations(result)) == {dg.AssetKey(["raw_orders"]), _GOOD_KEY}
+        assert set(materializations(result)) == {
+            dg.AssetKey(["raw_orders"]),
+            _GOOD_KEY,
+            _ERROR_ROWS_KEY,
+        }
         assert len(result.get_step_success_events()) == 2
 
     def test_a_filtered_run_succeeds_with_every_failing_check_at_error(
@@ -532,14 +537,14 @@ def _no_valid_rows() -> pl.DataFrame:
 class TestFilterWithNoValidRows:
     """A run with `filter=True` where every row fails an `"error"` rule."""
 
-    def test_no_valid_rows_writes_the_error_rows_and_materializes_nothing(
+    def test_no_valid_rows_writes_the_error_rows_and_materializes_only_them(
         self,
         tmp_path: Path,
     ):
         result = materialize(tmp_path, _no_valid_rows, raise_on_error=False)
 
         assert not result.success
-        assert materializations(result) == {}
+        assert set(materializations(result)) == {_ERROR_ROWS_KEY}
         assert pl.read_parquet(tmp_path / "orders__error_rows.parquet").height == 2
         assert not (tmp_path / "orders.parquet").exists()
 

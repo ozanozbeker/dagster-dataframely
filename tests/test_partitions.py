@@ -73,7 +73,7 @@ class TestPartitionRuns:
     ):
         result = materialize(tmp_path, _orders, partition_key="mixed")
 
-        assert _partitions(result) == {_GOOD_KEY: "mixed"}
+        assert _partitions(result) == {_GOOD_KEY: "mixed", _ERROR_ROWS_KEY: "mixed"}
         assert (
             pl.read_parquet(tmp_path / "orders__error_rows" / "mixed.parquet").height
             == 3
@@ -96,7 +96,10 @@ class TestPartitionRuns:
         result = materialize(tmp_path, orders(clean_orders), partition_key="2026-01-03")
         filtering = tmp_path / "orders__error_rows"
 
-        assert _partitions(result) == {_GOOD_KEY: "2026-01-03"}
+        assert _partitions(result) == {
+            _GOOD_KEY: "2026-01-03",
+            _ERROR_ROWS_KEY: "2026-01-03",
+        }
         assert pl.read_parquet(filtering / "2026-01-02.parquet").height == 3
         assert pl.read_parquet(filtering / "2026-01-03.parquet").height == 0
 

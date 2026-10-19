@@ -50,7 +50,7 @@ From that one declaration you get:
   A run writes the rows that failed an `"error"` rule to a table next to the asset's, writes the other rows to the asset's table, and succeeds.
   The run still fails when every row fails an `"error"` rule.
 
-  ![The lineage view. The table materialized with 17 of its 24 checks passing. Its error rows are a separate node beside it, drawn with a dashed outline because nothing materializes them: the table's own step wrote them.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-lineage.png)
+  ![The lineage view. The table materialized with 17 of its 24 checks passing. Its error rows are a separate node beside it. The table's own step wrote them and logged their materialization, and Dagster draws them with a dashed outline because they are an external asset.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-rows-lineage.png)
 
 The decorated function is a normal Dagster asset function.
 Dagster passes upstream assets to it as parameters.

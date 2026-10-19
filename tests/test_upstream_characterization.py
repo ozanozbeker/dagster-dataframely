@@ -643,6 +643,30 @@ class TestDagster:
         assert result.success
         assert recorded["dagster/row_count"].value == 3
 
+    def test_a_materialization_logged_for_another_key_is_recorded_before_a_raise(
+        self,
+    ):
+        """`log_event` records a materialization for another asset's key before a later raise, which `_error_rows.delegating_writer` needs on the `NoValidRowsError` outcome."""
+        key = dg.AssetKey(["orders"])
+
+        @dg.asset(
+            name="orders", check_specs=[dg.AssetCheckSpec(name="probe", asset=key)]
+        )
+        def orders(
+            context: dg.AssetExecutionContext,
+        ) -> Iterator[dg.AssetCheckResult]:
+            context.log_event(dg.AssetMaterialization(asset_key="orders__error_rows"))
+            yield dg.AssetCheckResult(check_name="probe", asset_key=key, passed=False)
+            no_valid_rows = "every row failed"
+            raise ValueError(no_valid_rows)
+
+        result = dg.materialize([orders], raise_on_error=False)
+
+        assert not result.success
+        assert [e.asset_key for e in result.get_asset_materialization_events()] == [
+            dg.AssetKey(["orders__error_rows"])
+        ]
+
     def test_the_three_path_escapes_dagster_applies_are_still_importable(self):
         """`UPathIOManager` escapes a leading `/` but not `..`, and `_error_rows.error_rows_path` calls these three functions to escape both."""
         assert escape_leading_slash("/etc") == "%2Fetc"
@@ -818,7 +842,7 @@ class TestPrivateDagsterApis:
         assert not is_context_provided([])
 
     def test_an_output_context_still_clones_and_re_points_by_attribute(self):
-        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and has its own output metadata, which `_error_rows.delegating_writer` depends on."""
+        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and keeps its own output metadata, which `_error_rows.delegating_writer` reads back with `get_logged_metadata`."""
         original = dg.build_output_context(
             asset_key=dg.AssetKey(["analytics", "orders"]),
             definition_metadata={"partition_expr": "ordered_at"},
@@ -837,10 +861,10 @@ class TestPrivateDagsterApis:
 
 
 class TestExecutableKeys:
-    """The Dagster behaviour `_executable_keys` reads for `validate_error_rows_key` (ADR-0007)."""
+    """The Dagster behaviour that `_executable_keys` and `delegating_writer` read off the run's asset graph (ADR-0007)."""
 
     def test_an_in_process_run_still_has_no_repository_definition(self):
-        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph instead."""
+        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph and `_error_rows.delegating_writer` catches to log the error rows' materialization."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -884,7 +908,7 @@ class TestExecutableKeys:
         assert seen[subset.run_id] == {"orders"}
 
     def test_a_bare_spec_is_still_unexecutable_beside_its_asset(self):
-        """Dagster marks a bare `dg.AssetSpec` unexecutable, so the spec from `error_rows_spec` is not among the keys `validate_error_rows_key` checks."""
+        """Dagster marks a bare `dg.AssetSpec` unexecutable, which `validate_error_rows_key` and `_error_rows.delegating_writer` both read."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(name="orders")

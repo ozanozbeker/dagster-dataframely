@@ -15,6 +15,9 @@ import duckdb
 import polars as pl
 import pytest
 
+# A code location's repository, which only a launched run has.
+from dagster._core.definitions.reconstruct import ReconstructableRepository
+
 # The error a context property raises when there is no step.
 from dagster._core.errors import DagsterInvalidPropertyError
 from dagster_duckdb_polars import DuckDBPolarsIOManager
@@ -39,6 +42,7 @@ from tests.scenario import (
     Orders,
     clean_orders,
     cooccurring_orders,
+    materializations,
     mixed_orders,
     no_valid_orders,
     storage,
@@ -48,6 +52,8 @@ from tests.scenario import (
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 _ORDERS = dg.AssetKey(["orders"])
+_TABLE_KEY = dg.AssetKey([WAREHOUSE_SCHEMA, "orders"])
+_ERROR_ROWS_KEY = dg.AssetKey([WAREHOUSE_SCHEMA, "orders__error_rows"])
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 _GRID = dg.MultiPartitionsDefinition({
     "region": dg.StaticPartitionsDefinition(["eu", "us"]),
@@ -626,8 +632,7 @@ class TestDelegatingWriter:
         result = dg.materialize(
             [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
         )
-        (event,) = result.get_asset_materialization_events()
-        metadata = event.step_materialization_data.materialization.metadata
+        metadata = materializations(result)[_TABLE_KEY].metadata
 
         assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
             f"{WAREHOUSE_SCHEMA}/orders__error_rows"
@@ -641,8 +646,7 @@ class TestDelegatingWriter:
             [_delegating(cooccurring_orders, partitioned=False)],
             resources=storage(tmp_path),
         )
-        (event,) = result.get_asset_materialization_events()
-        metadata = event.step_materialization_data.materialization.metadata
+        metadata = materializations(result)[_TABLE_KEY].metadata
 
         assert result.success
         assert metadata["dagster/row_count"] == dg.MetadataValue.int(3)
@@ -654,9 +658,8 @@ _AUDIT_KEY = ["audit", "orders__error_rows"]
 
 
 def _address(result: dg.ExecuteInProcessResult) -> dg.MetadataValue[Any]:
-    """Return the error-rows address of the run's one materialization."""
-    (event,) = result.get_asset_materialization_events()
-    return event.step_materialization_data.materialization.metadata[
+    """Return the error-rows address of the table's materialization."""
+    return materializations(result)[_TABLE_KEY].metadata[
         "dataframely/error_rows_address"
     ]
 
@@ -747,6 +750,158 @@ class TestOverrides:
                 "where table_name = 'orders__error_rows'"
             ).fetchall()
         assert written == [(schema,)]
+
+
+_EVERY_WRITE = [pytest.param(clean_orders, 0, False, id="clean"), *_WITH_INVALID_ROWS]
+"""Every outcome that writes the error rows, including the empty write of a clean run."""
+
+
+_IN_PROCESS_EXECUTOR: dict[str, Any] = {"execution": {"config": {"in_process": {}}}}
+
+
+def _error_rows_materializations(
+    events: Sequence[dg.DagsterEvent],
+) -> list[dg.AssetMaterialization]:
+    """Return the materializations among a run's events for the error-rows key."""
+    return [
+        event.step_materialization_data.materialization
+        for event in events
+        if event.asset_key == _ERROR_ROWS_KEY
+    ]
+
+
+class TestMaterialization:
+    """The materialization a run records for the error rows."""
+
+    @pytest.mark.parametrize(("frame", "invalid", "aborts"), _EVERY_WRITE)
+    def test_every_write_records_the_error_rows_row_count(
+        self,
+        tmp_path: Path,
+        frame: Callable[[], pl.DataFrame],
+        invalid: int,
+        aborts: bool,
+    ):
+        asset = _delegating(frame, partitioned=False)
+
+        result = dg.materialize(
+            [asset, error_rows_spec(Orders, asset)],
+            resources=storage(tmp_path),
+            raise_on_error=False,
+        )
+        (materialization,) = _error_rows_materializations(
+            result.get_asset_materialization_events()
+        )
+
+        assert result.success is not aborts
+        assert materialization.metadata["dagster/row_count"] == dg.MetadataValue.int(
+            invalid
+        )
+
+    def test_a_partitioned_write_records_its_partition_and_the_partitions_row_count(
+        self, tmp_path: Path
+    ):
+        asset = _delegating(mixed_orders, partitioned=True)
+
+        result = dg.materialize(
+            [asset, error_rows_spec(Orders, asset)],
+            resources=storage(tmp_path),
+            partition_key=_DAY,
+        )
+        (materialization,) = _error_rows_materializations(
+            result.get_asset_materialization_events()
+        )
+
+        assert materialization.partition == _DAY
+        assert materialization.metadata[
+            "dagster/partition_row_count"
+        ] == dg.MetadataValue.int(3)
+        assert "dagster/row_count" not in materialization.metadata
+
+    @pytest.mark.parametrize(
+        ("overrides", "resources", "entry"),
+        [
+            ({}, storage, "path"),
+            ({}, warehouse, "dagster/table_name"),
+            (
+                {"error_rows_io_manager_key": "audit"},
+                _parquet_with_database_audit,
+                "dagster/table_name",
+            ),
+        ],
+        ids=["filesystem", "database", "error_rows_io_manager_key"],
+    )
+    def test_the_event_has_the_metadata_the_manager_emitted_for_the_write(
+        self,
+        tmp_path: Path,
+        overrides: dict[str, Any],
+        resources: Callable[[Path], dict[str, Any]],
+        entry: str,
+    ):
+        asset = _delegating(mixed_orders, partitioned=False, **overrides)
+
+        result = dg.materialize(
+            [asset, error_rows_spec(Orders, asset)], resources=resources(tmp_path)
+        )
+        (materialization,) = _error_rows_materializations(
+            result.get_asset_materialization_events()
+        )
+
+        assert "orders__error_rows" in str(materialization.metadata[entry].value)
+
+    def test_an_eager_asset_downstream_of_the_spec_is_requested_after_a_write(
+        self, tmp_path: Path
+    ):
+        asset = _delegating(mixed_orders, partitioned=False)
+        spec = error_rows_spec(Orders, asset)
+
+        @dg.asset(deps=[spec], automation_condition=dg.AutomationCondition.eager())
+        def triage() -> None: ...
+
+        defs = dg.Definitions(assets=[asset, spec, triage])
+        instance = dg.DagsterInstance.ephemeral()
+        before = dg.evaluate_automation_conditions(defs=defs, instance=instance)
+        dg.materialize([asset, spec], instance=instance, resources=storage(tmp_path))
+        after = dg.evaluate_automation_conditions(
+            defs=defs, instance=instance, cursor=before.cursor
+        )
+
+        assert before.get_num_requested(triage.key) == 0
+        assert after.get_num_requested(triage.key) == 1
+
+    @pytest.mark.parametrize(
+        ("location", "count"), [("with_spec", 1), ("without_spec", 0)]
+    )
+    def test_a_run_from_a_code_location_records_the_error_rows_only_with_the_spec(
+        self, location: str, count: int
+    ):
+        job = ReconstructableRepository.for_module(
+            "tests.code_locations", location
+        ).get_reconstructable_job("__ASSET_JOB")
+
+        with dg.instance_for_test() as instance:
+            result = dg.execute_job(job, instance, run_config=_IN_PROCESS_EXECUTOR)
+
+            assert result.success
+            assert (
+                len(
+                    _error_rows_materializations(
+                        result.get_asset_materialization_events()
+                    )
+                )
+                == count
+            )
+
+    def test_an_in_process_run_records_the_error_rows_without_the_spec(
+        self, tmp_path: Path
+    ):
+        result = dg.materialize(
+            [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
+        )
+
+        assert (
+            len(_error_rows_materializations(result.get_asset_materialization_events()))
+            == 1
+        )
 
 
 class _Ledger(dy.Schema):

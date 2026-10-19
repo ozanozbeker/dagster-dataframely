@@ -117,6 +117,8 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
             "dagster/row_count"
         ].value
         for event in result.get_asset_materialization_events()
+        # A call has no step, so it records no materialization for the error rows.
+        if event.asset_key == asset.key
     }
 
 

@@ -92,7 +92,7 @@ Counts are per rule, and one row can fail several rules, so their sum is not a r
 `max_failure_samples` applies per rule, not per check.
 So in a collapsed check, a rule that a thousand rows failed cannot fill the sample and leave out a rule that one row failed.
 
-A run that raises `NoValidRowsError` yields no materialization, so the package copies `dataframely/error_rows_address` onto every check result instead.
+A run that raises `NoValidRowsError` yields no materialization for the table, so the package copies `dataframely/error_rows_address` onto every check result instead.
 
 The Columns tab is not one of these two places.
 It comes from the asset definition, so the catalog shows it before the first run and still shows it after a failed run.
@@ -121,7 +121,7 @@ def orders(raw_orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
 
 `value` is the frame to validate, and you have to set it.
 The package copies `metadata`, `data_version` and `tags` onto the table's materialization.
-The error rows have no materialization event, so none of these fields apply to them.
+The error rows' materialization has none of them.
 
 Setting the result's `asset_key` or `check_results` raises `MaterializeResultFieldError`, which names the field.
 The decorator sets the asset key from its declaration and the check results from the schema's rules.

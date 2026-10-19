@@ -707,7 +707,7 @@ class TestErrorRows:
     """The asset graph and resources of an asset with `filter=True`."""
 
     def test_a_error_rows_adds_nothing_to_the_graph(self):
-        """The error rows are not an asset (ADR-0004, ADR-0006)."""
+        """The error rows are not an executable asset (ADR-0004, ADR-0006)."""
 
         @dd.asset(Orders, filter=True)
         def kept() -> pl.DataFrame:

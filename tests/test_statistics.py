@@ -328,10 +328,10 @@ def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
-    materialized = materializations(materialize(tmp_path, without_statistics))
-    (orders,) = materialized.values()
+    orders = materializations(materialize(tmp_path, without_statistics))[
+        dg.AssetKey(["orders"])
+    ]
 
-    assert set(materialized) == {dg.AssetKey(["orders"])}
     assert not _groups(orders.metadata)
     assert orders.metadata["dagster/row_count"].value == 3
 
