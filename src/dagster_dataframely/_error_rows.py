@@ -5,7 +5,7 @@
 """
 
 import copy
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from pathlib import Path
 
@@ -306,12 +306,14 @@ def error_rows_writer(
     return address
 
 
-def error_rows_spec(
+def error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
     schema: type[dy.Schema],
     asset: dg.AssetsDefinition | dg.AssetKey | str | Sequence[str],
     *,
     partitions_def: dg.PartitionsDefinition | None = None,
     group_name: str | None = None,
+    owners: Sequence[str] | None = None,
+    tags: Mapping[str, str] | None = None,
 ) -> dg.AssetSpec:
     """Return an asset spec that adds an asset's error rows to the asset graph.
 
@@ -320,11 +322,15 @@ def error_rows_spec(
     Parameters
     ----------
     asset
-        The asset the error rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions and group, and the error-rows key, IO manager key and definition metadata of its writer.
+        The asset the error rows came from, as its definition or its asset key. Pass a key only for an asset you cannot import. A definition also sets the spec's partitions, group, owners and tags, and the error-rows key, IO manager key and definition metadata of its writer.
     partitions_def
         The error rows' partitions, when `asset` is a key.
     group_name
         The error rows' asset group. A definition's group is the default, and a value overrides it. Unlike `partitions_def`, passing it with a definition does not raise, because the group sets only where the catalog lists the error rows.
+    owners
+        The error rows' owners. A definition's owners are the default, and a value replaces them, as `group_name` does.
+    tags
+        The error rows' tags. A definition's tags are the default, and a value replaces them, as `group_name` does.
 
     Returns
     -------
@@ -379,9 +385,19 @@ def error_rows_spec(
             both = f"`error_rows_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
             raise dg.DagsterInvariantViolationError(both)
         parent, partitions_def = asset.key, asset.partitions_def
+        definition_spec = asset.get_asset_spec()
         if group_name is None:
             group_name = asset.group_names_by_key[parent]
-        definition_metadata = dict(asset.get_asset_spec().metadata)
+        if owners is None:
+            owners = definition_spec.owners
+        if tags is None:
+            # Dagster stores each kind as a tag, and the spec has only the `polars` kind.
+            tags = {
+                name: value
+                for name, value in definition_spec.tags.items()
+                if not name.startswith("dagster/kind/")
+            }
+        definition_metadata = dict(definition_spec.metadata)
         recorded_key = definition_metadata.pop(_KEY_ENTRY, None)
         recorded_io_manager_key = definition_metadata.pop(_IO_MANAGER_KEY_ENTRY, None)
         key = (
@@ -406,6 +422,8 @@ def error_rows_spec(
         metadata={**definition_metadata, **error_rows_metadata(schema)},
         partitions_def=partitions_def,
         group_name=group_name,
+        owners=owners,
+        tags=tags,
         # Not the asset's kinds, which can name storage that `error_rows_io_manager_key` does not write to.
         kinds={"polars"},
     )

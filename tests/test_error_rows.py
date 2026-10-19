@@ -187,6 +187,15 @@ def grouped_orders() -> None:
     """Customer orders in the `sales` group."""
 
 
+@dg.asset(
+    owners=["team:marketing"],
+    tags={"tier": "gold", "layer": "silver"},
+    kinds={"polars", "parquet"},
+)
+def owned_orders() -> None:
+    """Customer orders with owners, tags and kinds."""
+
+
 class TestSpec:
     """The spec `error_rows_spec` returns."""
 
@@ -233,6 +242,49 @@ class TestSpec:
         graph = dg.Definitions(assets=[grouped_orders, spec]).resolve_asset_graph()
 
         assert graph.get(spec.key).group_name == "sales"
+
+    def test_the_spec_takes_the_owners_and_tags_off_the_definition(self):
+        spec = error_rows_spec(Orders, owned_orders)
+
+        assert spec.owners == ["team:marketing"]
+        assert spec.tags == {
+            "tier": "gold",
+            "layer": "silver",
+            "dagster/kind/polars": "",
+        }
+
+    def test_the_spec_keeps_none_of_the_definitions_other_kinds(self):
+        spec = error_rows_spec(Orders, owned_orders)
+
+        assert spec.kinds == {"polars"}
+        assert "dagster/kind/parquet" not in spec.tags
+
+    def test_owners_replaces_the_definitions_owners(self):
+        spec = error_rows_spec(Orders, owned_orders, owners=["team:data"])
+
+        assert spec.owners == ["team:data"]
+
+    def test_tags_replaces_the_definitions_tags(self):
+        spec = error_rows_spec(Orders, owned_orders, tags={"tier": "silver"})
+
+        assert spec.tags == {"tier": "silver", "dagster/kind/polars": ""}
+
+    def test_empty_owners_and_tags_clear_the_definitions(self):
+        spec = error_rows_spec(Orders, owned_orders, owners=[], tags={})
+
+        assert spec.owners == []
+        assert spec.tags == {"dagster/kind/polars": ""}
+
+    def test_the_error_rows_have_their_parents_owners_and_tags_in_the_asset_graph(
+        self,
+    ):
+        spec = error_rows_spec(Orders, owned_orders)
+        graph = dg.Definitions(assets=[owned_orders, spec]).resolve_asset_graph()
+        node = graph.get(spec.key)
+
+        assert node.owners == ["team:marketing"]
+        assert node.tags["tier"] == "gold"
+        assert node.kinds == {"polars"}
 
     def test_the_description_names_the_asset_the_rows_came_from(self):
         description = error_rows_spec(Orders, orders).description
@@ -338,6 +390,20 @@ class TestSpec:
         graph = dg.Definitions(assets=[spec]).resolve_asset_graph()
 
         assert graph.get(spec.key).group_name == "default"
+
+    def test_a_key_form_has_no_owners_or_tags_by_default(self):
+        spec = error_rows_spec(Orders, "orders")
+
+        assert spec.owners == []
+        assert spec.tags == {"dagster/kind/polars": ""}
+
+    def test_a_key_form_takes_the_owners_and_tags_it_is_given(self):
+        spec = error_rows_spec(
+            Orders, "orders", owners=["team:data"], tags={"tier": "gold"}
+        )
+
+        assert spec.owners == ["team:data"]
+        assert spec.tags["tier"] == "gold"
 
     def test_a_hand_wired_definition_gives_the_spec_its_own_io_manager(self):
         """A downstream asset then loads the rows through the IO manager that wrote them."""

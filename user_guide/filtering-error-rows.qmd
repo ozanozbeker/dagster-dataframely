@@ -234,8 +234,9 @@ It lists the schema's columns with their dtypes, descriptions and tags, then one
 The error rows can fail any of the schema's constraints, so a `not null` on a column full of nulls would be false.
 The primary key is absent too, because rows with a duplicate key are among the error rows.
 
-Pass `error_rows_spec` the asset definition, and the spec uses its partitions and its asset group.
+Pass `error_rows_spec` the asset definition, and the spec uses its partitions, its asset group, its owners and its tags.
 So the catalog lists the error rows in the same group as the asset.
+The spec drops the asset's `dagster/kind/` tags, because Dagster stores each kind as one of those tags.
 The spec also uses the error-rows key, the IO manager key and the definition metadata the writer used, so a downstream asset loads the rows from where they were written.
 `dd.asset` records the first two in the definition metadata, under `dataframely/error_rows_key` and `dataframely/error_rows_io_manager_key`.
 Pass an asset key instead, and set the partitions with `partitions_def=`.
@@ -246,6 +247,10 @@ Passing both an asset definition and `partitions_def=` raises `dg.DagsterInvaria
 With an asset definition, it overrides the asset's group and does not raise.
 For example, pass `group_name="error_rows"` on every call to list every asset's error rows in one group.
 With an asset key and no `group_name=`, the error rows are in the `default` group.
+
+`owners=` and `tags=` follow the same rule.
+With an asset definition, each replaces the asset's value whole, so `owners=[]` removes the asset's owners and `tags={}` removes its tags.
+With an asset key, the error rows have the owners and tags these set, and the `polars` kind.
 
 **With the spec, every write materializes the error rows.**
 The asset's own step logs the materialization after the IO manager writes the rows.
