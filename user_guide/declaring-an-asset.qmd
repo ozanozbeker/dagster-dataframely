@@ -86,6 +86,42 @@ A type checker rejects the five legacy forms, but nothing rejects them at run ti
 `dd.asset` adds the `polars` kind to `kinds`.
 With `kinds={"duckdb"}`, the asset has the kinds `polars` and `duckdb`.
 
+## The code version
+
+When you pass no `code_version`, `dd.asset` sets the asset's code version to a sha1 hash of the schema, as dagster-dbt does for a model's SQL:
+
+```{python}
+#| label: declaring-an-asset-code-version
+orders.get_asset_spec().code_version
+```
+
+After a schema edit, Dagster marks the asset stale with the cause "has a new code version" until the asset runs again.
+Without a code version, Dagster reports the asset fresh after any schema edit.
+
+`dd.asset` hashes each column's name and dtype, then each rule's name, severity and expression.
+So a new column or rule, a changed dtype, column constraint, `check=` or `@dy.rule()`, and a changed severity all change the code version.
+The docstring, `filter`, the [Settings](settings.qmd) and column metadata other than the severity declaration do not.
+
+A `code_version` you pass replaces the derived one unchanged.
+
+**Write the values of an `is_in` as a list, not a set.**
+Python orders a set of strings differently in each process, and the hash keeps that order.
+So with a set, the code version changes each time the code location starts, with no schema change.
+
+**The code version reads only the schema.**
+A change to the decorated function's body leaves it unchanged, so Dagster still reports the asset fresh after one.
+To cover the function too, pass your own `code_version` and change it when the function changes.
+
+**A Polars upgrade can change every asset's code version at once.**
+The hash uses Polars' serialization of each rule's expression, and Polars documents that format as unstable between versions.
+After such an upgrade, every asset reports "has a new code version" once, with no schema change.
+
+Polars cannot serialize a Python function, such as the one `map_elements` calls, unless `cloudpickle` is installed.
+Without it, `dd.asset` hashes that rule's expression as text, and the text does not include the function's body.
+So a change inside the function leaves the code version unchanged.
+
+The error rows' spec has no code version, because Dagster reports an external asset as fresh whatever its code version.
+
 ## The schema is a single `dy.Schema`, never a `dy.Collection`
 
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.

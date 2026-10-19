@@ -46,6 +46,8 @@ From that one declaration you get:
 - **A severity for each rule**, `"error"` by default or `"warn"`, declared in the schema.
   A row that fails an `"error"` rule fails the run, and a row that fails only `"warn"` rules is written with a warning.
 
+- **A code version derived from the schema**, so Dagster marks the asset stale after a schema edit.
+
 - **Error rows**, if you set `filter=True`.
   A run writes the rows that failed an `"error"` rule to a table next to the asset's, writes the other rows to the asset's table, and succeeds.
   The run still fails when every row fails an `"error"` rule.

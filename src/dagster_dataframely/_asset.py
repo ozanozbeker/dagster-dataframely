@@ -18,6 +18,7 @@ from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAss
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 
 from dagster_dataframely._checks import asset_check_specs
+from dagster_dataframely._code_version import schema_code_version
 from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     error_rows_writer,
@@ -136,6 +137,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         In a run, `delegating_writer` passes the error rows to the same IO manager, unless `error_rows_io_manager_key` names another.
     partitions_def
         The writer writes the error rows under the same partition key, and every check spec has the same partitions.
+    code_version
+        `None` derives one from the schema, with `dd.wiring.schema_code_version`.
     kinds
         The asset has the `polars` kind as well as these, because Polars always computes it.
 
@@ -237,7 +240,9 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         "freshness_policy": freshness_policy,
         "backfill_policy": backfill_policy,
         "retry_policy": retry_policy,
-        "code_version": code_version,
+        "code_version": (
+            schema_code_version(schema) if code_version is None else code_version
+        ),
         "owners": owners,
         "kinds": {"polars", *(kinds or ())},
         "pool": pool,

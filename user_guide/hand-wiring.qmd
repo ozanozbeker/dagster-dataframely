@@ -53,6 +53,10 @@ The Columns tab reads `unique` from each column's own flag, never from `primary_
 Dataframely checks a primary key with one schema-level rule and does not set the key columns' `unique` flag.
 For a composite key, marking each column unique would show a constraint that no rule checks.
 
+**The code version.**
+`schema_code_version(schema)` returns the code version that `dd.asset` sets when it gets none, as [The code version](declaring-an-asset.qmd#the-code-version) describes.
+Pass it as the `code_version` of `@dg.asset`.
+
 **The checks.**
 `asset_check_specs(schema, asset=key)` returns a spec for every check the schema defines, including the column-schema check.
 For a partitioned asset, also pass its `partitions_def`, so Dagster records each check evaluation under its partition.
@@ -132,6 +136,7 @@ Pass the schema's metadata and check specs to `@dg.asset`, and call `validation_
 @dg.asset(
     metadata=dd.wiring.schema_metadata(Orders),
     check_specs=dd.wiring.asset_check_specs(Orders, asset="orders", filter=True),
+    code_version=dd.wiring.schema_code_version(Orders),
     output_required=False,
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
@@ -145,7 +150,7 @@ def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
     )
 ```
 
-This gives the asset the Columns tab, one check per rule, the row filter and the error rows.
+This gives the asset the Columns tab, one check per rule, the code version, the row filter and the error rows.
 For a single-output asset, `context.asset_key` is the only key you need.
 
 When the frame matches the schema, a run of that asset makes these calls:
@@ -341,6 +346,7 @@ It differs from `dd.asset` in these ways:
   The rest of what `Orders` declares is missing: no `>= 0`, no regex, no length bound, no table-level primary key, no column tags.
   After a run under an IO manager that writes its own column schema, the tab shows only that schema's dtypes and the descriptions.
 - The checks have no descriptions, so a failing check shows the rule's name but not what the rule checks.
+- No code version, so Dagster does not mark the asset stale after a schema edit.
 - No statistics, no row sample, no failure samples and no `error_rows_by_rules` table, so a failing check shows nothing about the rows that failed it.
 - No `check_granularity`, so a 40-column schema has around 40 checks or more, and you cannot collapse its rules into fewer checks.
 - You have to collect and filter a `LazyFrame` yourself.

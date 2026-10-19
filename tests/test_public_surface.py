@@ -30,6 +30,7 @@ _WIRING = {
     "validation_results",
     "error_rows_frame",
     "error_rows_path",
+    "schema_code_version",
     "schema_metadata",
     "table_schema",
     "validate_error_rows_key",

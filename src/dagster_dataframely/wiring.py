@@ -4,6 +4,7 @@ Most users need only `dd.asset`, so this module holds these names instead of the
 """
 
 from dagster_dataframely._checks import asset_check_results, asset_check_specs
+from dagster_dataframely._code_version import schema_code_version
 from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     delegating_writer,
@@ -29,6 +30,7 @@ __all__ = [
     "error_rows_frame",
     "error_rows_path",
     "file_writer",
+    "schema_code_version",
     "schema_metadata",
     "table_schema",
     "validate_error_rows_key",

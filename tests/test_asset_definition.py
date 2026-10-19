@@ -2,6 +2,10 @@
 
 import datetime as dt
 import inspect
+import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import dagster as dg
@@ -19,6 +23,7 @@ from dagster_dataframely.errors import (
     InvalidSettingError,
     ReservedColumnError,
 )
+from dagster_dataframely.wiring import schema_code_version
 from tests.scenario import Orders
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
@@ -323,6 +328,127 @@ class TestDescription:
         assert spec.description == spec.description.strip()
 
 
+_ROOT = Path(__file__).parent.parent
+
+# `str(pl.Expr)` prints only the first two and the last of these sixteen values.
+_LETTERS = [chr(code) for code in range(ord("a"), ord("q"))]
+
+
+class _Priced(dy.Schema):
+    amount = dy.Float64(min=0.0)
+
+
+class _PricedFromOne(dy.Schema):
+    amount = dy.Float64(min=1.0)
+
+
+class _Redocumented(dy.Schema):
+    """The columns of `_Priced`, with a docstring."""
+
+    amount = dy.Float64(min=0.0)
+
+
+class _Warned(dy.Schema):
+    amount = dy.Float64(
+        min=0.0, metadata={"dagster_dataframely": {"severity": {"min": "warn"}}}
+    )
+
+
+class _Lettered(dy.Schema):
+    code = dy.String(check=lambda column: column.is_in(_LETTERS))
+
+
+class _Relettered(dy.Schema):
+    code = dy.String(
+        check=lambda column: column.is_in([*_LETTERS[:7], "z", *_LETTERS[8:]])
+    )
+
+
+class _Mapped(dy.Schema):
+    code = dy.String(
+        check=lambda column: column.map_elements(
+            lambda value: value[0] == "A", return_dtype=pl.Boolean
+        )
+    )
+
+
+class _Raising(dy.Schema):
+    value = dy.Int64()
+
+    @dy.rule()
+    def raising(cls) -> pl.Expr:
+        """Documented, so its check description does not show the expression."""
+        raise RuntimeError
+
+
+class TestCodeVersion:
+    """The asset's code version."""
+
+    def test_an_asset_without_a_code_version_gets_a_sha1_hexdigest(self):
+        (spec,) = orders.specs
+
+        assert spec.code_version is not None
+        assert re.fullmatch(r"[0-9a-f]{40}", spec.code_version)
+
+    def test_the_wiring_function_returns_the_code_version_the_decorator_sets(self):
+        (spec,) = orders.specs
+
+        assert schema_code_version(Orders) == spec.code_version
+
+    def test_a_changed_column_constraint_changes_the_code_version(self):
+        assert schema_code_version(_Priced) != schema_code_version(_PricedFromOne)
+
+    def test_a_changed_value_the_expression_text_elides_changes_the_code_version(
+        self,
+    ):
+        assert _expression_text("code|check", _Lettered) == _expression_text(
+            "code|check", _Relettered
+        )
+        assert schema_code_version(_Lettered) != schema_code_version(_Relettered)
+
+    def test_a_changed_severity_changes_the_code_version(self):
+        assert schema_code_version(_Priced) != schema_code_version(_Warned)
+
+    def test_a_changed_docstring_leaves_the_code_version_unchanged(self):
+        assert schema_code_version(_Priced) == schema_code_version(_Redocumented)
+
+    def test_deriving_the_code_version_calls_every_rule_function(self):
+        with pytest.raises(RuntimeError):
+
+            @dd.asset(_Raising)
+            def raising() -> pl.DataFrame:
+                return pl.DataFrame()
+
+    def test_a_python_udf_rule_builds_without_cloudpickle(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setitem(sys.modules, "cloudpickle", None)
+
+        @dd.asset(_Mapped)
+        def mapped() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        (spec,) = mapped.specs
+        assert spec.code_version is not None
+        assert re.fullmatch(r"[0-9a-f]{40}", spec.code_version)
+
+    def test_two_processes_derive_the_same_code_version(self):
+        """Two processes derive the same code version for a schema with a lambda `check=`."""
+        script = "from tests.scenario import Orders; import dagster_dataframely as dd; print(dd.wiring.schema_code_version(Orders))"
+        versions = {
+            subprocess.run(  # noqa: S603 - the script is a literal
+                [sys.executable, "-c", script],
+                capture_output=True,
+                check=True,
+                cwd=_ROOT,
+                text=True,
+            ).stdout.strip()
+            for _ in range(2)
+        }
+
+        assert versions == {schema_code_version(Orders)}
+
+
 _COLUMNS_WITH_RULES = {rule.split("|")[0] for rule in _RULES if "|" in rule}
 
 
@@ -424,7 +550,8 @@ class TestCheckSpecs:
                 """Values stay unbuilt."""
                 raise AssertionError
 
-        @dd.asset(Unbuilt)
+        # Set, because deriving a code version builds every expression.
+        @dd.asset(Unbuilt, code_version="v1")
         def unbuilt() -> pl.DataFrame:
             return pl.DataFrame()
 

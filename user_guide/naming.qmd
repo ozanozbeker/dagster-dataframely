@@ -59,7 +59,8 @@ The collapsed `dy_schema__rules` names `primary_key` without its expression.
 It names each `@dy.rule()` with its expression.
 
 Dataframely builds a `@dy.rule()` expression by calling its function.
-So when a description shows the expression, a function that raises raises where you declare the asset, not when it runs.
+`dd.asset` builds every rule's expression to derive the [code version](declaring-an-asset.qmd#the-code-version), so a function that raises raises where you declare the asset, not when it runs.
+With your own `code_version`, `dd.asset` builds an expression only for a description that shows it.
 
 The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dataframely/rule_expr` metadata, but never in the check name.
 So changing a bound does not rename the check or start a new check history.

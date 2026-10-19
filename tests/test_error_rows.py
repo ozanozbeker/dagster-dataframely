@@ -226,6 +226,14 @@ class TestSpec:
 
         assert spec.kinds == {"polars", "duckdb"}
 
+    def test_the_spec_has_no_code_version_when_the_asset_has_one(self):
+        @dd.asset(Orders, filter=True)
+        def versioned() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        assert versioned.get_asset_spec().code_version is not None
+        assert error_rows_spec(Orders, versioned).code_version is None
+
     def test_the_spec_takes_the_partitions_off_the_definition(self):
         assert error_rows_spec(Orders, orders).partitions_def == _DAYS
 
