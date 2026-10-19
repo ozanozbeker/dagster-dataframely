@@ -338,7 +338,6 @@ It differs from `dd.asset` in these ways:
 - It has three outcomes.
   A run where every row failed succeeds and skips the asset's table.
   `dd.asset` fails that run with `NoValidRowsError`, because `filter=True` lets a run succeed when some rows fail an `"error"` rule, not when every row does.
-- The error rows are a second output, so a run that aborts never writes them, which is when you most need them.
 - Nothing checks the names.
   A column already named `dy_rule__amount__min`, or two rules that produce the same check name, cause a silent collision instead of an error at definition time.
 - With a `key_prefix`, you build both asset keys yourself, and nothing checks them.
