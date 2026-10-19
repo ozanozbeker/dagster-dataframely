@@ -637,7 +637,7 @@ class TestSkip:
 
         assert all(e.target_materialization_data is None for e in evaluations.values())
 
-    @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+    @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_a_skip_answers_whatever_check_list_the_asset_declared(
         self, tmp_path: Path, granularity: Granularity
     ):
@@ -763,11 +763,6 @@ def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dd.asset(Orders, name="orders", filter=True, check_granularity="schema")
-def _by_schema() -> pl.DataFrame:
-    return mixed_orders()
-
-
 def _members(evaluation: dg.AssetCheckEvaluation) -> dict[object, object]:
     """Return the failure count of each rule in a collapsed check."""
     table = dict(evaluation.metadata)["dataframely/rules"]
@@ -819,20 +814,6 @@ class TestCollapsedChecks:
         assert any(
             'col("amount")' in str(record.data["expr"]) for record in table.records
         )
-
-    def test_schema_granularity_reports_every_rule_through_one_check(
-        self, tmp_path: Path
-    ):
-        evaluations = check_evaluations(materialize(tmp_path, _by_schema))
-        members = _members(evaluations["dy_schema__rules"])
-
-        assert set(evaluations) == {"dy_schema__columns", "dy_schema__rules"}
-        assert len(members) == len(Orders._validation_rules(with_cast=False))
-        assert {rule: count for rule, count in members.items() if count} == {
-            "amount|min": 1,
-            "email|check__lowercase": 1,
-            "paid_orders_have_amount": 1,
-        }
 
     def test_a_clean_run_passes_every_collapsed_check(self, tmp_path: Path):
         """A collapsed check reports 0 for each rule on a clean run, instead of omitting the count."""

@@ -16,9 +16,9 @@ It made three claims, and all three were wrong.
 The main claim was that nothing checks that the two groupings match.
 Three tests do, the first two from [#80](https://github.com/ozanozbeker/dagster-dataframely/issues/80), which closed while this proposal was open:
 
-- `test_the_results_answer_exactly_the_specs_at_every_granularity`, in `tests/test_check_results.py`, asserts at all three granularities that `asset_check_specs` and `asset_check_results` name the same checks, in the same order.
+- `test_the_results_answer_exactly_the_specs_at_every_granularity`, in `tests/test_check_results.py`, asserts at every granularity that `asset_check_specs` and `asset_check_results` name the same checks, in the same order.
 - `test_schema_rules_reach_the_results_too` covers the second setting, which only `column` granularity reads.
-- `test_a_skip_answers_whatever_check_list_the_asset_declared`, in `tests/test_asset_runtime.py`, asserts that a skip yields a result for every check the asset declares, at all three granularities.
+- `test_a_skip_answers_whatever_check_list_the_asset_declared`, in `tests/test_asset_runtime.py`, asserts that a skip yields a result for every check the asset declares, at every granularity.
 
 The tests would miss only a bug in the decorator that makes the groupings differ on a run with rows, at a non-default granularity, while a skip at that granularity still passes.
 In `validation_results`, the skip and a run with rows call `rule_check_results` with the same `check_granularity` and `schema_rules`, and `_rule_sets` never reads the `FailureInfo`, so no such bug is possible.

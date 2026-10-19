@@ -95,7 +95,7 @@ Nearly every first-party IO manager subclasses one of the two.
 
 The error rows have the original columns, then one `String` rule column per rule, with `valid`, `invalid` or `unknown` in each row.
 A rule column has the check name its rule gets at the default `rule` granularity, such as `dy_rule__amount__min`.
-At `column` or `schema` granularity, use the rule column, not a check, to find the rows that failed a rule.
+At `column` granularity, use the rule column, not a check, to find the rows that failed a rule.
 Check samples have at most `max_failure_samples` rows per rule, so the rule columns are the only complete record of which rules each row failed.
 
 The error rows are not in the format `FailureInfo.write_parquet` writes, so `FailureInfo.read_parquet` and `FailureInfo.scan_parquet` cannot read them.

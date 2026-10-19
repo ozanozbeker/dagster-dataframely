@@ -67,15 +67,6 @@ def _rule_sets(
         return []
     if granularity == "rule":
         return [_single_rule_set(schema, rule) for rule in rules]
-    if granularity == "schema":
-        return [
-            _RuleSet(
-                SCHEMA_RULES_CHECK,
-                f"Every validation rule of {schema.__name__}.",
-                rules,
-                collapsed=True,
-            )
-        ]
 
     columns: dict[str, list[DescribedRule]] = {}
     unowned: list[DescribedRule] = []

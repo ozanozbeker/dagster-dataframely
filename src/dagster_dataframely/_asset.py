@@ -116,7 +116,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     error_rows_io_manager_key
         The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity
-        How many asset checks report the schema's rules: one per rule at `rule`, one per column with rules at `column`, and one for the schema at `schema`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+        How many asset checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     schema_rules
         Which checks report the schema-level rules at `column` granularity: `collapsed` into one check, `dy_schema__rules`, or `per_rule`, one check each. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples

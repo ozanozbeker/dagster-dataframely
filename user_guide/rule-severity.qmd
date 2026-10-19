@@ -127,11 +127,10 @@ A failing check also sets the asset's health: "Degraded" for a check at `ERROR`,
 
 ### Collapsed checks
 
-At `column` and `schema` granularity, one check reports for several rules:
+At `column` granularity, one check reports for several rules:
 
 - The check is blocking when `filter=False` and any of its rules is `"error"`.
 - It fails at `ERROR` when a failing rule is `"error"`, and at `WARN` when only `"warn"` rules failed.
 
 So a collapsed check whose `"warn"` rule failed and whose `"error"` rule passed fails at `WARN`, and Dagster does not fail the step.
-At `schema` granularity, the one check is blocking whenever any rule is `"error"`, which is almost always.
 Its metadata still lists the failures of each rule.

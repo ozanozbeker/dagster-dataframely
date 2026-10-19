@@ -460,11 +460,6 @@ def by_column() -> pl.DataFrame:
     return pl.DataFrame()
 
 
-@dd.asset(Orders, name="by_schema", check_granularity="schema")
-def by_schema() -> pl.DataFrame:
-    return pl.DataFrame()
-
-
 class TestCheckSpecs:
     """The check specs, at every `check_granularity`."""
 
@@ -660,15 +655,7 @@ class TestCheckSpecs:
         assert "dy_schema__rules" in specs
         assert specs["dy_col__schema"] != specs["dy_schema__rules"]
 
-    def test_schema_granularity_leaves_one_rules_check_beside_the_column_schema_check(
-        self,
-    ):
-        assert set(_specs_by_name(by_schema)) == {
-            "dy_schema__columns",
-            "dy_schema__rules",
-        }
-
-    @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+    @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_a_schema_with_no_rules_gets_the_column_schema_check_and_nothing_else(
         self,
         granularity: Any,
@@ -682,7 +669,7 @@ class TestCheckSpecs:
 
         assert set(_specs_by_name(blob)) == {"dy_schema__columns"}
 
-    @pytest.mark.parametrize("asset", [orders, by_column, by_schema])
+    @pytest.mark.parametrize("asset", [orders, by_column])
     def test_the_column_schema_check_is_present_and_blocking_at_every_granularity(
         self,
         asset: dg.AssetsDefinition,
@@ -701,24 +688,20 @@ class TestCheckSpecs:
             f"paid_orders_have_amount `{_expression_text('paid_orders_have_amount')}`, "
             f"line_numbers_are_dense `{_expression_text('line_numbers_are_dense')}`, primary_key."
         )
-        assert _specs_by_name(by_schema)["dy_schema__rules"].description == (
-            "Every validation rule of Orders."
-        )
 
     def test_the_environment_variable_sets_a_default_granularity_for_the_code_location(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "schema")
+        monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "column")
 
         @dd.asset(Orders, name="code_location_default")
         def code_location_default() -> pl.DataFrame:
             return pl.DataFrame()
 
-        assert set(_specs_by_name(code_location_default)) == {
-            "dy_schema__columns",
-            "dy_schema__rules",
-        }
+        assert set(_specs_by_name(code_location_default)) == set(
+            _specs_by_name(by_column)
+        )
 
 
 def _catalog(asset: dg.AssetsDefinition, key: dg.AssetKey) -> dg.TableSchema:

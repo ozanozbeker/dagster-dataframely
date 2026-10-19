@@ -11,13 +11,13 @@ from typing import Literal, cast
 
 from dagster_dataframely.errors import InvalidSettingError
 
-type Granularity = Literal["rule", "column", "schema"]
-"""How many asset checks report a schema's rules: one per rule at `rule`, one per column with rules at `column`, and one for the schema at `schema`."""
+type Granularity = Literal["rule", "column"]
+"""How many asset checks report a schema's rules: one per rule at `rule`, and one per column with rules at `column`."""
 
 type SchemaRules = Literal["collapsed", "per_rule"]
 """Which checks report the schema-level rules at `column` granularity.
 
-`collapsed` puts them all in one check, `dy_schema__rules`, and `per_rule` gives each its own check. A schema-level rule is a `@dy.rule()` or the primary key, including a single-column key. At `rule` and `schema` granularity this setting has no effect."""
+`collapsed` puts them all in one check, `dy_schema__rules`, and `per_rule` gives each its own check. A schema-level rule is a `@dy.rule()` or the primary key, including a single-column key. At `rule` granularity this setting has no effect."""
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ class _Setting[T]:
         return cast("T", value)
 
 
-_GRANULARITIES: tuple[Granularity, ...] = ("rule", "column", "schema")
+_GRANULARITIES: tuple[Granularity, ...] = ("rule", "column")
 _SCHEMA_RULES: tuple[SchemaRules, ...] = ("collapsed", "per_rule")
 
 _FLAG_WORDS = {"true": True, "false": False}

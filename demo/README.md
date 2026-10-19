@@ -58,7 +58,7 @@ Dagster cannot run partitioned and unpartitioned assets together, so `daily_orde
 | | `marketing_orders` | The marketplace feed with `filter=True`: seven checks fail at `ERROR`, none of them blocking, and the run writes the eight failing lines under `marketing_orders__error_rows` and succeeds. |
 | | `finance_orders` | The same feed with `filter=False`: the checks fail at `ERROR`, and the run raises `ValidationAbortError` and writes nothing. |
 | | `partner_orders` | The blocking `dy_schema__columns` check fails on `quantity`, and the run raises `ColumnSchemaError` before `Schema.filter` runs. |
-| | `legacy_orders` | Every row fails an `"error"` rule, so the run writes no table, not even an empty one, and raises `NoValidRowsError`. It uses `schema` granularity, so one check reports for every rule. |
+| | `legacy_orders` | Every row fails an `"error"` rule, so the run writes no table, not even an empty one, and raises `NoValidRowsError`. |
 | | `daily_orders` | It has five daily partitions, at `column` granularity. |
 | | `regional_orders` | Day by region gives fifteen partitions. APAC returns `None` for the days before it opened. |
 | | `warehouse_orders` | A plain asset that adds the checks through `dd.wiring`, so the IO manager writes the table first and the checks report afterwards. A failing `"error"` rule's check is blocking, so its check step fails. |

@@ -4,6 +4,7 @@
 """
 
 from collections.abc import Callable, Iterator
+from decimal import Decimal
 from pathlib import Path
 
 import dagster as dg
@@ -48,7 +49,6 @@ _CHECKS: dict[Granularity, list[str]] = {
     "rule": [rule.check_name for rule in _RULE_ORDER],
     "column": [f"dy_col__{column}" for column in _COLUMNS_WITH_RULES]
     + ["dy_schema__rules"],
-    "schema": ["dy_schema__rules"],
 }
 
 
@@ -90,7 +90,7 @@ def _before_the_raise(frame: pl.DataFrame) -> list[dg.AssetCheckResult]:
 class TestDirectCall:
     """The results `asset_check_results` yields when called directly, with no run."""
 
-    @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+    @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_the_results_answer_exactly_the_specs_at_every_granularity(
         self,
         granularity: Granularity,
@@ -174,6 +174,22 @@ class TestDirectCall:
         assert _results(mixed_orders().lazy()) == _results(mixed_orders())
 
 
+def _null_and_negative_amount_orders() -> pl.DataFrame:
+    """Return clean orders with one null amount and two negative amounts."""
+    order_id = pl.col("order_id")
+    return clean_orders().with_columns(
+        amount=pl
+        .when(order_id == "ORD-1")
+        .then(None)
+        .when(order_id == "ORD-2")
+        .then(pl.lit(Decimal("-1.00")))
+        .when(order_id == "ORD-3")
+        .then(pl.lit(Decimal("-2.00")))
+        .otherwise(pl.col("amount"))
+        .cast(pl.Decimal(10, 2))
+    )
+
+
 class TestDescription:
     """The sentence each result's `description` holds."""
 
@@ -194,11 +210,8 @@ class TestDescription:
         ("frame", "expected"),
         [
             (
-                mixed_orders,
-                (
-                    "3 rules failed: paid_orders_have_amount (1 row),"
-                    " email|check__lowercase (1 row), amount|min (1 row)."
-                ),
+                _null_and_negative_amount_orders,
+                "2 rules failed: amount|nullability (1 row), amount|min (2 rows).",
             ),
             (no_valid_orders, "1 rule failed: amount|min (2 rows)."),
             (clean_orders, "No rule failed."),
@@ -207,9 +220,9 @@ class TestDescription:
     def test_a_collapsed_result_names_only_the_rules_that_failed(
         self, frame: Callable[[], pl.DataFrame], expected: str
     ):
-        descriptions = _descriptions(frame(), check_granularity="schema")
+        descriptions = _descriptions(frame(), check_granularity="column")
 
-        assert descriptions["dy_schema__rules"] == expected
+        assert descriptions["dy_col__amount"] == expected
 
     @pytest.mark.parametrize(
         ("frame", "expected"),

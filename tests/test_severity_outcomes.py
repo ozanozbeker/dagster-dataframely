@@ -254,9 +254,6 @@ class TestBlockingSpecs:
                 },
                 id="column",
             ),
-            pytest.param(
-                "schema", {"dy_schema__columns", "dy_schema__rules"}, id="schema"
-            ),
         ],
     )
     def test_without_filter_a_check_is_blocking_when_it_has_an_error_rule(
@@ -266,7 +263,7 @@ class TestBlockingSpecs:
 
         assert _blocking(specs) == blocking
 
-    @pytest.mark.parametrize("granularity", ["rule", "column", "schema"])
+    @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_with_filter_only_the_column_schema_check_is_blocking(
         self, granularity: dd.Granularity
     ):

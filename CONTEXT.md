@@ -158,10 +158,11 @@ _Avoid_: collection asset, collection door
 _Avoid_: parsed rule, rule info, rule spec, enriched rule
 
 **Rule set**: The rules one asset check reports for.
-A check reports one rule at `rule` granularity, one column's rules at `column`, and every rule at `schema`.
+A check reports one rule at `rule` granularity, and one column's rules at `column`.
+At `column`, `schema_rules` sets whether the schema-level rules report through one check or one check each.
 _Avoid_: bucket, "member rule" (member is Dataframely's word for a Collection member)
 
-**Granularity**: How many checks the package collapses the rules into, which `check_granularity` sets: one per rule at `rule`, one per column at `column`, one for the schema at `schema`.
+**Granularity**: How many checks the package collapses the rules into, which `check_granularity` sets: one per rule at `rule`, and one per column at `column`.
 Coined: Dagster's only `granularity` is an internal concurrency setting, and neither Dataframely nor Polars has one.
 _Avoid_: level, resolution, detail
 

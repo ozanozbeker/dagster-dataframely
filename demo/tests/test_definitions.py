@@ -56,7 +56,7 @@ EXPECTED_GROUPS = {
 }
 
 # Includes `dy_schema__columns`. The README and the screenshots quote these.
-EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 14, "legacy_orders": 2}
+EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 14}
 
 EXPECTED_ERROR_ROWS = {
     "marketing_orders__error_rows": "marketing_orders",

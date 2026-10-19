@@ -29,6 +29,7 @@ _ERROR_ROWS_DIR_ENV = "DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR"
 
 # Typed `Any`, so the type checker does not reject the wrong values these tests need.
 _WRONG: Any = "per_column"
+_SCHEMA: Any = "schema"
 _FRACTION: Any = 2.5
 _YES: Any = True
 _WORD: Any = "false"
@@ -61,7 +62,7 @@ def test_the_environment_variable_beats_the_package_default(
 def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
-    assert CHECK_GRANULARITY.resolve("schema") == "schema"
+    assert CHECK_GRANULARITY.resolve("rule") == "rule"
 
 
 def test_every_setting_names_its_environment_variable_after_itself():
@@ -233,6 +234,16 @@ def test_a_value_outside_the_allowed_values_raises_from_the_environment(
     )
 
 
+def test_schema_is_not_a_granularity(monkeypatch: pytest.MonkeyPatch):
+    """`schema` raises from the argument and from the environment variable."""
+    with pytest.raises(InvalidSettingError):
+        CHECK_GRANULARITY.resolve(_SCHEMA)
+
+    monkeypatch.setenv(_GRANULARITY_ENV, "schema")
+    with pytest.raises(InvalidSettingError):
+        CHECK_GRANULARITY.resolve(None)
+
+
 def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
@@ -264,7 +275,7 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
         "Setting `check_granularity` got 'per_column' from the `check_granularity=` argument"
         in message
     )
-    assert "'rule', 'column', 'schema'" in message
+    assert "Allowed values are 'rule', 'column'." in message
     assert (
         "It is read from three sources, each overriding the one before: the package default,"
         in message
