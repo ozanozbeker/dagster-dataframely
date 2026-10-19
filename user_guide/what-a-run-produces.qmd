@@ -20,12 +20,13 @@ This package reports a run's results in two places: the table's materialization 
 
 ## The table's materialization
 
-The row count is under Dagster's own key, `dagster/row_count`.
+The row count is under one of Dagster's own keys: `dagster/partition_row_count` on a partitioned asset, and `dagster/row_count` otherwise.
 Every other key this package writes is in the `dataframely/` namespace, so these keys sort together, apart from Dagster's keys and your IO manager's.
 
 | key | what it holds |
 | --- | --- |
 | `dagster/row_count` | how many rows the run wrote to the table, not how many the function returned |
+| `dagster/partition_row_count` | the same count on a partitioned asset, in place of `dagster/row_count` |
 | `dataframely/table_sample` | the first few of those rows |
 | `dataframely/table_statistics/<group>` | one table per dtype group present |
 | `dataframely/error_rows_address` | where the writer wrote the error rows, on the runs that wrote any |
@@ -127,7 +128,8 @@ Setting the result's `asset_key` or `check_results` raises `MaterializeResultFie
 The decorator sets the asset key from its declaration and the check results from the schema's rules.
 
 **This package's own metadata keys take precedence.**
-If you return `dagster/row_count` or a key in the `dataframely/` namespace, the package's value replaces yours.
+If you return the row-count key the package writes, or a key in the `dataframely/` namespace, the package's value replaces yours.
+On a partitioned asset, that key is `dagster/partition_row_count`, so the package copies a returned `dagster/row_count` unchanged.
 The package copies every other key you return onto the materialization unchanged.
 
 ![An asset whose returned result set `source`, `extract/rows` and `extract/window`, and also set `dagster/row_count` to 999. The materialization shows the three keys unchanged, and `dagster/row_count` shows 12, the number of rows written.](../assets/images/returned-result-metadata.png)

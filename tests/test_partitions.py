@@ -13,6 +13,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import dagster_dataframely as dd
+from dagster_dataframely.wiring import validation_results
 from tests.scenario import (
     Orders,
     check_evaluations,
@@ -36,6 +37,13 @@ _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 def _orders() -> pl.DataFrame:
     # `.get()` instead of a `context` parameter, so the suite also covers the accessor.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
+
+
+def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
+    """Return the materialization a call yielded."""
+    materialization = dd.testing.direct_invocation_result(called).materialization
+    assert materialization is not None
+    return materialization
 
 
 def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | None]:
@@ -102,8 +110,6 @@ class TestPartitionRuns:
         }
         assert pl.read_parquet(filtering / "2026-01-02.parquet").height == 3
         assert pl.read_parquet(filtering / "2026-01-03.parquet").height == 0
-
-    # No row-count test: `dagster-polars` overwrites `dagster/row_count`, so `test_asset_runtime.py` tests it.
 
     def test_a_drifting_partition_aborts_at_the_column_schema_check_before_any_row_check_reports(
         self,
@@ -237,6 +243,60 @@ class TestPartitionRuns:
         assert "multiple partitions" in str(failure.error)
         assert "multi-run backfill policy" in str(failure.error)
         assert not list(tmp_path.rglob("*.parquet"))
+
+
+@dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)
+def _counted() -> pl.DataFrame:
+    return clean_orders()
+
+
+# Each test calls the asset instead of running it, because in a run `dagster-polars` writes the same key.
+class TestRowCount:
+    """The key the materialization files the row count under."""
+
+    def test_a_partitioned_asset_counts_the_partitions_rows(self):
+        metadata = _materialization(_counted()).metadata or {}
+
+        assert metadata["dagster/partition_row_count"] == 3
+        assert "dagster/row_count" not in metadata
+
+    def test_the_package_replaces_only_a_returned_partition_row_count(self):
+        @dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)
+        def orders() -> dg.MaterializeResult[pl.DataFrame]:
+            return dg.MaterializeResult(
+                value=clean_orders(),
+                metadata={
+                    "dagster/partition_row_count": 999,
+                    "dagster/row_count": 12,
+                },
+            )
+
+        metadata = _materialization(orders()).metadata or {}
+
+        assert metadata["dagster/partition_row_count"] == 3
+        assert metadata["dagster/row_count"] == 12
+
+    @pytest.mark.parametrize(
+        ("partitioned", "key", "absent"),
+        [
+            (False, "dagster/row_count", "dagster/partition_row_count"),
+            (True, "dagster/partition_row_count", "dagster/row_count"),
+        ],
+    )
+    def test_a_hand_wired_asset_counts_under_the_key_partitioned_selects(
+        self, partitioned: bool, key: str, absent: str
+    ):
+        (materialization,) = [
+            r
+            for r in validation_results(
+                Orders, clean_orders(), valid_key=_GOOD_KEY, partitioned=partitioned
+            )
+            if isinstance(r, dg.MaterializeResult)
+        ]
+        metadata = materialization.metadata or {}
+
+        assert metadata[key] == 3
+        assert absent not in metadata
 
 
 # A distributor that left: `departed` has source data for 2026-01 and none for 2026-02.

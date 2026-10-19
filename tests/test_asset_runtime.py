@@ -69,6 +69,7 @@ class TestCleanFrame:
         metadata = materialization.metadata or {}
 
         assert metadata["dagster/row_count"] == 3
+        assert "dagster/partition_row_count" not in metadata
 
     def test_a_clean_run_reports_every_rule_as_passing_at_warn(self, tmp_path: Path):
         evaluations = check_evaluations(materialize(tmp_path, _raw_orders, orders))

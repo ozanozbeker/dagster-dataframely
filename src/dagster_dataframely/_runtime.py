@@ -160,6 +160,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
+    partitioned: bool = False,
 ) -> AssetYield:
     """Validate a frame and yield the asset's materialization and check results.
 
@@ -181,6 +182,8 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         Whether the materialization metadata has statistics of the written rows. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
         The materialization metadata has at most this many rows of the table, and this many error rows. `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
+    partitioned
+        Whether the asset has a `partitions_def`. With `True`, the row count is under `dagster/partition_row_count`, because Dagster defines `dagster/row_count` as the whole table's count.
 
     Yields
     ------
@@ -239,6 +242,9 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     errors: set[str] = _error_rules(schema)
     warned, error_rows = _warned_and_error_rows(schema, failure, errors)
     table: pl.DataFrame = pl.concat([valid, warned])
+    count_key: str = (
+        "dagster/partition_row_count" if partitioned else "dagster/row_count"
+    )
 
     def table_result(
         error_rows_metadata: ErrorRowsMetadata | None = None,
@@ -248,7 +254,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
             asset_key=valid_key,
             value=table,
             metadata={
-                "dagster/row_count": len(table),
+                count_key: len(table),
                 **statistics_metadata(table, enabled=emit_statistics),
                 **sample_metadata(TABLE_SAMPLE_KEY, sample_rows(table, sampled_rows)),
                 **(error_rows_metadata or {}),

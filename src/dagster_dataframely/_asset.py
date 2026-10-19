@@ -253,6 +253,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                     max_failure_samples=failure_samples,
                     statistics=emit_statistics,
                     row_sample=sampled_rows,
+                    partitioned=partitions_def is not None,
                 ),
                 result,
                 valid_key=key,

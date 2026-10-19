@@ -23,7 +23,10 @@ Partitioning has no setting of its own.
 With `filter=True`, the writer writes the error rows under the same partition key as the asset.
 A run of a clean partition writes that partition's error rows empty and leaves every other partition's error rows as they were.
 Validation runs on each partition's frame separately.
-`dagster/row_count` is the number of rows written to that partition.
+The materialization has the number of rows written to that partition under `dagster/partition_row_count`.
+Dagster defines `dagster/row_count` as the whole table's count, so the package does not write it for a partition.
+Dagster's Overview tab shows a row count only from `dagster/row_count`, so the stat is empty for a partitioned asset unless something writes that key.
+To show the table's count there, return it under `dagster/row_count` on a `dg.MaterializeResult`, and the package copies it onto the materialization unchanged.
 If one partition's frame fails the column-schema check, no other partition's data changes.
 
 Every check has the asset's partitions.

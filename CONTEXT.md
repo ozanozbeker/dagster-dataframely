@@ -200,7 +200,7 @@ _Avoid_: preview, example, head
 So the decorator is `dd.asset`, not `dy_asset`.
 The error-rows address is the exception: when the package writes no table, the table has no materialization, so each check result has `dataframely/error_rows_address`, the same key the table's materialization uses (ADR-0004).
 `dataframely/` starts every materialization and definition metadata key this package names, as `dagster/` does for Dagster.
-The valid row count is the exception, because Dagster already has a key for it: `dagster/row_count`.
+The valid row count is the exception, because Dagster already has keys for it: `dagster/partition_row_count` on a partitioned asset, and `dagster/row_count` otherwise.
 `<name>__error_rows` is the default error-rows key.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.

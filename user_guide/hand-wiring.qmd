@@ -63,7 +63,8 @@ An asset built with `dd.asset` runs `validation_results(schema, frame, valid_key
 It runs the column-schema check and `Schema.filter`, writes the error rows, and yields the materialization and every check result.
 Its return type is `dd.wiring.AssetYield`.
 The writer writes the error rows, and `validation_results` yields no result for them.
-You make one choice: whether to pass `error_rows_writer`.
+For a partitioned asset, also pass `partitioned=True`, so the row count is under `dagster/partition_row_count` instead of `dagster/row_count`.
+You make one choice that changes the outcome: whether to pass `error_rows_writer`.
 The data determines which outcome a run has.
 
 <!-- rumdl-disable-next-line MD078 -->
