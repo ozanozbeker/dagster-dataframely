@@ -130,7 +130,7 @@ For example, `amount|min` has the rule name `min`.
 Dataframely uses this word, on that same line.
 It differs from the column argument Dataframely generated the rule from for four arguments: `nullable=False` generates `nullability`, `allow_inf=False` generates `inf`, `allow_nan=False` generates `nan`, and `check={"lowercase": ...}` generates `check__lowercase`.
 A `dy.List` or `dy.Array` adds `inner_` to each rule name of its inner column.
-_Avoid_: kind (Dagster's `kinds=` is the asset's badges, and `dd.asset` forwards it), type, flavour
+_Avoid_: kind (Dagster's `kinds=` is the asset's badges, and `dd.asset` adds `polars` to it), type, flavour
 
 **Schema-level rule**: A rule that belongs to no single column: a `@dy.rule()`, and `primary_key`.
 Dataframely uses this phrase, in `_schema_validation_rules()` and in the warning it raises about them.

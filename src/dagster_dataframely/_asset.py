@@ -136,6 +136,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         In a run, `delegating_writer` passes the error rows to the same IO manager, unless `error_rows_io_manager_key` names another.
     partitions_def
         The writer writes the error rows under the same partition key, and every check spec has the same partitions.
+    kinds
+        The asset has the `polars` kind as well as these, because Polars always computes it.
 
     Returns
     -------
@@ -237,7 +239,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         "retry_policy": retry_policy,
         "code_version": code_version,
         "owners": owners,
-        "kinds": kinds,
+        "kinds": {"polars", *(kinds or ())},
         "pool": pool,
     }
 

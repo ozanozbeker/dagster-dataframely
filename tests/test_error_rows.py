@@ -202,6 +202,21 @@ class TestSpec:
 
         assert dep.asset_key == dg.AssetKey(["sales", "orders"])
 
+    @pytest.mark.parametrize(
+        "asset",
+        [orders, dg.AssetKey(["sales", "orders"])],
+        ids=["definition", "asset_key"],
+    )
+    def test_the_spec_has_the_polars_kind(
+        self, asset: dg.AssetsDefinition | dg.AssetKey
+    ):
+        assert error_rows_spec(Orders, asset).kinds == {"polars"}
+
+    def test_merge_attributes_adds_a_storage_kind_beside_polars(self):
+        spec = error_rows_spec(Orders, orders).merge_attributes(kinds={"duckdb"})
+
+        assert spec.kinds == {"polars", "duckdb"}
+
     def test_the_spec_takes_the_partitions_off_the_definition(self):
         assert error_rows_spec(Orders, orders).partitions_def == _DAYS
 

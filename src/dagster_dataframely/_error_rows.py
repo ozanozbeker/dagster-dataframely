@@ -406,5 +406,7 @@ def error_rows_spec(
         metadata={**definition_metadata, **error_rows_metadata(schema)},
         partitions_def=partitions_def,
         group_name=group_name,
+        # Not the asset's kinds, which can name storage that `error_rows_io_manager_key` does not write to.
+        kinds={"polars"},
     )
     return spec if io_manager_key is None else spec.with_io_manager_key(io_manager_key)

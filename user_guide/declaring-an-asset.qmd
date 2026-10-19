@@ -83,6 +83,9 @@ A type checker rejects the five legacy forms, but nothing rejects them at run ti
 | `is_virtual` | a virtual asset has no function to decorate | nothing |
 | `io_manager_def` | `resource_defs` already sets it | `resource_defs={"io_manager": ...}` |
 
+`dd.asset` adds the `polars` kind to `kinds`.
+With `kinds={"duckdb"}`, the asset has the kinds `polars` and `duckdb`.
+
 ## The schema is a single `dy.Schema`, never a `dy.Collection`
 
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.

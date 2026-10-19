@@ -106,6 +106,21 @@ class TestAssetSpec:
             "raw_orders": dg.AssetKey(["raw_orders"])
         }
 
+    @pytest.mark.parametrize(
+        "kinds", [None, set(), {"polars"}], ids=["none", "empty", "polars"]
+    )
+    def test_an_asset_without_other_kinds_has_only_the_polars_kind(
+        self, kinds: set[str] | None
+    ):
+        @dd.asset(Orders, kinds=kinds)
+        def kinded() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        (spec,) = kinded.specs
+
+        assert spec.kinds == {"polars"}
+        assert spec.tags["dagster/kind/polars"] == ""
+
 
 @dg.success_hook
 def _notify(context: dg.HookContext) -> None:
@@ -198,7 +213,7 @@ class TestForwardedParameters:
         assert routed.metadata_by_key[key]["sla_hours"] == 4
         assert spec.tags["layer"] == "silver"
         assert list(spec.owners) == ["team:data"]
-        assert spec.kinds == {"parquet"}
+        assert spec.kinds == {"polars", "parquet"}
         assert spec.automation_condition == condition
         assert spec.freshness_policy == freshness
 

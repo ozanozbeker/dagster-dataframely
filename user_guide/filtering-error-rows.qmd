@@ -225,6 +225,8 @@ defs = dg.Definitions(
 
 `error_rows_spec` returns a `dg.AssetSpec` keyed `orders__error_rows` that depends on `orders` and has its own Columns tab.
 It has no compute function, because the decorator already writes the rows.
+It has the `polars` kind, as the asset does, but none of the asset's other kinds.
+To add a storage kind such as `duckdb`, call `.merge_attributes(kinds={"duckdb"})` on the spec.
 The IO manager that wrote the rows also loads them for a downstream asset that names the error rows as an input.
 
 **The error rows' Columns tab has no column constraints.**
