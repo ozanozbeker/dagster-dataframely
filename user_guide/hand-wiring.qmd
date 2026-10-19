@@ -321,7 +321,7 @@ def orders():
         )
 ```
 
-That runs, and it writes both tables.
+That runs, and a run where some rows pass and some fail writes both tables.
 It differs from `dd.asset` in these ways:
 
 - It calls `Orders._validation_rules`, which is private.
@@ -338,6 +338,14 @@ It differs from `dd.asset` in these ways:
 - It has three outcomes.
   A run where every row failed succeeds and skips the asset's table.
   `dd.asset` fails that run with `NoValidRowsError`, because `filter=True` lets a run succeed when some rows fail an `"error"` rule, not when every row does.
+- It writes the error rows only when a row fails.
+  So a clean run leaves the error rows from the last run that had any.
+  `dd.asset` writes a frame with zero rows, so an IO manager that overwrites replaces them.
+- The error rows are a second output of a `dg.multi_asset`, so the definition has two asset keys.
+  `orders.key` raises `CheckError`.
+  `@dg.asset(deps=[orders])` depends on the table and on the error rows.
+  Inside the function, `context.asset_key` raises, and so does `context.add_asset_metadata` without `asset_key=`.
+  A job that selects only `orders` raises `DagsterInvalidDefinitionError` when Dagster loads it.
 - Nothing checks the names.
   A column already named `dy_rule__amount__min`, or two rules that produce the same check name, cause a silent collision instead of an error at definition time.
 - With a `key_prefix`, you build both asset keys yourself, and nothing checks them.
