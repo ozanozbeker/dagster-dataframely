@@ -170,12 +170,13 @@ with tempfile.TemporaryDirectory() as storage:
     for evaluation in result.get_asset_check_evaluations()
     if evaluation.check_name.startswith("dy_filter__")
 ]
+metadata = evaluation.metadata
 {
     "passed": evaluation.passed,
     "severity": evaluation.severity,
-    "dy_failed_count": evaluation.metadata["dy_failed_count"].value,
-    "dy_failed_sample": [
-        dict(record.data) for record in evaluation.metadata["dy_failed_sample"].records
+    "dataframely/failed_row_count": metadata["dataframely/failed_row_count"].value,
+    "dataframely/failed_sample": [
+        dict(record.data) for record in metadata["dataframely/failed_sample"].records
     ],
 }
 ```
@@ -188,9 +189,9 @@ A failing check's metadata has three keys:
 
 | key | value |
 | --- | --- |
-| `dy_filter` | the collection filter's name, which a passing check has too |
-| `dy_failed_count` | how many of the member's rows failed the collection filter |
-| `dy_failed_sample` | up to `max_failure_samples` of those rows |
+| `dataframely/filter` | the collection filter's name, which a passing check has too |
+| `dataframely/failed_row_count` | how many of the member's rows failed the collection filter |
+| `dataframely/failed_sample` | up to `max_failure_samples` of those rows |
 
 **A run writes the sample rows to the Dagster event log unredacted.**
 `max_failure_samples=` sets how many, and `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.

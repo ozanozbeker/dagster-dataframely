@@ -331,9 +331,12 @@ class TestRun:
         evaluation = evaluations(result)[ORDERS_CHECK]
         assert not evaluation.passed
         assert evaluation.severity == dg.AssetCheckSeverity.ERROR
-        assert evaluation.metadata["dy_filter"].value == "order_references_customer"
-        assert evaluation.metadata["dy_failed_count"].value == 1
-        assert records(evaluation.metadata["dy_failed_sample"]) == [
+        assert (
+            evaluation.metadata["dataframely/filter"].value
+            == "order_references_customer"
+        )
+        assert evaluation.metadata["dataframely/failed_row_count"].value == 1
+        assert records(evaluation.metadata["dataframely/failed_sample"]) == [
             {"order_id": 12, "customer_id": 99}
         ]
 
@@ -344,9 +347,12 @@ class TestRun:
 
         evaluation = evaluations(result)[ORDERS_CHECK]
         assert evaluation.passed
-        assert evaluation.metadata["dy_filter"].value == "order_references_customer"
-        assert "dy_failed_count" not in evaluation.metadata
-        assert "dy_failed_sample" not in evaluation.metadata
+        assert (
+            evaluation.metadata["dataframely/filter"].value
+            == "order_references_customer"
+        )
+        assert "dataframely/failed_row_count" not in evaluation.metadata
+        assert "dataframely/failed_sample" not in evaluation.metadata
 
     def test_a_failing_error_check_stops_its_members_downstream_asset(
         self, tmp_path: Path

@@ -207,9 +207,9 @@ class TestFailureSamples:
     def test_a_failing_check_has_the_rows_that_failed_it(self, tmp_path: Path):
         result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
-        sampled = records(metadata["dy_failed_sample"])
+        sampled = records(metadata["dataframely/failed_sample"])
 
-        assert metadata["dy_failed_count"].value == 1
+        assert metadata["dataframely/failed_row_count"].value == 1
         assert [row["order_id"] for row in sampled] == ["ORD-4"]
         assert sampled[0]["amount"] == "-4.00"
 
@@ -220,7 +220,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, _with_error_rows)
         sampled = records(
             check_evaluations(result)["dy_rule__amount__min"].metadata[
-                "dy_failed_sample"
+                "dataframely/failed_sample"
             ]
         )
 
@@ -230,8 +230,8 @@ class TestFailureSamples:
         result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__quantity__min"].metadata
 
-        assert "dy_failed_sample" not in metadata
-        assert {"dy_rule", "dy_rule__expr"} <= set(metadata)
+        assert "dataframely/failed_sample" not in metadata
+        assert {"dataframely/rule", "dataframely/rule_expr"} <= set(metadata)
 
     def test_the_failure_sample_is_bounded(self, tmp_path: Path):
         @dd.asset(Orders, name="orders", filter=True)
@@ -241,8 +241,8 @@ class TestFailureSamples:
         result = materialize(tmp_path, many_invalid)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
 
-        assert metadata["dy_failed_count"].value == _DEFAULT * 2
-        assert len(records(metadata["dy_failed_sample"])) == _DEFAULT
+        assert metadata["dataframely/failed_row_count"].value == _DEFAULT * 2
+        assert len(records(metadata["dataframely/failed_sample"])) == _DEFAULT
 
     def test_a_failure_sample_of_zero_leaves_the_key_absent_rather_than_empty(
         self,
@@ -260,8 +260,8 @@ class TestFailureSamples:
         result = materialize(tmp_path, unsampled)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
 
-        assert "dy_failed_sample" not in metadata
-        assert metadata["dy_failed_count"].value == 1
+        assert "dataframely/failed_sample" not in metadata
+        assert metadata["dataframely/failed_row_count"].value == 1
 
     def test_the_environment_variable_sets_the_failure_sample(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -275,7 +275,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, orders)
 
         assert (
-            "dy_failed_sample"
+            "dataframely/failed_sample"
             not in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 
@@ -289,7 +289,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, aborting, raise_on_error=False)
         sampled = records(
             check_evaluations(result)["dy_rule__amount__min"].metadata[
-                "dy_failed_sample"
+                "dataframely/failed_sample"
             ]
         )
 
@@ -302,7 +302,9 @@ class TestFailureSamples:
         """The `dy_` namespace keeps the `dy_rule` column apart from the schema's columns."""
         result = materialize(tmp_path, _by_column)
         sampled = records(
-            check_evaluations(result)["dy_col__amount"].metadata["dy_failed_sample"]
+            check_evaluations(result)["dy_col__amount"].metadata[
+                "dataframely/failed_sample"
+            ]
         )
 
         assert [row["dy_rule"] for row in sampled] == ["amount|min"]
@@ -314,7 +316,9 @@ class TestFailureSamples:
         """The bound is per rule, so a rule one row failed still appears beside a rule many rows failed."""
         result = materialize(tmp_path, _by_column)
         sampled = records(
-            check_evaluations(result)["dy_schema__rules"].metadata["dy_failed_sample"]
+            check_evaluations(result)["dy_schema__rules"].metadata[
+                "dataframely/failed_sample"
+            ]
         )
 
         assert [row["dy_rule"] for row in sampled] == ["paid_orders_have_amount"]
@@ -337,7 +341,7 @@ class TestSampleSettings:
         ]
         assert "dataframely/table_sample" in metadata
         assert (
-            "dy_failed_sample"
+            "dataframely/failed_sample"
             in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 
@@ -358,7 +362,7 @@ class TestSampleSettings:
         assert "dataframely/table_statistics/numeric" in metadata
         assert "dataframely/table_sample" not in metadata
         assert (
-            "dy_failed_sample"
+            "dataframely/failed_sample"
             not in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 

@@ -89,8 +89,8 @@ class TestCleanFrame:
         ]
         metadata = dict(evaluation.metadata)
 
-        assert metadata["dy_rule"].value == "amount|min"
-        assert 'col("amount")' in str(metadata["dy_rule__expr"].value)
+        assert metadata["dataframely/rule"].value == "amount|min"
+        assert 'col("amount")' in str(metadata["dataframely/rule_expr"].value)
 
 
 # `_REJECTED_RETURNS` in `tests/test_returned_result.py` covers the frame guard, in a call and in a run.
@@ -270,7 +270,7 @@ class TestColumnSchemaMismatch:
     ):
         result = materialize(tmp_path, _wrong_dtype, raise_on_error=False)
         metadata = dict(check_evaluations(result)["dy_schema__columns"].metadata)
-        errors = metadata["dy_schema__errors"]
+        errors = metadata["dataframely/column_schema_errors"]
 
         assert isinstance(errors, dg.TableMetadataValue)
         assert [dict(record.data) for record in errors.records] == [
@@ -315,7 +315,9 @@ class TestErrorRowsWithoutFilter:
             "dy_rule__paid_orders_have_amount",
         }
         assert (
-            dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value
+            dict(evaluations["dy_rule__amount__min"].metadata)[
+                "dataframely/failed_row_count"
+            ].value
             == 1
         )
 
@@ -423,7 +425,10 @@ class TestFilterWithValidRows:
 
         assert any(e.passed for e in rules)
         assert any(not e.passed for e in rules)
-        assert all({"dy_rule", "dy_rule__expr"} <= set(e.metadata) for e in rules)
+        assert all(
+            {"dataframely/rule", "dataframely/rule_expr"} <= set(e.metadata)
+            for e in rules
+        )
 
     def test_downstream_proceeds_on_the_data_that_is_fine(self, tmp_path: Path):
         """The rules' checks are not blocking, so the downstream asset runs on the valid rows."""
@@ -582,7 +587,9 @@ class TestFilterWithNoValidRows:
             e.severity == dg.AssetCheckSeverity.ERROR for e in rules if not e.passed
         )
         assert (
-            dict(evaluations["dy_rule__amount__min"].metadata)["dy_failed_count"].value
+            dict(evaluations["dy_rule__amount__min"].metadata)[
+                "dataframely/failed_row_count"
+            ].value
             == 2
         )
 
@@ -751,7 +758,7 @@ def _by_schema() -> pl.DataFrame:
 
 def _members(evaluation: dg.AssetCheckEvaluation) -> dict[object, object]:
     """Return the failure count of each rule in a collapsed check."""
-    table = dict(evaluation.metadata)["dy_rules"]
+    table = dict(evaluation.metadata)["dataframely/rules"]
     assert isinstance(table, dg.TableMetadataValue)
     return {record.data["rule"]: record.data["failed"] for record in table.records}
 
@@ -793,7 +800,7 @@ class TestCollapsedChecks:
         evaluation = check_evaluations(materialize(tmp_path, _by_column))[
             "dy_col__amount"
         ]
-        table = dict(evaluation.metadata)["dy_rules"]
+        table = dict(evaluation.metadata)["dataframely/rules"]
 
         assert isinstance(table, dg.TableMetadataValue)
         assert all(record.data["expr"] for record in table.records)
@@ -836,6 +843,23 @@ class TestCollapsedChecks:
 
         assert "dy_rule__amount__min" in error_rows.columns
         assert not [name for name in error_rows.columns if name.startswith("dy_col__")]
+
+
+class TestMetadataKeys:
+    """The metadata keys of a failing check."""
+
+    @pytest.mark.parametrize(
+        ("asset", "check"),
+        [(_filtered, "dy_rule__amount__min"), (_by_column, "dy_col__amount")],
+        ids=["rule", "column"],
+    )
+    def test_a_failing_check_names_every_key_under_dataframely(
+        self, tmp_path: Path, asset: dg.AssetsDefinition, check: str
+    ):
+        evaluation = check_evaluations(materialize(tmp_path, asset))[check]
+
+        assert not evaluation.passed
+        assert all(key.startswith("dataframely/") for key in evaluation.metadata)
 
 
 _ADDRESS = "orders__error_rows"

@@ -76,7 +76,7 @@ def orders() -> pl.DataFrame:
 
 ### Rule names
 
-A severity mapping names Dataframely's rule name: the part after the `|` in the check's `dy_rule` metadata, such as `regex` in `order_id|regex`.
+A severity mapping names Dataframely's rule name: the part after the `|` in the check's `dataframely/rule` metadata, such as `regex` in `order_id|regex`.
 Four column arguments generate a rule under a different name, and the package reads the argument as that rule:
 
 | you can write | the rule it names |

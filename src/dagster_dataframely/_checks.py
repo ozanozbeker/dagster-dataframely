@@ -208,7 +208,7 @@ def column_schema_result(
         passed=False,
         severity=dg.AssetCheckSeverity.ERROR,
         metadata={
-            "dy_schema__errors": dg.MetadataValue.table([
+            "dataframely/column_schema_errors": dg.MetadataValue.table([
                 dg.TableRecord(problem) for problem in problems
             ])
         },
@@ -271,12 +271,13 @@ def _rule_metadata(
 ) -> dict[str, str | int | dg.TableMetadataValue]:
     """Return the metadata of a check for one rule."""
     metadata: dict[str, str | int | dg.TableMetadataValue] = {
-        "dy_rule": rule.name,
-        "dy_rule__expr": str(rule.expr),
+        "dataframely/rule": rule.name,
+        "dataframely/rule_expr": str(rule.expr),
     }
     if failed:
-        metadata["dy_failed_count"] = failed
-    return metadata | sample_metadata("dy_failed_sample", sampled)
+        # The key follows dagster-dbt's `dagster_dbt/failed_row_count`.
+        metadata["dataframely/failed_row_count"] = failed
+    return metadata | sample_metadata("dataframely/failed_sample", sampled)
 
 
 def _collapsed_metadata(
@@ -286,7 +287,7 @@ def _collapsed_metadata(
 ) -> dict[str, dg.TableMetadataValue]:
     """Return the metadata of a check for several rules."""
     metadata: dict[str, dg.TableMetadataValue] = {
-        "dy_rules": dg.MetadataValue.table([
+        "dataframely/rules": dg.MetadataValue.table([
             dg.TableRecord({
                 "rule": rule.name,
                 "failed": failed[rule.name],
@@ -300,7 +301,7 @@ def _collapsed_metadata(
         for rule in rules
         for row in sampled.get(rule.name, [])
     ]
-    return metadata | sample_metadata("dy_failed_sample", attributed)
+    return metadata | sample_metadata("dataframely/failed_sample", attributed)
 
 
 def rule_check_results(  # noqa: PLR0913 - takes the specs' settings

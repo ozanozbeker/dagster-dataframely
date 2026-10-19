@@ -42,9 +42,9 @@ The package also raises two of Dagster's errors.
 `error_rows_spec` raises `dg.DagsterInvariantViolationError` when it receives both an asset definition and a `partitions_def`.
 
 `ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
-The failing check's `dy_schema__errors` table lists the same columns.
+The failing check's `dataframely/column_schema_errors` table lists the same columns.
 
-![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
+![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dataframely/column_schema_errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](../assets/images/error-column-schema.png)
 
 `ValidationAbortError` and `NoValidRowsError` both give the failure count per `"error"` rule.
 The counts can add up to more than the number of failing rows, because one row can fail several rules.

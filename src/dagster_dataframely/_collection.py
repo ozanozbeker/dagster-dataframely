@@ -165,15 +165,15 @@ def collection_checks(
                 continue
             failed: int = failure[check.member].counts().get(check.filter_name, 0)
             metadata: dict[str, str | int | dg.TableMetadataValue] = {
-                "dy_filter": check.filter_name
+                "dataframely/filter": check.filter_name
             }
             if failed:
                 # The member's own columns, without the rule columns `details()` adds.
                 columns: list[str] = lazy_frames[check.member].collect_schema().names()
                 details: pl.DataFrame = failure[check.member].details()
-                metadata["dy_failed_count"] = failed
+                metadata["dataframely/failed_row_count"] = failed
                 metadata |= sample_metadata(
-                    "dy_failed_sample",
+                    "dataframely/failed_sample",
                     sample_rows(
                         details.filter(pl.col(check.filter_name) == "invalid").select(
                             columns

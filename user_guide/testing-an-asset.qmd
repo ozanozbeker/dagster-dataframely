@@ -79,7 +79,7 @@ The validated frame is its `value`.
 Its `metadata` has the keys a run writes, such as `dataframely/error_rows_count`.
 
 **`checks` holds each `dg.AssetCheckResult` whole, keyed by check name.**
-A failing rule's result has the failing rows in its `dy_failed_sample` metadata, so a test can assert which rows a rule failed.
+A failing rule's result has the failing rows in its `dataframely/failed_sample` metadata, so a test can assert which rows a rule failed.
 
 **Pass the helper the call's return value, not a list of it.**
 Dagster annotates the call as returning `object`, so a type checker rejects `list(orders(...))`.

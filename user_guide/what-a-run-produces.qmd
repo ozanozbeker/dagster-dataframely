@@ -79,14 +79,14 @@ Each rule set then has one check.
 
 | check metadata | on which check |
 | --- | --- |
-| `dy_rule`, `dy_rule__expr` | a check reporting for one rule |
-| `dy_failed_count` | a check reporting for one rule, when any row failed |
-| `dy_failed_sample` | any check, when any row failed |
-| `dy_rules` | a collapsed check: a row per rule with its failure count and expression |
-| `dy_schema__errors` | the column-schema check, when it fails: a row per mismatched column |
+| `dataframely/rule`, `dataframely/rule_expr` | a check reporting for one rule |
+| `dataframely/failed_row_count` | a check reporting for one rule, when any row failed |
+| `dataframely/failed_sample` | any check, when any row failed |
+| `dataframely/rules` | a collapsed check: a row per rule with its failure count and expression |
+| `dataframely/column_schema_errors` | the column-schema check, when it fails: a row per mismatched column |
 
-A bound appears in `dy_rule__expr`, not in the check name, so changing a `min` neither renames the check nor starts a new check history.
-In a collapsed check, each row of `dy_failed_sample` has a `dy_rule` column with the rule that row failed.
+A bound appears in `dataframely/rule_expr`, not in the check name, so changing a `min` neither renames the check nor starts a new check history.
+In a collapsed check, each row of `dataframely/failed_sample` has a `dy_rule` column with the rule that row failed.
 A collapsed check has no total failure count.
 Counts are per rule, and one row can fail several rules, so their sum is not a row count.
 

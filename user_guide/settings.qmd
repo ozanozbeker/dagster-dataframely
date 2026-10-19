@@ -111,7 +111,7 @@ If a column contains an email address, a name or an account number, the package 
 
 | setting | what it writes | where |
 | --- | --- | --- |
-| `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dy_failed_sample` |
+| `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dataframely/failed_sample` |
 | `row_sample` | up to this many rows of the table and this many error rows | the materialization, under `dataframely/table_sample` and `dataframely/error_rows_sample` |
 
 A sample is the first rows of the frame, not a random selection.

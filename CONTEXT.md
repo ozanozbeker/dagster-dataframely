@@ -196,10 +196,9 @@ A sample is absent, never empty.
 _Avoid_: preview, example, head
 
 **Reserved namespace**: Three namespaces.
-`dy_` starts every check name, rule column and check-result metadata key this package generates, and nothing a user types.
+`dy_` starts every check name, every rule column and the `dy_rule` column of a collapsed check's sample, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
-The error-rows address is the exception: when the package writes no table, the table has no materialization, so each check result has `dataframely/error_rows_address`, the same key the table's materialization uses (ADR-0004).
-`dataframely/` starts every materialization and definition metadata key this package names, as `dagster/` does for Dagster.
+`dataframely/` starts every metadata key this package names, on a materialization, a definition or a check result, as `dagster/` does for Dagster.
 The valid row count is the exception, because Dagster already has keys for it: `dagster/partition_row_count` on a partitioned asset, and `dagster/row_count` otherwise.
 `<name>__error_rows` is the default error-rows key.
 Only this package generates names in the first two.

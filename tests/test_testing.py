@@ -80,7 +80,7 @@ class TestDirectInvocationResult:
         assert_frame_equal(result.materialization.value, clean_orders())
         failed = result.checks["dy_rule__amount__min"]
         assert not failed.passed
-        assert "dy_failed_sample" in failed.metadata
+        assert "dataframely/failed_sample" in failed.metadata
 
     def test_a_warn_only_failure_keeps_every_row_and_fails_at_warn(self):
         @dd.asset(Amounts)

@@ -51,7 +51,7 @@ The Dagster UI shows a schema's rules in three places, and each has its own fall
 | check description | the rule's docstring | `<column> <rendered constraint>` | the whole name Dataframely reports, column part included |
 | collapsed check description | each rule's rendered constraint | the rule name | never the docstring |
 
-The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dy_rule__expr` metadata, but never in the check name.
+The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dataframely/rule_expr` metadata, but never in the check name.
 So changing a bound does not rename the check or start a new check history.
 
 The package renders column constraints as operators: `>= 0.0`, `length <= 64 bytes`, `matches ^[a-z]+$`, `in (a, b)`, `aligned to 1h`.
@@ -81,21 +81,23 @@ ops:
 
 There are three.
 
-**`dy_`** starts every check name, every rule column in the error rows, and every check metadata key except `dataframely/error_rows_address`.
-These are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, each collection filter's check `dy_filter__<name>`, and the metadata keys `dy_rule`, `dy_rule__expr`, `dy_rules`, `dy_filter`, `dy_failed_count`, `dy_failed_sample` and `dy_schema__errors`.
+**`dy_`** starts every check name and every rule column in the error rows.
+The check names are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>` and `dy_schema__rules`, and each collection filter's check `dy_filter__<name>`.
 A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
 So a check name cannot contain a slash.
+A collapsed check's sample also has a `dy_rule` column, which names the rule each row failed.
 
 A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
 `dd.wiring.asset_check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
 
 A collection filter's check name is `dy_filter__` plus the collection filter's name, as [Collection checks](collection-checks.qmd) shows.
 
-**`dataframely/`** starts every materialization metadata key this package names.
+**`dataframely/`** starts every metadata key this package names, on a materialization, a definition or a check result.
+A check result can have `dataframely/rule`, `dataframely/rule_expr`, `dataframely/rules`, `dataframely/filter`, `dataframely/failed_row_count`, `dataframely/failed_sample` and `dataframely/column_schema_errors`.
 A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.
 This package's keys then sort together, apart from Dagster's keys and your IO manager's.
 
-`dataframely/error_rows_address` is the one `dataframely/` key that also appears on check results.
+A check result can also have `dataframely/error_rows_address`.
 When every row fails an `"error"` rule, the run raises `NoValidRowsError` and the table has no materialization.
 So each check result has the error-rows address under that key.
 

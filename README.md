@@ -41,7 +41,7 @@ From that one declaration you get:
 
 - **A blocking column-schema check** that compares the frame's columns and dtypes with the schema's, before `Schema.filter` runs.
 
-  ![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dy_schema__errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
+  ![A run log where the `quantity` column is `Int64`. The failing `dy_schema__columns` check has `dataframely/column_schema_errors`, which shows the expected and actual dtype. The step failure below it names the same column in the `ColumnSchemaError` message.](https://raw.githubusercontent.com/ozanozbeker/dagster-dataframely/main/assets/images/error-column-schema.png)
 
 - **A severity for each rule**, `"error"` by default or `"warn"`, declared in the schema.
   A row that fails an `"error"` rule fails the run, and a row that fails only `"warn"` rules is written with a warning.
