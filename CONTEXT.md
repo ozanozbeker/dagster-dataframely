@@ -105,6 +105,10 @@ _Avoid_: the kit, hand-wirer (write "you", or name the function called)
 A hand-wired asset calls it directly.
 ADR-0001 through ADR-0004 call it `process`, its name at the time.
 
+**Code version**: Dagster's `code_version`, which `dd.asset` derives from the schema when the decorator gets none.
+Dagster uses this word, and dagster-dbt derives one from a model in the same way.
+_Avoid_: schema hash, fingerprint, schema version
+
 ### Validation
 
 **Column schema**: A frame's columns and their dtypes, which is what `frame.collect_schema()` returns.
