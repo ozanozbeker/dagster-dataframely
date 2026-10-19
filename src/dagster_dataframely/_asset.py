@@ -1,6 +1,7 @@
 """The `dd.asset` decorator (ADR-0005).
 
 It has no `from __future__ import annotations`, because Dagster reads the annotations at run time.
+With `filter=True` it still builds one `dg.asset`, not a `dg.multi_asset` with an output for the error rows (`docs/out-of-scope/error-rows-asset-output.md`).
 """
 
 import functools
