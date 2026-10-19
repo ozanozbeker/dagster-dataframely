@@ -48,8 +48,18 @@ The Dagster UI shows a schema's rules in three places, and each has its own fall
 | --- | --- | --- | --- |
 | Columns tab | the rendered column constraint | the rule name | never the docstring |
 | check name | `dy_rule__<rule>` at `rule` granularity, `dy_col__<column>` or `dy_schema__rules` at the others | never the docstring | |
-| check description | the rule's docstring | `<column> <rendered constraint>` | the whole name Dataframely reports, column part included |
-| collapsed check description | each rule's rendered constraint | the rule name | never the docstring |
+| check description | the rule's docstring | `<column> <rendered constraint>`, with the rule's expression after a `check=` key | the whole name Dataframely reports, column part included, and the rule's expression |
+| collapsed check description | each rule's rendered constraint, with the rule's expression after a `check=` key | the rule name and the rule's expression | never the docstring |
+
+A check description shows the rule's Polars expression as a code span after a `check=` key, `custom check` or a rule name, because these do not show what the rule tests.
+At `rule` granularity, `dy_rule__email__check__lowercase` has the description `` email lowercase `[(col("email").str.to_lowercase()) == (col("email"))]` ``.
+A rendered constraint such as `>= 1` already shows what the rule tests, so it appears without the expression.
+A rule's docstring appears without it too.
+The collapsed `dy_schema__rules` names `primary_key` without its expression.
+It names each `@dy.rule()` with its expression.
+
+Dataframely builds a `@dy.rule()` expression by calling its function.
+So when a description shows the expression, a function that raises raises where you declare the asset, not when it runs.
 
 The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dataframely/rule_expr` metadata, but never in the check name.
 So changing a bound does not rename the check or start a new check history.
@@ -59,7 +69,7 @@ It omits `nullability` and `unique`, because Dagster has separate fields for the
 It omits `inf` and `nan` too, because Dataframely adds them to every float column by default.
 All four still appear in the check name and the check description.
 
-A `check=` with a bare lambda has no name, so the package renders it as `custom check` everywhere.
+A `check=` with a bare lambda has no name, so the package renders it as `custom check`, in the Columns tab and before the expression in a check description.
 Name your checks with a dict, such as `check={"lowercase": ...}`, and the package shows the key instead.
 
 ## Dagster names the op after the whole asset key

@@ -11,6 +11,7 @@ import pytest
 from dagster._config.field_utils import Shape
 
 import dagster_dataframely as dd
+from dagster_dataframely._rules import described_rules
 from dagster_dataframely.errors import (
     CollectionNotSupportedError,
     DagsterDataframelyError,
@@ -55,6 +56,10 @@ def orders() -> pl.DataFrame:
 
 def _specs_by_name(asset: dg.AssetsDefinition) -> dict[str, dg.AssetCheckSpec]:
     return {spec.name: spec for spec in asset.check_specs}
+
+
+def _expression_text(rule: str, schema: type[dy.Schema] = Orders) -> str:
+    return str(described_rules(schema)[rule].expr)
 
 
 class TestAssetSpec:
@@ -358,12 +363,72 @@ class TestCheckSpecs:
             "PK: order_id, line_no"
         )
 
-    def test_a_rule_with_neither_a_docstring_nor_a_constraint_falls_back_to_its_name(
+    def test_a_rule_with_neither_a_docstring_nor_a_constraint_shows_its_name_and_expression(
         self,
     ):
-        assert (
-            _specs_by_name(orders)["dy_rule__line_numbers_are_dense"].description
-            == "line_numbers_are_dense"
+        spec = _specs_by_name(orders)["dy_rule__line_numbers_are_dense"]
+
+        assert spec.description == (
+            f"line_numbers_are_dense `{_expression_text('line_numbers_are_dense')}`"
+        )
+
+    def test_a_check_argument_rule_shows_its_key_and_expression(self):
+        specs = _specs_by_name(orders)
+
+        assert specs["dy_rule__email__check__lowercase"].description == (
+            f"email lowercase `{_expression_text('email|check__lowercase')}`"
+        )
+        assert specs["dy_rule__note__check"].description == (
+            f"note custom check `{_expression_text('note|check')}`"
+        )
+
+    def test_an_element_check_rule_shows_its_key_and_expression(self):
+        class Tagged(dy.Schema):
+            tags = dy.List(
+                dy.String(check={"short": lambda expr: expr.str.len_chars() < 5})
+            )
+
+        @dd.asset(Tagged)
+        def tagged() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        spec = _specs_by_name(tagged)["dy_rule__tags__inner_check__short"]
+
+        assert spec.description == (
+            f"tags elements short `{_expression_text('tags|inner_check__short', Tagged)}`"
+        )
+
+    def test_a_documented_rule_shows_its_docstring_without_building_its_expression(
+        self,
+    ):
+        class Unbuilt(dy.Schema):
+            value = dy.Int64()
+
+            @dy.rule()
+            def unbuilt(cls) -> pl.Expr:
+                """Values stay unbuilt."""
+                raise AssertionError
+
+        @dd.asset(Unbuilt)
+        def unbuilt() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        assert _specs_by_name(unbuilt)["dy_rule__unbuilt"].description == (
+            "Values stay unbuilt."
+        )
+
+    def test_an_expression_with_backticks_gets_a_longer_delimiter(self):
+        class Ticked(dy.Schema):
+            value = dy.String(check={"ticked": lambda expr: expr != "``"})
+
+        @dd.asset(Ticked)
+        def ticked() -> pl.DataFrame:
+            return pl.DataFrame()
+
+        expr = _expression_text("value|check__ticked", Ticked)
+        assert "``" in expr
+        assert _specs_by_name(ticked)["dy_rule__value__check__ticked"].description == (
+            f"value ticked ```{expr}```"
         )
 
     def test_no_check_description_is_blank(self):
@@ -486,11 +551,13 @@ class TestCheckSpecs:
         specs = _specs_by_name(by_column)
 
         assert specs["dy_col__email"].description == (
-            "Every rule on email: not null, lowercase, length <= 254 bytes."
+            "Every rule on email: not null, "
+            f"lowercase `{_expression_text('email|check__lowercase')}`, length <= 254 bytes."
         )
         assert specs["dy_schema__rules"].description == (
-            "Every rule of Orders that no single column owns: paid_orders_have_amount, "
-            "line_numbers_are_dense, primary_key."
+            "Every rule of Orders that no single column owns: "
+            f"paid_orders_have_amount `{_expression_text('paid_orders_have_amount')}`, "
+            f"line_numbers_are_dense `{_expression_text('line_numbers_are_dense')}`, primary_key."
         )
         assert _specs_by_name(by_schema)["dy_schema__rules"].description == (
             "Every validation rule of Orders."

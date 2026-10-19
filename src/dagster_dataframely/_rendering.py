@@ -4,10 +4,12 @@
 Both follow the fallback orders in the user guide's *Naming* page.
 """
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
 import dataframely as dy
+import polars as pl
 
 from dagster_dataframely._rules import DescribedRule, described_rules
 
@@ -37,6 +39,9 @@ _DEFAULTED = frozenset({"inf", "nan"})
 """Rules every float column has, because `allow_inf` and `allow_nan` default to `False`."""
 
 _NO_CONSTRAINT = _FIRST_CLASS | _DEFAULTED
+
+_CHECK_RULE_NAME = re.compile(r"(?:inner_)*check(?:__.+)?")
+"""Matches the names Dataframely gives the rules of a `check=` argument, on a column or on its elements."""
 
 
 def _value(column: dy.Column, rule_name: str) -> Any:  # noqa: ANN401 - the type varies by constraint
@@ -96,9 +101,9 @@ def _column_constraint(column: dy.Column, rule_name: str) -> str | None:  # noqa
 
 
 def _rule_text(schema: type[dy.Schema], rule: DescribedRule) -> str | None:
-    """Render the constraint a rule states, or `None` when it states none.
+    """Render a rule's constraint or `check=` key, or `None` when it has neither.
 
-    Every function here gets a rule's text from this one, so the Columns tab and the check descriptions match.
+    Every function here gets a rule's text from this one, so a check description repeats the text the Columns tab shows for the rule.
     """
     if rule.name == "primary_key":
         # With no key columns, a rule named `primary_key` is a `@dy.rule()`.
@@ -131,20 +136,57 @@ def table_constraints(schema: type[dy.Schema]) -> list[str]:
     ]
 
 
+def _code_span(expr: pl.Expr) -> str:
+    """Wrap an expression's text in a markdown code span, delimited by a backtick run longer than any inside it.
+
+    Polars' expression text never starts or ends with a backtick, so the span needs no padding.
+    """
+    text: str = str(expr)
+    longest: int = max(map(len, re.findall(r"`+", text)), default=0)
+    delimiter: str = "`" * (longest + 1)
+    return f"{delimiter}{text}{delimiter}"
+
+
+def _with_expression(schema: type[dy.Schema], rule: DescribedRule, text: str) -> str:
+    """Return `text`, followed by the rule's expression unless the rule renders as a constraint.
+
+    A `check=` key renders as text, and it does not show what the rule tests.
+    """
+    # Reading an expression calls a `@dy.rule()`'s function, so only these rules read it: "The cost of DescribedRule records" in `docs/pre-1.0.md`.
+    if _rule_text(schema, rule) is not None and not _CHECK_RULE_NAME.fullmatch(
+        rule.rule_name or ""
+    ):
+        return text
+    return f"{text} {_code_span(rule.expr)}"
+
+
 def check_description(schema: type[dy.Schema], rule: DescribedRule) -> str:
     """Describe a rule's asset check."""
     if rule.description:
         return rule.description
     rendered: str | None = _rule_text(schema, rule)
     if rendered is None:
-        return rule.name
-    if rule.column is None:
-        return rendered
-    return f"{rule.column} {rendered}"
+        text: str = rule.name
+    elif rule.column is None:
+        text = rendered
+    else:
+        text = f"{rule.column} {rendered}"
+    return _with_expression(schema, rule, text)
 
 
 def column_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule]) -> str:
     """Render every constraint one column's rules state, for their collapsed check."""
     return ", ".join(
-        _rule_text(schema, rule) or rule.rule_name or rule.name for rule in rules
+        _with_expression(
+            schema, rule, _rule_text(schema, rule) or rule.rule_name or rule.name
+        )
+        for rule in rules
     )
+
+
+def schema_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule]) -> str:
+    """Name every schema-level rule, for their collapsed check.
+
+    It shows names because a `@dy.rule()` has no constraint to render, and a rendered `primary_key` has commas.
+    """
+    return ", ".join(_with_expression(schema, rule, rule.name) for rule in rules)

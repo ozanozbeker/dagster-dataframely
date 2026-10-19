@@ -15,7 +15,11 @@ from dagster_dataframely._naming import (
     SCHEMA_RULES_CHECK,
     column_check_name,
 )
-from dagster_dataframely._rendering import check_description, column_rule_summary
+from dagster_dataframely._rendering import (
+    check_description,
+    column_rule_summary,
+    schema_rule_summary,
+)
 from dagster_dataframely._rules import (
     DescribedRule,
     described_rules,
@@ -92,12 +96,10 @@ def _rule_sets(
         for column, members in columns.items()
     ]
     if unowned:
-        names: str = ", ".join(rule.name for rule in unowned)
         rule_sets.append(
             _RuleSet(
                 SCHEMA_RULES_CHECK,
-                # Names: a `@dy.rule()` has no constraint to render, and a rendered `primary_key` has commas.
-                f"Every rule of {schema.__name__} that no single column owns: {names}.",
+                f"Every rule of {schema.__name__} that no single column owns: {schema_rule_summary(schema, unowned)}.",
                 unowned,
                 collapsed=True,
             )
