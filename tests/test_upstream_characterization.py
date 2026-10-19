@@ -643,6 +643,77 @@ class TestDagster:
         assert result.success
         assert recorded["dagster/row_count"].value == 3
 
+    def test_add_asset_metadata_takes_precedence_over_the_io_managers_column_schema(
+        self, tmp_path: Path
+    ):
+        """`dd.asset` writes its column schema with `add_asset_metadata`, because only that takes precedence over the one `PolarsParquetIOManager` writes."""
+        declared = dg.TableSchema(
+            columns=[
+                dg.TableColumn(
+                    "a",
+                    "Int64",
+                    constraints=dg.TableColumnConstraints(
+                        nullable=False, other=[">= 0"]
+                    ),
+                )
+            ]
+        )
+
+        @dg.asset
+        def returned() -> dg.MaterializeResult[pl.DataFrame]:
+            return dg.MaterializeResult(
+                value=pl.DataFrame({"a": [1, 2, 3]}),
+                metadata={"dagster/column_schema": declared},
+            )
+
+        @dg.asset
+        def added(context: dg.AssetExecutionContext) -> pl.DataFrame:
+            context.add_asset_metadata({"dagster/column_schema": declared})
+            return pl.DataFrame({"a": [1, 2, 3]})
+
+        result = dg.materialize(
+            [returned, added],
+            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+        )
+        recorded = {
+            event.asset_key: event.step_materialization_data.materialization.metadata[
+                "dagster/column_schema"
+            ].value
+            for event in result.get_asset_materialization_events()
+        }
+
+        assert recorded[returned.key] != declared
+        assert recorded[added.key] == declared
+
+    def test_the_current_context_is_unset_under_direct_invocation(self):
+        """`dg.AssetExecutionContext.get()` raises `DagsterInvariantViolationError` in any direct invocation, which `dd.asset` catches to skip its column schema."""
+
+        @dg.asset(name="orders")
+        def with_context(context: dg.AssetExecutionContext) -> str:
+            with pytest.raises(dg.DagsterInvariantViolationError):
+                dg.AssetExecutionContext.get()
+            return "called"
+
+        @dg.asset(name="orders")
+        def without_context() -> str:
+            with pytest.raises(dg.DagsterInvariantViolationError):
+                dg.AssetExecutionContext.get()
+            return "called"
+
+        assert with_context(dg.build_asset_context()) == "called"
+        assert without_context() == "called"
+
+    def test_a_built_context_still_raises_on_add_asset_metadata(self):
+        """A built context's `add_asset_metadata` raises `AttributeError`, as `user_guide/hand-wiring.qmd` states."""
+
+        @dg.asset(name="orders")
+        def orders(context: dg.AssetExecutionContext) -> str:
+            with pytest.raises(AttributeError):
+                context.add_asset_metadata({"source": "stripe"})
+            return "called"
+
+        assert orders(dg.build_asset_context()) == "called"
+
     def test_a_materialization_logged_for_another_key_is_recorded_before_a_raise(
         self,
     ):

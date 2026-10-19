@@ -13,7 +13,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import dagster_dataframely as dd
-from dagster_dataframely.wiring import validation_results
+from dagster_dataframely.wiring import table_schema, validation_results
 from tests.scenario import (
     Orders,
     check_evaluations,
@@ -75,6 +75,14 @@ class TestPartitionRuns:
             pl.read_parquet(tmp_path / "orders" / "clean.parquet"), clean_orders()
         )
         assert pl.read_parquet(tmp_path / "orders" / "mixed.parquet").height == 3
+
+    def test_a_partitions_materialization_has_the_schemas_column_schema(
+        self, tmp_path: Path
+    ):
+        result = materialize(tmp_path, _orders, partition_key="clean")
+        metadata = materializations(result)[_GOOD_KEY].metadata
+
+        assert metadata["dagster/column_schema"].value == table_schema(Orders)
 
     def test_the_error_rows_is_written_under_the_partition_that_produced_it(
         self, tmp_path: Path

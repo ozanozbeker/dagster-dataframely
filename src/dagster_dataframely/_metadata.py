@@ -1,4 +1,4 @@
-"""Definition metadata that fills the Columns tab."""
+"""The metadata that fills the Columns tab."""
 
 import dagster as dg
 import dataframely as dy
@@ -90,11 +90,11 @@ def _error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
 
 def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
-    """Return the definition metadata that fills an asset's Columns tab from the schema.
+    """Return the metadata that fills an asset's Columns tab from the schema.
 
     Returns
     -------
-    A one-entry mapping from `dagster/column_schema` to `table_schema(schema)`, to pass to `dg.asset(metadata=...)`.
+    A one-entry mapping from `dagster/column_schema` to `table_schema(schema)`, to pass to `dg.asset(metadata=...)` and, in a run, to `context.add_asset_metadata`.
 
     Raises
     ------

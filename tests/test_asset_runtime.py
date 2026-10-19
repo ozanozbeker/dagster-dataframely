@@ -24,6 +24,7 @@ from dagster_dataframely.wiring import (
     AssetYield,
     asset_check_specs,
     schema_metadata,
+    table_schema,
     validation_results,
 )
 from tests.scenario import (
@@ -860,6 +861,39 @@ class TestMetadataKeys:
 
         assert not evaluation.passed
         assert all(key.startswith("dataframely/") for key in evaluation.metadata)
+
+
+def _column_schema(result: dg.ExecuteInProcessResult) -> object:
+    """Return the column schema on the table's materialization."""
+    return materializations(result)[_GOOD_KEY].metadata["dagster/column_schema"].value
+
+
+class TestColumnSchema:
+    """The `dagster/column_schema` entry on the table's materialization in a run."""
+
+    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
+    def test_the_schemas_column_schema_replaces_the_io_managers(
+        self, tmp_path: Path, filtering: bool
+    ):
+        """`PolarsParquetIOManager` writes a column schema without constraints, and the package writes the schema's over it."""
+
+        @dd.asset(Orders, name="orders", filter=filtering)
+        def orders() -> pl.DataFrame:
+            return clean_orders()
+
+        assert _column_schema(materialize(tmp_path, orders)) == table_schema(Orders)
+
+    def test_the_schemas_column_schema_replaces_one_the_function_adds(
+        self, tmp_path: Path
+    ):
+        @dd.asset(Orders, name="orders")
+        def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
+            context.add_asset_metadata({
+                "dagster/column_schema": dg.TableSchema(columns=[])
+            })
+            return clean_orders()
+
+        assert _column_schema(materialize(tmp_path, orders)) == table_schema(Orders)
 
 
 _ADDRESS = "orders__error_rows"

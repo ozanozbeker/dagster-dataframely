@@ -41,6 +41,11 @@ It returns a mapping with one entry, so you can merge it with your own `metadata
 `table_schema(schema)` returns the `dg.TableSchema` in that entry.
 Put it under `dagster/column_schema` in a metadata dict you build yourself.
 
+An IO manager can write its own column schema to the materialization: `PolarsParquetIOManager` writes one from the frame, with no constraints.
+After a run under such an IO manager, the Columns tab takes the dtypes, nullability and constraints from that schema, and only the descriptions and tags from the definition.
+Dagster merges an IO manager's metadata over a returned `dg.MaterializeResult`'s, and merges `add_asset_metadata` over both.
+So in a run, `dd.asset` also calls `context.add_asset_metadata(schema_metadata(schema))`, and a hand-wired asset needs the same call to keep the full schema after a run.
+
 Column tags come from `dy.Column(metadata=...)`, which Dataframely stores but does not use.
 `table_schema` converts tag values to strings, because `dg.TableColumn.tags` is `Mapping[str, str]` and Dagster rejects any other type at definition time.
 
@@ -131,6 +136,7 @@ Pass the schema's metadata and check specs to `@dg.asset`, and call `validation_
 )
 def orders(context: dg.AssetExecutionContext) -> dd.wiring.AssetYield:
     dd.wiring.validate_error_rows_key(context)
+    context.add_asset_metadata(dd.wiring.schema_metadata(Orders))
     yield from dd.wiring.validation_results(
         Orders,
         orders_frame(),
@@ -180,6 +186,8 @@ Without an `error_rows_writer`, a row that fails an `"error"` rule fails the run
 
 `delegating_writer` needs a step, so it raises `dagster._core.errors.DagsterInvalidPropertyError` under direct invocation.
 There, `dd.asset` uses `file_writer(context.asset_key, error_rows_dir, partition_key)`, and you can do the same.
+`context.add_asset_metadata` also fails under direct invocation, with `AttributeError`.
+`dd.asset` makes the call only when `dg.AssetExecutionContext.get()` returns a context, which happens only in a run.
 
 Call `validate_error_rows_key(context)` before the rest of the body, as `dd.asset` does on every run.
 Under direct invocation it does nothing, because there is no asset graph to check.
@@ -331,6 +339,7 @@ It differs from `dd.asset` in these ways:
   So a change in Dataframely fails one of this package's tests, not your assets.
 - The Columns tab shows dtypes, descriptions, nullability and uniqueness.
   The rest of what `Orders` declares is missing: no `>= 0`, no regex, no length bound, no table-level primary key, no column tags.
+  After a run under an IO manager that writes its own column schema, the tab shows only that schema's dtypes and the descriptions.
 - The checks have no descriptions, so a failing check shows the rule's name but not what the rule checks.
 - No statistics, no row sample, no failure samples and no `error_rows_by_rules` table, so a failing check shows nothing about the rows that failed it.
 - No `check_granularity`, so a 40-column schema has around 40 checks or more, and you cannot collapse its rules into fewer checks.

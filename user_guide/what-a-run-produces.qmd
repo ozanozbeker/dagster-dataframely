@@ -21,12 +21,14 @@ This package reports a run's results in two places: the table's materialization 
 ## The table's materialization
 
 The row count is under one of Dagster's own keys: `dagster/partition_row_count` on a partitioned asset, and `dagster/row_count` otherwise.
+The column schema is under Dagster's `dagster/column_schema`.
 Every other key this package writes is in the `dataframely/` namespace, so these keys sort together, apart from Dagster's keys and your IO manager's.
 
 | key | what it holds |
 | --- | --- |
 | `dagster/row_count` | how many rows the run wrote to the table, not how many the function returned |
 | `dagster/partition_row_count` | the same count on a partitioned asset, in place of `dagster/row_count` |
+| `dagster/column_schema` | the schema's columns, with their dtypes, constraints, descriptions and tags |
 | `dataframely/table_sample` | the first few of those rows |
 | `dataframely/table_statistics/<group>` | one table per dtype group present |
 | `dataframely/error_rows_address` | where the writer wrote the error rows, on the runs that wrote any |
@@ -95,8 +97,11 @@ So in a collapsed check, a rule that a thousand rows failed cannot fill the samp
 
 A run that raises `NoValidRowsError` yields no materialization for the table, so the package copies `dataframely/error_rows_address` onto every check result instead.
 
-The Columns tab is not one of these two places.
-It comes from the asset definition, so the catalog shows it before the first run and still shows it after a failed run.
+The Columns tab shows the schema from the asset definition before the first run.
+After a run, it shows the `dagster/column_schema` on the latest materialization, with the descriptions and tags from the definition.
+That entry replaces any column schema your IO manager writes.
+For example, `PolarsParquetIOManager` writes one from the frame, with no constraints.
+So after you edit the schema, the tab shows the new descriptions and tags at once, and the new dtypes, nullability and constraints after the next run.
 
 ## Attaching your own metadata
 
@@ -152,6 +157,8 @@ def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.Da
 Dagster merges the context's metadata last, after the package yields its results.
 So `context.add_asset_metadata({"dagster/row_count": 999})` shows 999 in the catalog for a table with two rows.
 The package cannot prevent this.
+The one exception is `dagster/column_schema`.
+The package writes it with `add_asset_metadata` after your function returns, so the schema's column schema replaces yours.
 
 **This package does not support `context.set_data_version`.**
 It is not marked `@public` in Dagster, and it does not work under direct invocation.

@@ -52,6 +52,18 @@ AutomationCondition = (
 )
 
 
+def _write_column_schema(metadata: dict[str, dg.TableSchema]) -> None:
+    """Add the column schema to the run's materialization, and do nothing in a direct invocation.
+
+    An IO manager's column schema takes precedence over `MaterializeResult` metadata, and `add_asset_metadata` takes precedence over the IO manager.
+    """
+    try:
+        context = dg.AssetExecutionContext.get()
+    except dg.DagsterInvariantViolationError:
+        return
+    context.add_asset_metadata(metadata)
+
+
 def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     schema: type[dy.Schema],
     /,
@@ -200,6 +212,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
     # Only to raise on a malformed value (#115).
     ERROR_ROWS_DIR.resolve(None)
+    column_schema_metadata: dict[str, dg.TableSchema] = schema_metadata(schema)
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -241,6 +254,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         def asset_yields(
             returned: DecoratedReturn, writer: ErrorRowsWriter | None
         ) -> AssetYield:
+            _write_column_schema(column_schema_metadata)
             frame, result = frame_and_result(returned, asset=key.to_user_string())
             yield from with_returned_fields(
                 validation_results(
@@ -306,7 +320,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             output_required=False,
             metadata={
                 **(metadata or {}),
-                **schema_metadata(schema),
+                **column_schema_metadata,
                 **(
                     writer_metadata(
                         key,

@@ -267,10 +267,6 @@ Issue #43 has to settle the wording along with the design, and it owns two more 
 
 Issue #5 asked which metadata store the Columns tab reads, and it is closed.
 The UI source was re-read at tag `1.13.24`.
-`schema_metadata` writes `dagster/column_schema` to the definition bucket, and nothing in the package writes it at run time.
-Everything below explains that choice.
-
-**Three buckets, and the package uses one.**
 
 | Bucket | The package writes it with | Where Dagster reads it |
 | --- | --- | --- |
@@ -296,14 +292,9 @@ Pass `value=`.
 The materialization schema is the base if one is present, and the definition schema then supplies `description` and `tags` and nothing else.
 `type`, `nullable`, `unique` and `constraints.other` always come from the base.
 Merged column names are lowercased.
-A definition-only schema renders whole, which is what `user_guide/what-a-run-produces.qmd` states: the Columns tab comes from the definition, so the catalog shows it before the first run and after a failed one.
+A definition-only schema renders whole.
 
-The gap opens when both buckets are filled, and a dagster-polars IO manager fills the other one.
 `dagster_polars/io_managers/utils.py:154` writes `dagster/column_schema` from `df.collect_schema()`.
-Running `dd.asset` under `PolarsParquetIOManager` shows the result: the definition has `[('orderID', 'String', [], nullable=False), ('amount', 'Float64', ['>= 0.0'], nullable=False)]` with the table constraint `PK: orderID`, and the materialization has the same two columns with no constraints and `nullable=True`.
-So on the Overview tab, every column constraint this package renders disappears, the primary key with it, and `orderID` shows as `orderid`.
-Nothing in the package writes to both buckets on one asset.
-The user's IO manager does, and the package has no say in it.
 
 **Rendering limits the Columns section imposes.**
 `MAX_CONSTRAINT_TAG_CHARS = 30` in `metadata/TableSchema.tsx`, and a longer `constraints.other` string truncates to 27 characters plus an ellipsis, with the rest in a tooltip.
@@ -323,7 +314,6 @@ This is a property of `typing._GenericAlias` and not of any Dagster version.
 Its fields at 1.13.24 are `column_schema`, `column_lineage`, `row_count`, `partition_row_count`, `table_name` and `storage_kind`.
 `TableMetadataSet.extract_storage_address` is the source of `CONTEXT.md`'s use of the word address.
 `dg.build_column_schema_change_checks` compares `dagster/column_schema` across an asset's two most recent materializations.
-It reads the materialization bucket only, so it never fires on this package's definition metadata, and it is redundant beside `dy_schema__columns`, which is blocking and compares the frame against the declared schema before anything is written.
 
 ### Partitioned assets
 

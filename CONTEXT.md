@@ -199,7 +199,8 @@ _Avoid_: preview, example, head
 `dy_` starts every check name, every rule column and the `dy_rule` column of a collapsed check's sample, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
 `dataframely/` starts every metadata key this package names, on a materialization, a definition or a check result, as `dagster/` does for Dagster.
-The valid row count is the exception, because Dagster already has keys for it: `dagster/partition_row_count` on a partitioned asset, and `dagster/row_count` otherwise.
+The valid row count and the column schema are the exceptions, because Dagster already has keys for them.
+The row count is under `dagster/partition_row_count` on a partitioned asset and `dagster/row_count` otherwise, and the column schema is under `dagster/column_schema`.
 `<name>__error_rows` is the default error-rows key.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.
