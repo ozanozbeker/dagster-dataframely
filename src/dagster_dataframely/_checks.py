@@ -229,8 +229,7 @@ def check_and_filter(
     result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
         engine="streaming"
     )
-    valid: pl.DataFrame = result
-    return valid, failure
+    return result, failure
 
 
 _INVALID = "invalid"
