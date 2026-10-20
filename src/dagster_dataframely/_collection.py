@@ -125,15 +125,73 @@ def build_collection_checks(
 
     Parameters
     ----------
+    collection
+        The Collection whose `@dy.filter` methods become checks.
     members
-        The asset for each member of `collection`, keyed by member name.
+        The asset for each member of `collection`, keyed by member name: the `dg.AssetsDefinition` that `dd.asset` returns, or a `dg.AssetSpec`.
     name
         The name of the step that runs the checks. `None` uses the Collection's class name in snake case.
+    max_failure_examples
+        A check's metadata has at most this many rows that failed its collection filter. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
 
     Returns
     -------
     :
-        One definition with every check, which Dagster runs in one step.
+        One definition with every check, which Dagster runs in one step. Pass it to `dg.Definitions(asset_checks=[...])`.
+
+    Raises
+    ------
+    InvalidMembersError
+        `members` does not map every member of `collection` to an unpartitioned asset.
+    FailurePropagationError
+        A member sets `propagate_row_failures=True`.
+    InvalidSettingError
+        A setting's argument or environment variable has a value the setting does not allow.
+
+    Examples
+    --------
+    A foreign key is one collection filter. The table it references takes `ignored_in_filters=True`, so the check reports on `orders` alone:
+
+    ```python
+    from typing import Annotated
+
+    import dataframely as dy
+    import polars as pl
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, storefront_orders
+
+
+    class CustomersSchema(dy.Schema):
+        email = dy.String(primary_key=True)
+
+
+    class Shop(dy.Collection):
+        orders: dy.LazyFrame[OrdersSchema]
+        customers: Annotated[
+            dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
+        ]
+
+        @dy.filter()
+        def order_has_customer(self) -> pl.LazyFrame:
+            return self.orders.join(self.customers, on="email", how="semi")
+
+
+    @dd.asset(OrdersSchema)
+    def orders() -> pl.DataFrame:
+        return storefront_orders
+
+
+    @dd.asset(CustomersSchema)
+    def customers() -> pl.DataFrame:
+        return storefront_orders.select("email").unique()
+
+
+    shop_checks = dd.build_collection_checks(
+        Shop, members={"orders": orders, "customers": customers}
+    )
+    [(spec.asset_key.to_user_string(), spec.name) for spec in shop_checks.check_specs]
+    ```
     """
     _validate_members(collection, members)
     infos = collection.members()

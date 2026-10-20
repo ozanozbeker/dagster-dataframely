@@ -64,7 +64,7 @@ def _write_column_schema(metadata: dict[str, dg.TableSchema]) -> None:
     context.add_asset_metadata(metadata)
 
 
-def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
+def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc ignore=PR01
     schema: type[dy.Schema],
     /,
     *,
@@ -107,6 +107,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     Parameters
     ----------
+    schema
+        The schema the returned frame is validated against. It also fills the Columns tab, declares one check spec per rule set and sets the code version. A `dy.Collection` raises.
     filter
         Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing, including the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-error`). `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
     error_rows_key
@@ -140,7 +142,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     Returns
     -------
-    A decorator that returns a `dg.AssetsDefinition` with the schema's check specs and a Columns tab filled from the schema.
+    :
+        A decorator that returns a `dg.AssetsDefinition` with the schema's check specs and a Columns tab filled from the schema.
 
     Raises
     ------
@@ -162,28 +165,18 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     Examples
     --------
     ```python
-    #| echo: false
-    #| output: false
-    import dataframely as dy
     import polars as pl
 
     import dagster_dataframely as dd
-    ```
-
-    At the default `rule` granularity, the asset has one check per rule, plus the column-schema check:
-
-    ```python
-    class Orders(dy.Schema):
-        order_id = dy.String(primary_key=True)
-        amount = dy.Float64(nullable=False, min=0.0)
+    from dagster_dataframely.data import OrdersSchema
 
 
-    @dd.asset(Orders, filter=True)
+    @dd.asset(OrdersSchema, filter=True)
     def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-        return raw_orders.select("order_id", "amount")
+        return raw_orders
 
 
-    [spec.name for spec in orders.check_specs]
+    [spec.name for spec in orders.check_specs][:4]
     ```
 
     The check specs exist before the asset first runs, so the catalog lists every check before its first result.

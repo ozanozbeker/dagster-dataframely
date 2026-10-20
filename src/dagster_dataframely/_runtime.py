@@ -98,9 +98,17 @@ def _get_error_rule_names(schema: type[dy.Schema]) -> set[str]:
 def get_error_rows(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
     """Return the rows that failed an `"error"` rule, as a writer receives them, with one rule column per rule.
 
+    Parameters
+    ----------
+    schema
+        The schema the rows were validated against, which sets each rule's severity.
+    failure
+        What `Schema.filter` returned beside the valid rows.
+
     Returns
     -------
-    The original columns in their own order, then a `String` rule column for every rule, named by `get_check_name_for_rule`. A rule column's value is `valid`, `invalid` or `unknown`.
+    :
+        The original columns in their own order, then a `String` rule column for every rule, named by `get_check_name_for_rule`. A rule column's value is `valid`, `invalid` or `unknown`.
 
     Raises
     ------
@@ -112,6 +120,17 @@ def get_error_rows(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataF
         Two rules produce the same asset check name.
     InvalidSeverityError
         The schema declares a severity this package cannot read.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, marketplace_orders
+
+    _, failure = OrdersSchema.filter(marketplace_orders, cast=False)
+    error_rows = dd.wiring.get_error_rows(OrdersSchema, failure)
+    error_rows.select("order_id", "amount", "dy_rule__amount__min")
+    ```
     """
     validate_namespace(schema)
     _, error_rows = _separate_warned_and_error_rows(
@@ -170,6 +189,8 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
 
     Parameters
     ----------
+    schema
+        The schema to validate against.
     frame
         The frame to validate, or `None` to skip.
     asset_key
@@ -189,7 +210,8 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
 
     Yields
     ------
-    The asset's `dg.MaterializeResult`, if the run writes its table, then one `dg.AssetCheckResult` per check. On a skip, it yields only the check results, and every check passes. It writes the error rows instead of yielding them.
+    :
+        The asset's `dg.MaterializeResult`, if the run writes its table, then one `dg.AssetCheckResult` per check. On a skip, it yields only the check results, and every check passes. It writes the error rows instead of yielding them.
 
     Raises
     ------
@@ -211,6 +233,35 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         A row failed an `"error"` rule and `error_rows_writer` is `None`, so the package writes nothing.
     NoValidRowsError
         Every row failed an `"error"` rule. It writes the error rows, and not the asset's table.
+
+    Examples
+    --------
+    A hand-wired asset declares the specs and yields from `stream_results`:
+
+    ```python
+    from collections.abc import Iterator
+
+    import dagster as dg
+    import polars as pl
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, storefront_orders
+
+
+    @dg.asset(
+        metadata=dd.wiring.get_column_schema_metadata(OrdersSchema),
+        check_specs=dd.wiring.build_asset_check_specs(OrdersSchema, asset="orders"),
+    )
+    def orders(
+        context: dg.AssetExecutionContext,
+    ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+        yield from dd.wiring.stream_results(
+            OrdersSchema, storefront_orders, asset_key=context.asset_key
+        )
+
+
+    dg.materialize([orders]).success
+    ```
     """
     validate_namespace(schema)
     _require_frame(frame, asset_key.to_user_string())

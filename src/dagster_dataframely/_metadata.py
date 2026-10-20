@@ -31,9 +31,15 @@ def get_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 
     Each column has its dtype, description, nullability, uniqueness and column constraints. Its tags come from `dy.Column(metadata=...)`, with each value converted to a string, except the `dagster_dataframely` key, whose severities the checks show. The primary key is a table constraint, so only `unique=True` marks a key column unique.
 
+    Parameters
+    ----------
+    schema
+        The schema to render.
+
     Returns
     -------
-    A table schema with the columns in the schema's order.
+    :
+        A table schema with the columns in the schema's order.
 
     Raises
     ------
@@ -45,6 +51,15 @@ def get_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
         Two rules produce the same asset check name.
     InvalidSeverityError
         The schema declares a severity this package cannot read.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema
+
+    dd.wiring.get_table_schema(OrdersSchema).columns[0]
+    ```
     """
     validate_namespace(schema)
     constraints: dict[str, list[str]] = render_column_constraints(schema)
@@ -95,9 +110,15 @@ def _build_error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
 def get_column_schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Return the metadata that fills an asset's Columns tab from the schema.
 
+    Parameters
+    ----------
+    schema
+        The schema to render.
+
     Returns
     -------
-    A one-entry mapping from `dagster/column_schema` to `get_table_schema(schema)`, to pass to `dg.asset(metadata=...)` and, in a run, to `context.add_asset_metadata`.
+    :
+        A one-entry mapping from `dagster/column_schema` to `get_table_schema(schema)`, to pass to `dg.asset(metadata=...)` and, in a run, to `context.add_asset_metadata`.
 
     Raises
     ------
@@ -109,6 +130,24 @@ def get_column_schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSch
         Two rules produce the same asset check name.
     InvalidSeverityError
         The schema declares a severity this package cannot read.
+
+    Examples
+    --------
+    ```python
+    import dagster as dg
+    import polars as pl
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema
+
+
+    @dg.asset(metadata=dd.wiring.get_column_schema_metadata(OrdersSchema))
+    def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders
+
+
+    list(orders.metadata_by_key[orders.key])
+    ```
     """
     return {_COLUMN_SCHEMA_KEY: get_table_schema(schema)}
 

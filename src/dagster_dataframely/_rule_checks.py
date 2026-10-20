@@ -35,15 +35,23 @@ def build_rule_checks(  # noqa: PLR0913 - takes the specs' settings
 
     Parameters
     ----------
+    schema
+        The schema whose rules become checks.
+    asset
+        The key of the asset whose table the checks read, which `dd.asset` did not build.
     name
         The name of the step that runs the checks. `None` uses the asset key's Python identifier followed by `__checks`, because the schema's name in snake case is often the asset's own op name.
     partitions_def
         The asset's partitions, so each run checks one partition. Dagster does not check that it matches the asset's.
+    check_granularity
+        How many checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+    max_failure_examples
+        A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
 
     Returns
     -------
     :
-        One definition with every check, which Dagster runs in one step.
+        One definition with every check, which Dagster runs in one step. Pass it to `dg.Definitions(asset_checks=[...])`.
 
     Raises
     ------
@@ -59,6 +67,16 @@ def build_rule_checks(  # noqa: PLR0913 - takes the specs' settings
         The schema declares a severity this package cannot read.
     ColumnSchemaError
         In a run, the table's columns or dtypes do not match the schema.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema
+
+    warehouse_checks = dd.build_rule_checks(OrdersSchema, asset="warehouse_orders")
+    [spec.name for spec in warehouse_checks.check_specs][:4]
+    ```
     """
     key: dg.AssetKey = dg.AssetKey.from_coercible(asset)
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)

@@ -14,9 +14,23 @@ def get_check_name_for_rule(rule_name: str) -> str:
 
     The error rows' rule columns and the checks at `rule` granularity have this name.
 
+    Parameters
+    ----------
+    rule_name
+        The rule's name as Dataframely reports it: `<column>|<rule>` for a column rule, or the method name for a `@dy.rule()`.
+
     Returns
     -------
-    `dy_rule__` followed by `rule_name` with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
+    :
+        `dy_rule__` followed by `rule_name` with `|` replaced by `__`.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+
+    dd.wiring.get_check_name_for_rule("amount|min")
+    ```
     """
     return f"dy_rule__{rule_name.replace('|', '__')}"
 

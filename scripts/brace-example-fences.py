@@ -14,7 +14,8 @@ PLAIN = re.compile(r"^([ \t]*)```python[ \t]*\r?$", re.MULTILINE)
 BRACED = re.compile(r"^[ \t]*```\{python\}[ \t]*\r?$", re.MULTILINE)
 # Any Python fence, including one with attributes that `PLAIN` does not match.
 PYTHON = re.compile(r"^[ \t]*```[ \t]*\{?\.?(?:python|py)\b", re.MULTILINE)
-EXAMPLES = "## Examples {.doc-examples}"
+HEADING = re.compile(r"^(#+) ")
+EXAMPLES = re.compile(r"^#+ Examples \{\.doc-examples\}")
 
 INDEX = pathlib.Path("index.qmd")
 README = pathlib.Path("../README.md")
@@ -51,23 +52,40 @@ def landing_page() -> int:
 
 
 def reference_pages() -> int:
-    """Add braces to each reference page's `Examples` fences, not to its signature block.
+    """Add braces to the fences under each `Examples` heading of a reference page, at any depth.
+
+    A class page has an `## Examples` section and a `#### Examples` section per method, with a
+    signature block between them, so this walks the headings instead of splitting the page once.
 
     Returns
     -------
-    The number of pages with a plain fence left under `Examples`, where the example would not run.
+    The number of pages with a plain fence left under an `Examples` heading, where the example would not run.
     """
     missed = 0
     for page in sorted(REFERENCE.glob("*.qmd")):
-        head, heading, tail = read(page).partition(EXAMPLES)
-        if not heading:
+        lines = read(page).split("\n")
+        depth = 0  # the `Examples` heading's level while inside its section, else 0
+        count = 0
+        for i, line in enumerate(lines):
+            heading = HEADING.match(line)
+            if heading:
+                level = len(heading.group(1))
+                if depth and level <= depth:
+                    depth = 0
+                if EXAMPLES.match(line):
+                    depth = level
+                continue
+            if depth:
+                lines[i], n = PLAIN.subn(r"\1```{python}", line)
+                count += n
+                if n == 0 and PYTHON.match(line) and not BRACED.match(line):
+                    print(
+                        f"{page}: a Python fence under an Examples heading has no braces"
+                    )
+                    missed += 1
+        if missed:
             continue
-        braced, count = PLAIN.subn(r"\1```{python}", tail)
-        if len(PYTHON.findall(braced)) != len(BRACED.findall(braced)):
-            print(f"{page}: a Python fence under {EXAMPLES} has no braces")
-            missed += 1
-            continue
-        write(page, head + heading + braced)
+        write(page, "\n".join(lines))
         if count:
             print(f"{page}: braced {count}")
     return missed

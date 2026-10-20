@@ -24,6 +24,26 @@ class DirectInvocationResult:
         The asset's materialization, or `None` when the decorated function returned `None`.
     checks
         Every check result, keyed by check name, in the order the call yielded them.
+
+    Examples
+    --------
+    ```python
+    import polars as pl
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, storefront_orders
+
+
+    @dd.asset(OrdersSchema)
+    def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+        return raw_orders
+
+
+    result = dd.testing.DirectInvocationResult.from_invocation(
+        orders(storefront_orders)
+    )
+    result.materialization.value.height, len(result.checks)
+    ```
     """
 
     materialization: dg.MaterializeResult[pl.DataFrame] | None
@@ -38,6 +58,36 @@ class DirectInvocationResult:
         called
             What calling the asset returns.
             Dagster annotates `AssetsDefinition.__call__` as returning `object`, so a narrower annotation would make every test cast.
+
+        Returns
+        -------
+        :
+            The materialization, or `None` on a skip, and every check result keyed by check name.
+
+        Raises
+        ------
+        TypeError
+            `called` is not iterable, or yields a second materialization, a check name twice, or a value of another type.
+
+        Examples
+        --------
+        ```python
+        import polars as pl
+
+        import dagster_dataframely as dd
+        from dagster_dataframely.data import OrdersSchema, storefront_orders
+
+
+        @dd.asset(OrdersSchema)
+        def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
+            return raw_orders
+
+
+        result = dd.testing.DirectInvocationResult.from_invocation(
+            orders(storefront_orders)
+        )
+        [name for name, check in result.checks.items() if not check.passed]
+        ```
         """
         if not isinstance(called, Iterable):
             raise TypeError(_wrong_argument_message(called, "that is not iterable"))

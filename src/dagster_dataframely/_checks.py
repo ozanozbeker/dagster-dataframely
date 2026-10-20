@@ -94,16 +94,21 @@ def build_asset_check_specs(
 
     Parameters
     ----------
+    schema
+        The schema whose rules become check specs.
+    asset
+        The key of the asset the checks report on.
     partitions_def
         The asset's partitions, so each check evaluation records its partition. Dagster does not check that it matches the asset's.
-    filter
-        Pass `True` when the asset writes its error rows instead of failing, as `dd.asset(filter=True)` does. With `False`, a check that reports for an `"error"` rule is blocking. With `True`, no rule's check is blocking, because a blocking check that fails at `ERROR` fails the step after the table is written.
     check_granularity
         How many checks report the schema's rules. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+    filter
+        Pass `True` when the asset writes its error rows instead of failing, as `dd.asset(filter=True)` does. With `False`, a check that reports for an `"error"` rule is blocking. With `True`, no rule's check is blocking, because a blocking check that fails at `ERROR` fails the step after the table is written.
 
     Returns
     -------
-    The column-schema check's spec first, then one spec per rule set.
+    :
+        The column-schema check's spec first, then one spec per rule set, to pass to `@dg.asset(check_specs=...)`.
 
     Raises
     ------
@@ -117,6 +122,16 @@ def build_asset_check_specs(
         Two rules produce the same asset check name.
     InvalidSeverityError
         The schema declares a severity this package cannot read.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema
+
+    specs = dd.wiring.build_asset_check_specs(OrdersSchema, asset="orders")
+    [(spec.name, spec.blocking) for spec in specs][:3]
+    ```
     """
     validate_namespace(schema)
     rule_sets: list[_RuleSet] = _build_rule_sets(schema, check_granularity)
@@ -371,6 +386,12 @@ def evaluate_checks(
 
     Parameters
     ----------
+    schema
+        The schema whose rules the frame is checked against.
+    frame
+        The frame to check. A `pl.LazyFrame` is collected once.
+    asset_key
+        The key of the asset the results report on, which the specs name too.
     check_granularity
         Pass the value `build_asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     max_failure_examples
@@ -378,7 +399,8 @@ def evaluate_checks(
 
     Yields
     ------
-    The column-schema check's result, then one result per rule set, in the order of `build_asset_check_specs`.
+    :
+        The column-schema check's result, then one result per rule set, in the order of `build_asset_check_specs`.
 
     Raises
     ------
@@ -394,6 +416,20 @@ def evaluate_checks(
         The schema declares a severity this package cannot read.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema. It yields the column-schema check's failing result first.
+
+    Examples
+    --------
+    ```python
+    import dagster as dg
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, marketplace_orders
+
+    results = dd.wiring.evaluate_checks(
+        OrdersSchema, marketplace_orders, asset_key=dg.AssetKey("orders")
+    )
+    [result.check_name for result in results if not result.passed]
+    ```
     """
     # Before the settings resolve or anything reads the frame (ADR-0008).
     validate_namespace(schema)

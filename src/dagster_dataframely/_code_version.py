@@ -24,10 +24,24 @@ def _serialize_expression(rule: DescribedRule) -> bytes | str:
 def get_code_version(schema: type[dy.Schema]) -> str:
     """Return the sha1 hexdigest of the schema's columns and rules, which `dd.asset` uses as the asset's code version.
 
+    Parameters
+    ----------
+    schema
+        The schema to hash. Each column's name and dtype, then each rule's name, severity and expression.
+
     Returns
     -------
     :
         A 40-character hex string, to pass to `@dg.asset(code_version=...)`.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema
+
+    dd.wiring.get_code_version(OrdersSchema)
+    ```
     """
     content = (
         [(name, str(column.dtype)) for name, column in schema.columns().items()],
