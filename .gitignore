@@ -246,7 +246,7 @@ great-docs/
 _great_docs_build/
 _freeze/
 
-# The demo's tables, and the temporary instance a killed `dg dev` leaves under the cwd.
+# The demo writes its tables to `demo/storage/`, and a killed `dg dev` leaves a temporary instance under the cwd.
 demo/storage/
 demo/.tmp_dagster_home_*/
 

@@ -8,8 +8,7 @@ In a reference page it changes only the `Examples` section, because Great Docs w
 import pathlib
 import re
 
-# `[ \t]`, not `\s`: in MULTILINE mode `\s*` also matches the newline after the fence line and
-# a blank line after it, which the substitution would then delete.
+# `[ \t]`, not `\s`: in MULTILINE mode `\s*` also matches the newlines after the fence, which the substitution would delete.
 PLAIN = re.compile(r"^([ \t]*)```python[ \t]*\r?$", re.MULTILINE)
 BRACED = re.compile(r"^[ \t]*```\{python\}[ \t]*\r?$", re.MULTILINE)
 # Any Python fence, including one with attributes that `PLAIN` does not match.
@@ -35,10 +34,12 @@ def write(path: pathlib.Path, text: str) -> None:
 def landing_page() -> int:
     """Add braces to the landing page's fences.
 
+    Comparing totals, not checking that no plain fence remains, detects a fence that gained an attribute `PLAIN` does not match.
+    Counting braced fences, not substitutions, lets a second run succeed.
+
     Returns
     -------
     The number of `README.md` fences that are not executable cells on the page.
-    Comparing totals, not checking that no plain fence remains, detects a fence that gained an attribute the pattern does not match, and lets a second run succeed.
     """
     braced, count = PLAIN.subn(r"\1```{python}", read(INDEX))
     expected = len(PLAIN.findall(read(README)))
@@ -59,7 +60,7 @@ def reference_pages() -> int:
 
     Returns
     -------
-    The number of pages with a plain fence left under an `Examples` heading, where the example would not run.
+    The number of Python fences under an `Examples` heading that are not executable cells.
     """
     missed = 0
     for page in sorted(REFERENCE.glob("*.qmd")):
@@ -80,7 +81,7 @@ def reference_pages() -> int:
                 count += n
                 if n == 0 and PYTHON.match(line) and not BRACED.match(line):
                     print(
-                        f"{page}: a Python fence under an Examples heading has no braces"
+                        f"{page}: a Python fence under an Examples heading is not an executable cell"
                     )
                     missed += 1
         if missed:

@@ -45,7 +45,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
       - run: uv sync --locked
-      # `--all-files`, because a run on the changed files does not check the rest of the tree.
       # The commit-msg hook does not run here, because there is no commit message.
       - run: uv run --no-sync prek run --all-files --show-diff-on-failure
 

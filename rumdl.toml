@@ -6,8 +6,9 @@ disable = [
   "MD082",  # No content before the next heading
 ]
 exclude = [
-  # Skill files, kept identical to their source repos
+  # The skill files stay identical to their source repos.
   ".claude",
+  # The engineering skills' setup writes these files in its own format, not one sentence per line.
   "docs/agents/",
 ]
 respect-gitignore = true

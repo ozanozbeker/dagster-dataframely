@@ -20,9 +20,11 @@ ignore = [
   "E111",  # pycodestyle Error
   "E114",  # pycodestyle Error
   "E117",  # pycodestyle Error
-  "E501",  # pycodestyle Error
   "Q",  # flake8-quotes
   "W191",  # pycodestyle Warning
+
+  # The formatter does not wrap a long docstring or comment line.
+  "E501",  # pycodestyle Error
 ]
 unfixable = [
   "F401",  # Pyflakes > unused-import
@@ -69,8 +71,7 @@ runtime-evaluated-decorators = [
 convention = "numpy"
 
 [format]
-# `extension` above needs markdown formatting, which was a preview feature in ruff 0.16.7.
-# Preview also enables the formatter's other preview changes for Python files.
+# Preview applies the formatter's preview style to Python, such as hugging the sole bracketed argument in `pl.DataFrame({...})`.
 preview = true
 docstring-code-format = true
 line-ending = "lf"

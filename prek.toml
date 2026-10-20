@@ -21,7 +21,6 @@ rev = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"  # frozen: v8.30.1
 [[repos.hooks]]
 id = "gitleaks"
 
-# Basic file checks
 [[repos]]
 repo = "https://github.com/pre-commit/pre-commit-hooks"
 rev = "3e8a8703264a2f4a69428a0aa4dcb512790b2c8c"  # frozen: v6.0.0
@@ -85,8 +84,7 @@ id = "ruff-format"
 name = "ruff format"
 entry = "uv run ruff format --force-exclude"
 language = "system"
-# `files`, not `types_or` as in `ruff-check`, because prek does not tag a `.qmd` as markdown
-# or python, and ruff would not format the guide's code chunks.
+# `files`, not `types_or`, because prek tags a `.qmd` as `text`, not markdown, and would not pass it to ruff.
 files = '\.(py|pyi|ipynb|md|qmd)$'
 require_serial = true
 
@@ -95,12 +93,10 @@ id = "rumdl"
 name = "rumdl"
 entry = "uv run rumdl check --fix"
 language = "system"
-# `files`, not `types = ["markdown"]`, because prek does not tag a `.qmd` as markdown, and
-# rumdl would not lint the guide's pages.
+# `files`, not `types`, because prek tags a `.qmd` as `text`, not markdown, and would not pass it to rumdl.
 files = '\.(md|qmd)$'
 require_serial = true
 
-# The README contains copies of demo modules, because GitHub and PyPI cannot include a file.
 # The hook also runs when only a demo module changed, because that makes a copy out of date.
 [[repos.hooks]]
 id = "sync-demo-snippets"
@@ -126,11 +122,9 @@ language = "system"
 types = ["python"]
 pass_filenames = false
 
-# Two pygrep hooks ban a pattern in the package source, because each is a text search, not a test.
+# These two bans are pygrep hooks, not tests, because each is a text search of the package source.
 
-# Prevents a statistic you cannot cast back to a dtype: `describe()` formats each value by the
-# column's dtype, so a `Date` mean prints as a datetime and `min` mixes numbers, strings and dates.
-# `_statistics.py` computes with typed Polars expressions and converts to strings once, for display.
+# Prevents `describe()` in the package; the `_statistics.py` module docstring gives the reason.
 [[repos.hooks]]
 id = "no-describe"
 name = "no describe() in the package"
@@ -138,8 +132,7 @@ entry = "\\.describe\\("
 language = "pygrep"
 files = '^src/dagster_dataframely/.*\.py$'
 
-# Prevents a fourth source for a setting. Dagster loads code locations lazily, so a default set
-# in code would depend on import order, and the same asset could get different checks.
+# Prevents a fourth source for a setting; the `_settings.py` module docstring gives the reason.
 [[repos.hooks]]
 id = "no-default-setter"
 name = "no set_default_*() in the package"
@@ -147,9 +140,9 @@ entry = "def set_default"
 language = "pygrep"
 files = '^src/dagster_dataframely/.*\.py$'
 
-# Prevents figures of speech in prose. `CONTEXT.md` lists these words and what to write instead.
-# `exclude` skips the files that list the words (`CONTEXT.md`, `CLAUDE.md`, this one), the
-# changelog and the skill files.
+# Prevents figures of speech and coinages in prose. `CONTEXT.md` lists most of these words
+# and what to write instead. `exclude` skips the files that list the words (`CONTEXT.md`, `CLAUDE.md`, this
+# one), the changelog, the skill files and `docs/agents/`.
 [[repos.hooks]]
 id = "no-figures-of-speech"
 name = "no figures of speech in prose"

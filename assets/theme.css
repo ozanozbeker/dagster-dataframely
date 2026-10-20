@@ -1,33 +1,33 @@
-/* Nord's palette, used as nordtheme.com uses it: a white page in light mode with Snow Storm for layered surfaces and Polar Night for text, and a darkened-nord0 page in dark mode with nord0 surfaces and Snow Storm text. Frost and Aurora are the same in both. Every color is a variable in the block below, and nothing after the block writes a hex value. The file assigns the variables great-docs reads, then overrides the few rules where great-docs or Quarto paints a fixed color; each override's comment names that rule. */
+/* This file sets the variables great-docs reads to Nord's palette, as nordtheme.com uses it. Every color is a variable in the first block, and no later rule writes a hex value. Each rule after the variable blocks overrides a great-docs or Quarto rule, and its comment names that rule. */
 
 :root {
-    /* Polar Night. Dark mode's backgrounds, light mode's text. */
+    /* Polar Night. This file uses it for dark mode's backgrounds and light mode's text. */
     --nord-0: #2E3440; /* dark: the sidebar and code blocks; light: code blocks */
     --nord-1: #3B4252; /* dark: inline code and form controls; light: the darkest text */
     --nord-2: #434C5E; /* dark: selection and borders; light: headings and body text, as nordtheme.com sets them */
     --nord-3: #4C566A; /* dark: guide markers; light: subtle text, which nordtheme.com uses for body text */
-    --nord-3-bright: #616E88; /* Nord's documented 10% brighter nord3, the guide's comment color, kept for reference */
-    /* Snow Storm. Dark mode's text, light mode's layered surfaces. */
+    --nord-3-bright: #616E88; /* Nord's style guide colors comments with this 10% brighter nord3. No rule reads it, and this file keeps it for reference. */
+    /* Snow Storm. This file uses it for dark mode's text and light mode's layered surfaces. */
     --nord-4: #D8DEE9; /* dark: variables and subtle text; light: borders */
     --nord-5: #E5E9F0; /* dark: secondary text; light: the active line, selection and a second surface */
     --nord-6: #ECEFF4; /* dark: plain text and code; light: the first surface over the white page, such as inline code */
-    /* Frost. The same in both modes. */
+    /* Frost. */
     --nord-7: #8FBCBB; /* secondary UI highlight; classes, types and primitives */
     --nord-8: #88C0D0; /* the primary accent; dark-mode links; functions */
     --nord-9: #81A1C1; /* secondary UI; keywords, operators and punctuation */
     --nord-10: #5E81AC; /* tertiary UI; light-mode links; pragmas */
-    /* Aurora. The same in both modes. */
+    /* Aurora. */
     --nord-11: #BF616A; /* errors */
     --nord-12: #D08770; /* dangerous or advanced UI; annotations and decorators */
     --nord-13: #EBCB8B; /* warnings and highlighted text; escape characters and regular expressions */
     --nord-14: #A3BE8C; /* success; strings */
     --nord-15: #B48EAD; /* uncommon UI; numbers */
-    /* Two colors outside the palette, both from nordtheme.com: its light page, and its dark page, a darkened nord0 that nord0 surfaces sit on. */
+    /* nordtheme.com uses these two colors, outside the palette, for its light page and its dark page. */
     --white: #FFFFFF;
     --nord-0-dark: #242933;
-    /* nord4 dimmed a step toward the dark page, for captions and code comments: quieter than body text, lighter than the guide's comment gray. */
+    /* Captions and code comments use nord4 mixed toward the dark page, so they are dimmer than body text and lighter than Nord's comment color. */
     --nord-4-dim: color-mix(in srgb, var(--nord-4) 75%, var(--nord-0-dark));
-    /* Alpha variants, because `rgba()` cannot read a hex variable. */
+    /* `rgba()` and Bootstrap's `--bs-body-color-rgb` take an RGB triplet, not a hex value. */
     --nord-6-rgb: 236, 239, 244;
     --nord-13-rgb: 235, 203, 139;
 }
@@ -55,7 +55,7 @@
     --gd-citation-color: var(--nord-10);
 }
 
-/* Syntax colors, as the guide assigns them. Quarto's `nord` highlight style draws the light-mode code blocks; great-docs reads these for dark mode and for signatures. */
+/* These syntax colors follow Nord's style guide, except the comment color. Quarto's `nord` highlight style colors the light-mode code blocks, and great-docs reads these variables in dark mode and for signatures. */
 :root,
 html.quarto-dark,
 body.quarto-dark {
@@ -72,7 +72,7 @@ body.quarto-dark {
     --gd-syn-comment: var(--nord-4-dim);
 }
 
-/* Dark mode. The page and the navbar are nordtheme.com's darkened nord0, so nord0 surfaces such as code blocks sit on them. */
+/* Dark mode. The page and the navbar use nordtheme.com's darkened nord0, so a nord0 surface such as a code block is lighter than the page. */
 html.quarto-dark,
 body.quarto-dark {
     --gd-bg-primary: var(--nord-0-dark);
@@ -99,13 +99,13 @@ body.quarto-dark {
     --bs-code-color: var(--nord-6);
 }
 
-/* Quarto's `nord` highlight style sets its nord0 background on every `code` element, inline code included, which leaves inline text unreadable in light mode. This is the one rule beyond the variables, and it only hands inline code the variables above. */
+/* Quarto's `nord` highlight style sets its nord0 background on every `code` element, inline code included, which leaves inline text unreadable in light mode. This rule sets inline code's background and color from the code variables above. */
 :not(pre) > code:not(.sourceCode) {
     background-color: var(--gd-code-bg);
     color: var(--gd-code-color);
 }
 
-/* Override: great-docs recolors every code token in dark mode from its own mapping, with `!important`. These restore Quarto's `nord` highlight style, class by class, so a code block reads the same in both modes. The classes are Pandoc's. */
+/* Override: great-docs recolors every code token in dark mode from its own mapping. These restore Quarto's `nord` highlight style, class by class, so each token class has the same color in both modes. The classes are Pandoc's. */
 body.quarto-dark .sourceCode code {
     color: var(--nord-4) !important; /* Normal */
 }
@@ -155,7 +155,7 @@ body.quarto-dark .sourceCode span.cv {
 }
 
 body.quarto-dark .sourceCode span.co {
-    color: var(--gd-syn-comment) !important; /* Comment, the dimmed nord4 rather than the style's nord3 */
+    color: var(--gd-syn-comment) !important; /* Comment, the dimmed nord4 rather than the style's brighter nord3 */
 }
 
 /* Override: great-docs paints the operators of each page's first code block orange, through a rule on `#cb1`. Quarto's `nord` style has them nord9, as every later block does. */
@@ -168,7 +168,7 @@ body.quarto-dark div.sourceCode pre {
     background-color: transparent;
 }
 
-/* Override: great-docs draws the floating sidebar as a box, with a background, a border and a shadow, in both modes. This removes the box, so the links sit on the page. */
+/* Override: great-docs draws the floating sidebar as a box, with a background, a border and a shadow, in both modes. This rule removes the box, so the links appear on the page background. */
 #quarto-sidebar.gd-sidebar-float,
 body.quarto-dark #quarto-sidebar.gd-sidebar-float {
     background: transparent;
@@ -201,7 +201,7 @@ body.quarto-dark #navbarCollapse > ul.navbar-nav.navbar-nav-scroll.me-auto > li 
     text-decoration: underline 2px var(--gd-active-link);
 }
 
-/* Override: Quarto pads the navbar 1em on every side, which with the links' own padding makes it 78px tall. This keeps the side padding and trims the top and bottom, so the text and the buttons keep their size. From 992px up only, because great-docs sets its own padding for the narrower two-row navbar. */
+/* Override: Quarto pads the navbar 1em on every side, which with the links' own padding makes it 78px tall. This keeps the side padding and trims the top and bottom, so the text and the buttons keep their size. The rule applies from 992px up, because great-docs sets its own padding for the narrower two-row navbar. */
 @media (min-width: 992px) {
     #quarto-header > nav {
         padding-top: 6px;
@@ -209,7 +209,7 @@ body.quarto-dark #navbarCollapse > ul.navbar-nav.navbar-nav-scroll.me-auto > li 
     }
 }
 
-/* Override: great-docs draws the navbar logo 24px tall. 42px fits inside the navbar's 44px content height once the brand's own vertical padding goes, so nothing moves vertically. The hex is 0.866 times as wide as it is tall, so 42px adds 15.6px of width, which the container's negative margin takes back, so the links stay where they were. */
+/* Override: great-docs draws the navbar logo 24px tall. 42px fits inside the navbar's 44px content height once the brand's own vertical padding goes, so nothing moves vertically. The hex is 0.866 times as wide as it is tall, so the 42px logo is 15.6px wider than the 24px one, and the container's -15.6px margin keeps the links in place. */
 @media (min-width: 992px) {
     .navbar-brand {
         padding-top: 0;
