@@ -1,0 +1,208 @@
+---
+title: Upgrading
+---
+
+Each breaking release has a section here, with the migration for it.
+A `0.x` minor release is where a breaking change lands, and the [changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) lists every other change.
+Pin to one minor version if that matters to you: `>=` the version you installed, `<` the next minor.
+
+## 0.11
+
+**Every function that returns something is named with a verb.**
+A function is `build_*` when it returns a Dagster object, `get_*` when it derives a value from a schema, as dagster-dbt's `DagsterDbtTranslator` does, and `evaluate_*` when it reads data and reports pass or fail.
+`stream_results` takes dagster-dbt's verb for a function a hand-wired body uses with `yield from`.
+Nothing behaves differently, and no check name or check history moves.
+
+| 0.10 | 0.11 |
+| --- | --- |
+| `dd.collection_checks` | `dd.build_collection_checks` |
+| `dd.error_rows_spec` | `dd.build_error_rows_spec` |
+| `dd.testing.direct_invocation_result(called)` | `dd.testing.DirectInvocationResult.from_invocation(called)` |
+| `dd.wiring.validation_results(schema, frame, valid_key=...)` | `dd.wiring.stream_results(schema, frame, asset_key=...)` |
+| `dd.wiring.AssetYield` | gone: write `Iterator[dg.MaterializeResult | dg.AssetCheckResult]` |
+| `dd.wiring.asset_check_specs` | `dd.wiring.build_asset_check_specs` |
+| `dd.wiring.asset_check_results` | `dd.wiring.evaluate_checks` |
+| `dd.wiring.asset_check_name` | `dd.wiring.get_check_name_for_rule` |
+| `dd.wiring.schema_code_version` | `dd.wiring.get_code_version` |
+| `dd.wiring.schema_metadata` | `dd.wiring.get_column_schema_metadata` |
+| `dd.wiring.table_schema` | `dd.wiring.get_table_schema` |
+| `dd.wiring.error_rows_frame` | `dd.wiring.get_error_rows` |
+| `dd.wiring.error_rows_path` | `dd.wiring.get_error_rows_path` |
+| `dd.wiring.delegating_writer` | `dd.wiring.build_io_manager_writer` |
+| `dd.wiring.file_writer` | `dd.wiring.build_file_writer` |
+
+**The `schema` check granularity is gone.**
+`check_granularity="schema"`, from the argument or from `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, raises `InvalidSettingError`.
+Remove the argument or pass `column`, and the asset starts a new check history.
+One check for every rule kept no per-rule history, blocked nothing the other two do not, and mixed `"warn"` and `"error"` rules in one result.
+[`docs/out-of-scope/schema-granularity.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-granularity.md) has the reasons and the counts that keep `column`.
+
+**`schema_rules` is gone, and a schema-level rule keeps its own check at `column` granularity.**
+`column` collapses the rules Dataframely generates on a column into `dy_col__<column>`.
+A `@dy.rule()` or the primary key is written by you, so it now keeps its own `dy_rule__<rule>` check and its own history, as a dbt test does in dagster-dbt.
+This is what `schema_rules="per_rule"` did.
+`dy_schema__rules` is no longer declared, so its history ends with the last run before the upgrade.
+Remove `schema_rules=`, `dd.SchemaRules` and `DAGSTER_DATAFRAMELY_SCHEMA_RULES`; nothing replaces them.
+[`docs/out-of-scope/schema-rules.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-rules.md) has the reasons.
+
+**Every check-result metadata key is under `dataframely/`.**
+`dy_` now covers only check names, rule columns and the `dy_rule` column in a collapsed check's failure examples.
+`failed_row_count` follows dagster-dbt's `dagster_dbt/failed_row_count`.
+
+| 0.10 | 0.11 |
+| --- | --- |
+| `dy_rule` | `dataframely/rule` |
+| `dy_rule__expr` | `dataframely/rule_expr` |
+| `dy_failed_count` | `dataframely/failed_row_count` |
+| `dy_failed_sample` | `dataframely/failed_examples` |
+| `dy_rules` | `dataframely/rules` |
+| `dy_schema__errors` | `dataframely/column_schema_errors` |
+| `dy_filter` | `dataframely/filter` |
+
+**The failure rows a check shows are failure examples, Dataframely's word.**
+`max_failure_samples=` is `max_failure_examples=`, and the variable is `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`.
+`row_sample` keeps its name, because Polars' word for the first rows of a table is a sample.
+
+**A partitioned asset's row count is under `dagster/partition_row_count`.**
+Dagster defines `dagster/row_count` as the whole table's count, so a partitioned materialization no longer writes it.
+`stream_results` takes `partitioned=True` for a hand-wired partitioned asset, and `dd.asset` passes it when it has a `partitions_def`.
+Dagster's Overview tab reads only `dagster/row_count`, so its row-count stat is empty for a partitioned asset unless you or the IO manager write that key.
+
+**A run with `filter=True` logs a materialization for the error rows after each write.**
+The spec from `build_error_rows_spec` then has a history and a partition status, and an asset downstream of it can automate on it.
+A run launched from a code location without the spec logs nothing.
+A run of `dg.materialize` or `execute_in_process` has no code location to read, so it logs the materialization with or without the spec, and code that expected one materialization from such a run now receives two.
+
+**Every asset has a code version derived from its schema.**
+With `code_version=None`, `dd.asset` sets the sha1 hexdigest of each column's name and dtype, then each rule's name, severity and serialized expression.
+Every existing asset reports "has a new code version" once after the upgrade.
+A Polars upgrade can do the same, because Polars documents its expression serialization as unstable between versions.
+`dd.asset` now calls every `@dy.rule()` function when the asset is defined, so a function that raises raises there.
+An `is_in` over a Python set of strings gives a different code version in each process, so write a list.
+
+## 0.10
+
+**A schema declares each rule's severity, and `filter=True` replaces `quarantine=True`.**
+A rule is `"error"` unless the schema declares `"warn"`, so a schema that declares nothing validates as before.
+A row that fails only `"warn"` rules is written to the table, and its check fails at `WARN`.
+With `filter=True`, the package writes the rows that failed an `"error"` rule under `<name>__error_rows`.
+[Rule severity](rule-severity.qmd) shows where a severity goes.
+
+**The error rows have a new asset key.**
+A run no longer writes to `<name>_quarantine`, and nothing removes the rows an earlier run wrote there.
+To keep the old key, pass it as `error_rows_key`, such as `error_rows_key=["sales", "orders_quarantine"]`.
+
+**A check for an `"error"` rule fails at `ERROR` with `filter=True`.**
+In 0.9 the same check failed at `WARN` when the quarantine took the rows.
+Downstream assets still run, because with `filter=True` no check is blocking.
+With `filter=False`, a check for a `"warn"` rule is not blocking, where in 0.9 every check was.
+
+**`dd.wiring.asset_check_results` no longer takes `severity`.**
+It reads each rule's severity from the schema.
+
+The check names are unchanged, so check history carries over.
+Every other `quarantine` name becomes `error_rows`:
+
+| 0.9 | 0.10 |
+| --- | --- |
+| `@dd.asset(OrdersSchema, quarantine=True)` | `@dd.asset(OrdersSchema, filter=True)` |
+| `<name>_quarantine` | `<name>__error_rows` |
+| `dd.quarantine_spec` | `dd.error_rows_spec` |
+| `DAGSTER_DATAFRAMELY_QUARANTINE_DIR` | `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` |
+| `dd.errors.QuarantineDirError` | `dd.errors.ErrorRowsDirError` |
+| `dd.errors.QuarantineKeyCollisionError` | `dd.errors.ErrorRowsKeyCollisionError` |
+| `dd.wiring.QuarantineWriter` | `dd.wiring.ErrorRowsWriter` |
+| `dd.wiring.quarantine_frame` | `dd.wiring.error_rows_frame` |
+| `dd.wiring.quarantine_path(..., quarantine_dir=...)` | `dd.wiring.error_rows_path(..., error_rows_dir=...)` |
+| `dd.wiring.file_writer(..., quarantine_dir=...)` | `dd.wiring.file_writer(..., error_rows_dir=...)` |
+| `dd.wiring.validation_results(..., quarantine_writer=...)` | `dd.wiring.validation_results(..., error_rows_writer=...)` |
+| `dd.wiring.validate_quarantine_key` | `dd.wiring.validate_error_rows_key` |
+| `dd.wiring.check_specs` | `dd.wiring.asset_check_specs` |
+| `dd.wiring.check_results` | `dd.wiring.asset_check_results` |
+| `dd.wiring.check_name` | `dd.wiring.asset_check_name` |
+| `dataframely/quarantine_address` | `dataframely/error_rows_address` |
+| `dataframely/invalid_count` | `dataframely/error_rows_count` |
+| `dataframely/invalid_sample` | `dataframely/error_rows_sample` |
+| `dataframely/invalid_by_rules` | `dataframely/error_rows_by_rules` |
+| `dataframely/valid_sample` | `dataframely/table_sample` |
+| `dataframely/valid_statistics/<group>` | `dataframely/table_statistics/<group>` |
+
+## 0.9
+
+The floors move to `dagster>=1.13.24`, `dataframely>=3.1.2` and `polars>=1.44.2`.
+The tests and every measurement in this repo run against those versions.
+
+Two error classes are renamed.
+Each is raised in the same cases as before.
+
+| 0.8 | 0.9 |
+| --- | --- |
+| `dd.errors.NothingSurvivedError` | `dd.errors.NoValidRowsError` |
+| `dd.errors.UnnameableColumnError` | `dd.errors.InvalidColumnNameError` |
+
+Most error messages are reworded, so code that matches on message text needs updating.
+
+## 0.8
+
+`temp_dir` and `DAGSTER_DATAFRAMELY_TEMP_DIR` are gone.
+A `LazyFrame` return is filtered in the engine, so there is no staging file to place: drop the argument and the variable, and nothing else changes.
+The measurements are in [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#lazy-validation-and-lazy-storage).
+
+Two functions are renamed, and nothing about either changes but the name.
+A function here is named after what it returns, which [`CLAUDE.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CLAUDE.md) now writes down, and these two were the public exceptions.
+
+| 0.7 | 0.8 |
+| --- | --- |
+| `dd.build_quarantine_spec` | `dd.quarantine_spec` |
+| `dd.wiring.process` | `dd.wiring.validation_results` |
+
+**The decorator is `dd.asset`.**
+`dy_asset` put a user-typed name inside `dy_`, which otherwise names only what this package generates into Dagster: the check names, the rule columns and the check metadata keys.
+Dagster owns the word `asset`, and Dataframely settles the same question the same way, shadowing 28 Polars names under its own alias.
+
+| 0.7 | 0.8 |
+| --- | --- |
+| `@dd.dy_asset(OrdersSchema)` | `@dd.asset(OrdersSchema)` |
+| `from dagster_dataframely import dy_asset` | `import dagster_dataframely as dd` |
+
+Import the module, not the name.
+A bare `from dagster_dataframely import asset` reads as Dagster's own, and the docs never show it.
+
+A terminology pass renamed what this package had invented where Dagster, Dataframely or Polars already owned the word.
+Nothing behaves differently, and no check history moves.
+
+| 0.7 | 0.8 | the word it borrows |
+| --- | --- | --- |
+| `multi_column_rules=` | `schema_rules=` | Dataframely calls these schema-level rules, and a single-column `primary_key` is one, so "multi-column" was false |
+| `dd.MultiColumnRules` | `dd.SchemaRules` | |
+| `DAGSTER_DATAFRAMELY_MULTI_COLUMN_RULES` | `DAGSTER_DATAFRAMELY_SCHEMA_RULES` | |
+| `schema_rules="schema"` | `schema_rules="collapsed"` | the old value repeated the setting's own name |
+| `dataframely/valid_stats/<family>` | `dataframely/valid_statistics/<group>` | Polars' `DataTypeGroup` |
+
+## 0.7
+
+The quarantine moves out of the graph and onto your own IO manager, and this package stops shipping storage.
+Both are decisions: [ADR-0004](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0004-the-quarantine-is-a-file-not-an-asset) and [ADR-0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0006-the-assets-own-io-manager-writes-the-quarantine).
+
+| 0.6 | 0.7 | note |
+| --- | --- | --- |
+| `dd.dataframely_asset(schema=OrdersSchema)` | `dd.dy_asset(OrdersSchema)` | the schema is positional; renamed again in 0.8 |
+| `quarantine=dg.AssetOut()` | `quarantine=True` | it is a `bool`, and `True` needs no configuration |
+| `dd.DataframelyParquetIOManager` | `dagster_polars.PolarsParquetIOManager` | this package ships no IO manager |
+| `dd.DataframelyCSVIOManager` | none | the CSV codecs went with it; use parquet or a warehouse |
+| the quarantine was a second out | `dd.build_quarantine_spec(OrdersSchema, orders)` | and only if you want it in the graph; renamed again in 0.8 |
+| `dd.errors.SchemaShapeError` | `dd.errors.ColumnSchemaError` | "shape" was Polars' word for something else |
+| `dd.errors.QuarantineSettingError` | none | nothing on the quarantine is configurable now |
+| `dd.errors.UnwritableDtypeError` | none | it belonged to the CSV writer |
+| `dd.wiring.quarantine_table_schema` | none | a quarantine spec carries its own Columns tab |
+| `dd.wiring.process(..., quarantine_key=...)` | `dd.wiring.process(..., quarantine_writer=...)` | see [Hand-wiring](hand-wiring.qmd); renamed again in 0.8 |
+| `dy_schema__dtypes` | `dy_schema__columns` | this ends that check's history |
+| `sample` | `dataframely/valid_sample` | |
+| `stats/<family>` | `dataframely/valid_stats/<family>` | renamed again in 0.8 |
+| `dy_quarantine_path` | `dataframely/quarantine_address` | it can be an asset key now, not just a file path |
+| `dy_rejected_count` | `dataframely/invalid_count` | |
+| `dy_rejected_sample` | `dataframely/invalid_sample` | |
+| `dy_rejected_rules` | `dataframely/invalid_by_rules` | |
+
+`dy_failed_count` and `dy_failed_sample` are unchanged.
+So are `check_granularity`, `multi_column_rules`, `statistics`, `max_failure_samples` and `row_sample`, and every asset key and rule column, so Dagster keeps every check history except the column-schema check's.

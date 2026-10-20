@@ -5,17 +5,17 @@ title: "Naming"
 ```{python}
 #| label: setup-naming
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
-This page covers four things this package sets: the asset's description, each check's description, the name of the asset's op, and the namespaces of the names and keys it generates.
+`dd.asset` sets four names: the asset's description, each check's description, the name of the asset's op, and the namespaces of the names and keys it generates.
 
 ## The description comes from the schema
 
@@ -23,11 +23,11 @@ This page covers four things this package sets: the asset's description, each ch
 
 ```{python}
 #| label: naming-1
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     """A customer order line: one row per product on one order."""
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders() -> pl.DataFrame:
     """Joins the two extracts and drops the test accounts."""
     ...
@@ -73,7 +73,7 @@ Name your checks with a dict, such as `check={"lowercase": ...}`, and the packag
 
 ## Dagster names the op after the whole asset key
 
-`@dd.asset(Orders, key_prefix="sales", name="orders")` creates an op named `sales__orders`, the same way `@dg.asset` names its op.
+`@dd.asset(OrdersSchema, key_prefix="sales", name="orders")` creates an op named `sales__orders`, the same way `@dg.asset` names its op.
 An op name must be unique within a code location, and an asset name need not be.
 With the asset name alone, two assets named `orders` under different prefixes would have two ops with the same name.
 

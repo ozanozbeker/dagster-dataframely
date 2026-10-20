@@ -18,14 +18,25 @@ favicon: assets/dagster-dataframely-favicon-dark.svg
 # great-docs reads no pre-made icon sizes, so this links the exported Apple touch icon. The URL is absolute, because Quarto does not rewrite paths in header HTML.
 include_in_header: '<link rel="apple-touch-icon" href="https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-favicon-dark-180.png">'
 
-# The site uses Nord colors. `assets/theme.css` sets everything except the accent.
+# The site is great-docs' default look in Nord's colors. `assets/theme.css` assigns the palette to the variables great-docs reads, and nothing else.
 accent_color:
-  light: "#0075FF"
-  dark: "#5CA5FF"
+  light: "#5E81AC" # nord10
+  dark: "#88C0D0" # nord8
 
 site:
   css: assets/theme.css
   highlight-style: nord
+  # Quarto's defaults give the body 800px, each sidebar 250px and each gutter 1.5em. The body takes the room instead.
+  grid:
+    sidebar-width: 220px
+    body-width: 1000px
+    margin-width: 220px
+    gutter-width: 1em
+
+# The README's heading is the name, so the hero shows the hex, the tagline and the badges.
+hero:
+  name: false
+  logo_height: 320px
 
 # The image is a URL into `assets/`, because great-docs copies a local path to the build root, which Quarto does not publish.
 social_cards:
@@ -43,10 +54,11 @@ pre_render: scripts/brace-example-fences.py
 
 # No `freeze:` key, so Quarto runs every page on every build, which the build check needs: a change in `src/` can break a page nobody edited. `freeze: false` would have no effect, because great-docs omits it. Keeping `_freeze/` out of git and the CI cache makes every page run again.
 
-# A reader reads the Guide pages once, in order, and looks things up in the Reference pages. So Settings, Naming, Errors and Hand-wiring are Reference pages, not Guide pages.
+# Listed here as pkgdown lists `articles:`, not by filename prefix. A reader reads the Guide pages once, in order, starting with Get started, and looks things up in the Details pages.
 user_guide:
   - section: Guide
     contents:
+      - dagster-dataframely.qmd
       - declaring-an-asset.qmd
       - validation.qmd
       - rule-severity.qmd
@@ -57,20 +69,19 @@ user_guide:
       - lazyframes.qmd
       - collection-checks.qmd
       - rule-checks.qmd
-  - section: Reference
+  - section: Details
     contents:
       - settings.qmd
       - naming.qmd
       - errors.qmd
       - hand-wiring.qmd
+      - upgrading.qmd
 
 # Grouped by module, because the default groups by kind and puts `dd.wiring` under four headings.
-# The mapping form sets `title`, so the navbar shows "API" instead of a second "Reference".
 reference:
-  title: API
   desc: >-
-    This page lists every public name with its signature, generated from the source. The
-    guide explains what each one does.
+    Every public name, with its signature, every parameter and one example that runs, generated
+    from the source. The guide tells the story around them.
   sections:
     - title: Core
       desc: >-
@@ -84,6 +95,15 @@ reference:
         - build_collection_checks
         - build_rule_checks
         - Granularity
+
+    - title: Data
+      desc: >-
+        The example schema and frames every example on this site uses, shipped so an example
+        runs from an editor hover too.
+      contents:
+        - data.OrdersSchema
+        - data.storefront_orders
+        - data.marketplace_orders
 
     - title: Testing
       desc: >-
@@ -130,3 +150,34 @@ reference:
         - errors.NoValidRowsError
         - errors.ErrorRowsKeyCollisionError
         - errors.ErrorRowsDirError
+
+# great-docs writes `skill.md` from the reference sections. These entries add what the guide bolds.
+skill:
+  decision_table:
+    - need: Validate the frame an asset returns, and fill its Columns tab
+      use: "@dd.asset(OrdersSchema)"
+    - need: Write the rows that fail an "error" rule to a table instead of failing the run
+      use: "@dd.asset(OrdersSchema, filter=True)"
+    - need: Put the error rows in the asset graph
+      use: dd.build_error_rows_spec(OrdersSchema, orders)
+    - need: Check a table that dd.asset did not build
+      use: dd.build_rule_checks(OrdersSchema, asset="warehouse_orders")
+    - need: Report a Collection's collection filters as checks
+      use: dd.build_collection_checks(Shop, members={...})
+    - need: Read what a direct invocation yielded in a test
+      use: dd.testing.DirectInvocationResult.from_invocation(orders(frame))
+    - need: Build a @dg.asset from the parts yourself
+      use: dd.wiring
+  gotchas:
+    - "The decorated function must return the schema's dtypes. The package never casts, and a dtype that differs fails the run before `Schema.filter` runs."
+    - "Write the values of an `is_in` as a list, not a set. A set orders differently in each process, so the code version changes each time the code location starts."
+    - "`dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`. To skip, return `None` itself."
+    - "A Polars upgrade can change every asset's code version at once, because the hash uses Polars' expression serialization."
+    - "`filter=True` adds a `context` parameter to the asset, so a direct invocation passes `dg.build_asset_context()` first."
+    - "A direct invocation with error rows needs `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or it raises `ErrorRowsDirError`."
+    - "A flag's environment variable accepts `true` or `false` only. `1`, `yes` and `on` raise `InvalidSettingError`."
+  best_practices:
+    - "Import the module, not the name: `import dagster_dataframely as dd`, then `@dd.asset`. A bare `asset` reads as Dagster's."
+    - "Name a `dy.Schema` subclass with the `Schema` suffix, as Dataframely does: `OrdersSchema` is the schema, `orders` is the asset."
+    - "Use `dd.data.OrdersSchema` and its frames to try something, so the example matches the documentation."
+    - "Pin to one minor version before 1.0, and read the Upgrading page before moving to the next."
