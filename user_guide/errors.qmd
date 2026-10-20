@@ -96,7 +96,7 @@ Without it, Python still defines the schema class.
 `dd.asset` reads the rule's expression when you declare the asset, and raises:
 
 ```text
-TypeError: GiftOrdersSchema.gifts_have_note() takes 0 positional arguments but 1 was given
+TypeError: GiftOrdersSchema.gifts_have_priority() takes 0 positional arguments but 1 was given
 ```
 
 Dataframely calls the body with the schema class, so the body takes `cls`:
@@ -105,7 +105,7 @@ Dataframely calls the body with the schema class, so the body takes `cls`:
 #| label: errors-2
 class GiftOrdersSchema(OrdersSchema):
     @dy.rule()
-    def gifts_have_note(cls) -> pl.Expr:
-        """Require a note on a gift line."""
-        return ~cls.is_gift.col | cls.note.col.is_not_null()
+    def gifts_have_priority(cls) -> pl.Expr:
+        """Require a priority on a gift line."""
+        return ~cls.is_gift.col | cls.priority.col.is_not_null()
 ```
