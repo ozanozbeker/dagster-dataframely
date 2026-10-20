@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import dagster as dg
+import dataframely as dy
 import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
@@ -22,6 +23,7 @@ from tests.scenario import (
     materialize,
     mixed_orders,
     storage,
+    warehouse,
     wrong_dtype_orders,
 )
 
@@ -49,6 +51,28 @@ def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
 def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | None]:
     """Return the partition of each materialization, keyed by asset key."""
     return {key: m.partition for key, m in materializations(result).items()}
+
+
+class _Days(dy.Schema):
+    day = dy.String()
+    amount = dy.Int64(min=0)
+
+
+_DAILY_ERROR_ROWS_KEY = dg.AssetKey(["daily__error_rows"])
+
+
+@dd.asset(
+    _Days,
+    name="daily",
+    filter=True,
+    partitions_def=dg.DailyPartitionsDefinition(start_date="2026-01-01"),
+    backfill_policy=dg.BackfillPolicy.single_run(),
+    metadata={"partition_expr": "day"},
+)
+def _daily(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    """Return one valid row and one row that fails `amount`'s minimum for each day in the run."""
+    days = context.partition_keys
+    return pl.DataFrame({"day": days * 2, "amount": [1] * len(days) + [-1] * len(days)})
 
 
 class TestPartitionsDef:
@@ -251,6 +275,35 @@ class TestPartitionRuns:
         assert "multiple partitions" in str(failure.error)
         assert "multi-run backfill policy" in str(failure.error)
         assert not list(tmp_path.rglob("*.parquet"))
+
+    def test_a_single_run_backfill_materializes_the_error_rows_for_every_partition_in_the_range(
+        self, tmp_path: Path
+    ):
+        """A run over a partition key range logs an error-rows materialization for each partition, with the range's count."""
+        with dg.DagsterInstance.ephemeral() as instance:
+            result = dg.materialize(
+                [_daily],
+                instance=instance,
+                resources=warehouse(tmp_path),
+                tags={
+                    "dagster/asset_partition_range_start": "2026-01-01",
+                    "dagster/asset_partition_range_end": "2026-01-02",
+                },
+            )
+            partitions = instance.get_materialized_partitions(_DAILY_ERROR_ROWS_KEY)
+
+        events = [
+            event.step_materialization_data.materialization
+            for event in result.get_asset_materialization_events()
+            if event.asset_key == _DAILY_ERROR_ROWS_KEY
+        ]
+
+        assert partitions == {"2026-01-01", "2026-01-02"}
+        assert [
+            (event.partition, event.metadata["dagster/partition_row_count"].value)
+            for event in events
+        ] == [("2026-01-01", 2), ("2026-01-02", 2)]
+        assert all("dagster/row_count" not in event.metadata for event in events)
 
 
 @dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)

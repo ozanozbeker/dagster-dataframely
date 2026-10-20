@@ -203,11 +203,12 @@ def delegating_writer(
         resources = step.resolved_run_config.resources
         resource_config = resources[error_rows_io_manager_key].config
     key = _error_rows_key(context.asset_key, error_rows_key)
-    partition = context.partition_key if context.has_partition_key else None
+    # A run of one partition has a key and no range, and a single-run backfill the reverse.
+    partitioned = context.has_partition_key or context.has_partition_key_range
+    # Dagster logs the table once per partition in a range, so the error rows match it.
+    partitions = list(context.partition_keys) if partitioned else [None]
     # Dagster defines `dagster/row_count` as the whole table's count.
-    count_key = (
-        "dagster/row_count" if partition is None else "dagster/partition_row_count"
-    )
+    count_key = "dagster/partition_row_count" if partitioned else "dagster/row_count"
     # Only a code location shows that no spec exists, and a run of `dg.materialize` has none.
     try:
         logs_event = key in context.repository_def.asset_graph.unexecutable_asset_keys
@@ -221,13 +222,13 @@ def delegating_writer(
         repointed._resource_config = resource_config  # noqa: SLF001 - the same
         manager.handle_output(repointed, frame)
         if logs_event:
-            context.log_event(
-                dg.AssetMaterialization(
-                    asset_key=key,
-                    partition=partition,
-                    metadata={**repointed.get_logged_metadata(), count_key: len(frame)},
+            metadata = {**repointed.get_logged_metadata(), count_key: len(frame)}
+            for partition in partitions:
+                context.log_event(
+                    dg.AssetMaterialization(
+                        asset_key=key, partition=partition, metadata=metadata
+                    )
                 )
-            )
         return key.to_user_string()
 
     return address

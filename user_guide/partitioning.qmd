@@ -172,6 +172,19 @@ To depend on one dimension only, use a partition mapping.
 An asset partitioned by `day` alone can depend on the multi-partitioned asset through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`.
 It then receives only that day's regions: two entries instead of four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
 
+## Single-run backfills
+
+With `backfill_policy=dg.BackfillPolicy.single_run()`, one run covers a range of partitions.
+The asset reads the range from `context.partition_keys` and returns one frame for all of it.
+Dagster logs one materialization of the table for each partition in the range.
+The package logs one materialization of the error rows for each partition in the range too.
+Every one of those events has the range's row count under `dagster/partition_row_count`, because the run has no count for a single partition.
+
+The IO manager must write a range in one output.
+`DuckDBPolarsIOManager` does, through the asset's `partition_expr` metadata.
+`PolarsParquetIOManager` raises on an output for more than one partition, so a single-run backfill fails under it whatever `filter` is set to.
+It is a `UPathIOManager`, and the package has not tested the others.
+
 ## A partition with no data
 
 Some partitions have no source data and never will.
