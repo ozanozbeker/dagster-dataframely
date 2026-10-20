@@ -10,8 +10,8 @@ PORT=3000
 BASE=http://localhost:$PORT
 ASSETS="$BASE/assets"
 OUT=../assets/images
-# Where Dagster's left nav ends at every width below. Re-measure it after a Dagster release that
-# moves the nav.
+# Dagster's left nav ends at this offset at every width below.
+# Re-measure it after a Dagster release that moves the nav.
 NAV=480
 
 [ -x "$CHROME" ] || { echo "Chrome not found at $CHROME" >&2; exit 1; }
@@ -44,13 +44,15 @@ set -m
 uv run --no-sync dg dev --port "$PORT" >"$RAW/dg.log" 2>&1 &
 DG=$!
 set +m
-# `|| true`, because the group has usually exited before the KILL, and under `set -e` that failed
-# kill would become the script's exit status.
+# Each kill ends in `|| true`, because the group has usually exited before the KILL, and under
+# `set -e` that failed kill would become the script's exit status.
 trap 'kill -TERM -- -"$DG" 2>/dev/null || true; sleep 3; kill -KILL -- -"$DG" 2>/dev/null || true; rm -rf "$DAGSTER_HOME" "$RAW"' EXIT
 until curl -sfo /dev/null "$BASE/server_info"; do sleep 1; done
 
-# Three silver assets fail on purpose, so a failed run is not an error here. `in_process`, because
-# the default executor starts a Python process per step, which takes about 30s per launch.
+# Three silver assets and the `warehouse_orders` checks fail on purpose, so a failed run is not an
+# error here.
+# The runs use `in_process`, because the default executor starts a Python process per step, which
+# takes about 30s per launch.
 launch() {
   uv run --no-sync dg launch --config-json '{"execution":{"config":{"in_process":{}}}}' "$@" \
     >>"$RAW/launch.log" 2>&1 || true
@@ -80,8 +82,8 @@ launch --assets "key:finance_orders"
 FINANCE_RUN=$(latest_failure)
 launch --assets "key:legacy_orders"
 
-# Without `preferredColorScheme=1`, headless Chrome renders in the macOS appearance, and the
-# screenshots use the light theme. Chrome has no `--force-light-mode` switch.
+# The screenshots use the light theme. Without `preferredColorScheme=1`, headless Chrome renders in
+# the macOS appearance, and Chrome has no `--force-light-mode` switch.
 # name url css_width css_height crop_top crop_height
 shoot() {
   "$CHROME" --headless=new --disable-gpu --hide-scrollbars \
@@ -103,13 +105,14 @@ shoot split-checks             "$ASSETS/warehouse_orders?view=checks"           
 shoot partitions-grid          "$ASSETS/regional_orders?view=partitions&partition=2026-08-01%7Cus" 1600 900 0 1700
 shoot materialization-metadata "$ASSETS/orders?view=events"                        2100 1500    0 2900
 shoot returned-result-metadata "$ASSETS/orders_snapshot?view=events"               2100 1200    0 1750
-# The error-rows keys are below five statistics tables, so this crop starts partway down the page.
+# The `dataframely/error_rows_*` keys are below the statistics tables and the row sample, so this
+# crop starts partway down the page.
 shoot error-rows-by-rules      "$ASSETS/marketing_orders?view=events"              2100 2050 2660  805
 
 # The error messages come from the failed runs, because a check's own page does not show the
 # raised error. Each crop ends above `Stack Trace:`, whose stack frames show local file paths.
 shoot error-column-schema    "$BASE/runs/$PARTNER_RUN?logs=step%3Apartner_orders"  1700 1000 1258  416
-shoot error-validation-abort "$BASE/runs/$FINANCE_RUN"                             1700 1000  945  216
+shoot error-validation-abort "$BASE/runs/$FINANCE_RUN"                             1700 1000  945  238
 
 # The screenshots have far fewer than 256 colours, so a 256-colour palette loses nothing visible.
 # It cuts each file from about 500KB to under 200KB, and check-added-large-files rejects a file
