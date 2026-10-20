@@ -2,6 +2,9 @@
 # the guide's code chunks but does not lint them, so nothing reports an unused import in one.
 extension = { qmd = "markdown" }
 
+# The skills are vendored copies of upstream files, so a repo-wide `ruff format` leaves them alone.
+extend-exclude = [".claude/skills"]
+
 target-version = "py312"
 
 [lint]

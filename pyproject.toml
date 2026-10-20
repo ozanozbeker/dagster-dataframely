@@ -31,8 +31,8 @@ classifiers = [
   "Typing :: Typed",
 ]
 # Each lower bound is the version `uv.lock` resolves, because no test runs an older one.
-# `universal-pathlib` and `duckdb` keep older bounds, because another dependency already
-# requires each. This repo lists them only because it imports them directly.
+# `universal-pathlib` keeps an older bound, because `dagster` already requires it. This package
+# lists `universal-pathlib` only because `src/` imports it.
 dependencies = [
   "dagster>=1.13.24",
   "dataframely>=3.1.2",
@@ -51,6 +51,7 @@ dev = [
   # One subclass each of `UPathIOManager` and `DbIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
   "dagster-duckdb-polars>=0.29.24",
   "dagster-polars>=0.27.12",
+  # An older bound, because `dagster-duckdb` already requires it. The tests import it directly.
   "duckdb>=1.1",
   "prek>=0.5.3",
   "pyrefly>=1.3.1",
