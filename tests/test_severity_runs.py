@@ -25,7 +25,7 @@ from tests.scenario import Yielded, check_evaluations, materialize
 _WARN = {"dagster_dataframely": {"severity": {"max_length": "warn"}}}
 
 
-class Shipments(dy.Schema):
+class ShipmentsSchema(dy.Schema):
     shipment_id = dy.String(primary_key=True)
     weight = dy.Int64(nullable=False, min=1)
     email = dy.String(nullable=False, max_length=10, metadata=_WARN)
@@ -85,7 +85,7 @@ def _drained(
     try:
         yielded.extend(
             stream_results(
-                Shipments,
+                ShipmentsSchema,
                 frame,
                 asset_key=_KEY,
                 error_rows_writer=writer if filtering else None,
@@ -151,7 +151,7 @@ class TestWithoutFilter:
         _, _, error = _drained(_mixed(), filtering=False)
 
         message = str(error)
-        assert "2 rows failed an 'error' rule of Shipments" in message
+        assert "2 rows failed an 'error' rule of ShipmentsSchema" in message
         assert "'weight|min'" in message
         assert "email|max_length" not in message
         assert "`filter=True`" in message
@@ -178,7 +178,7 @@ class TestWithFilter:
         table = _table(yielded)
 
         assert table is not None
-        assert table.columns == list(Shipments.columns())
+        assert table.columns == list(ShipmentsSchema.columns())
 
     def test_the_error_checks_fail_at_error_and_the_run_succeeds(self):
         yielded, _, error = _drained(_mixed(), filtering=True)
@@ -260,7 +260,7 @@ class TestBlockingSpecs:
         self, granularity: dd.Granularity, blocking: set[str]
     ):
         specs = build_asset_check_specs(
-            Shipments, asset=_KEY, check_granularity=granularity
+            ShipmentsSchema, asset=_KEY, check_granularity=granularity
         )
 
         assert _blocking(specs) == blocking
@@ -270,18 +270,20 @@ class TestBlockingSpecs:
         self, granularity: dd.Granularity
     ):
         specs = build_asset_check_specs(
-            Shipments, asset=_KEY, check_granularity=granularity, filter=True
+            ShipmentsSchema, asset=_KEY, check_granularity=granularity, filter=True
         )
 
         assert _blocking(specs) == {"dy_schema__columns"}
 
     @pytest.mark.parametrize("filtering", [False, True])
     def test_the_decorator_passes_filter_to_the_specs(self, filtering: bool):
-        @dd.asset(Shipments, filter=filtering)
+        @dd.asset(ShipmentsSchema, filter=filtering)
         def shipments() -> pl.DataFrame:
             return _clean()
 
-        expected = build_asset_check_specs(Shipments, asset=_KEY, filter=filtering)
+        expected = build_asset_check_specs(
+            ShipmentsSchema, asset=_KEY, filter=filtering
+        )
         assert _blocking(list(shipments.check_specs)) == _blocking(expected)
 
 
@@ -289,7 +291,7 @@ class TestCollapsedCheck:
     def test_a_collapsed_check_warns_when_only_its_warn_rule_failed(
         self, tmp_path: Path
     ):
-        @dd.asset(Shipments, check_granularity="column")
+        @dd.asset(ShipmentsSchema, check_granularity="column")
         def shipments() -> pl.DataFrame:
             return _warn_only()
 
@@ -303,7 +305,7 @@ class TestCollapsedCheck:
     def test_a_collapsed_check_is_an_error_when_its_error_rule_failed(self):
         yielded = list(
             evaluate_checks(
-                Shipments, _mixed(), asset_key=_KEY, check_granularity="column"
+                ShipmentsSchema, _mixed(), asset_key=_KEY, check_granularity="column"
             )
         )
 
@@ -313,7 +315,7 @@ class TestCollapsedCheck:
 
 class TestCheckResults:
     def test_each_result_has_its_rules_severity(self):
-        yielded = list(evaluate_checks(Shipments, _mixed(), asset_key=_KEY))
+        yielded = list(evaluate_checks(ShipmentsSchema, _mixed(), asset_key=_KEY))
 
         assert _failed(yielded) == {
             "dy_rule__weight__min": dg.AssetCheckSeverity.ERROR,
@@ -321,7 +323,7 @@ class TestCheckResults:
         }
 
 
-class WarnOnTheClass(dy.Schema):
+class WarnOnTheClassSchema(dy.Schema):
     shipment_id = dy.String(primary_key=True)
 
     __dagster_dataframely__: ClassVar = {"severity": {"primary_key": "warn"}}
@@ -329,7 +331,7 @@ class WarnOnTheClass(dy.Schema):
 
 def test_a_duplicate_key_declared_warn_is_written():
     frame = pl.DataFrame({"shipment_id": ["A", "A"]})
-    yielded = list(stream_results(WarnOnTheClass, frame, asset_key=_KEY))
+    yielded = list(stream_results(WarnOnTheClassSchema, frame, asset_key=_KEY))
 
     assert _ids(_table(yielded)) == {"A"}
     assert len(_table(yielded)) == 2  # pyrefly: ignore[bad-argument-type]

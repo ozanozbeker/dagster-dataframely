@@ -1,4 +1,6 @@
-from dagster_dataframely import errors, testing, wiring
+"""Attach a Dataframely schema to a Dagster asset: `dd.asset` fills the Columns tab, reports every rule as an asset check and sets what happens to the rows that fail."""
+
+from dagster_dataframely import data, errors, testing, wiring
 from dagster_dataframely._asset import asset
 from dagster_dataframely._collection import build_collection_checks
 from dagster_dataframely._error_rows import build_error_rows_spec
@@ -11,6 +13,7 @@ __all__ = [
     "build_collection_checks",
     "build_error_rows_spec",
     "build_rule_checks",
+    "data",
     "errors",
     "testing",
     "wiring",

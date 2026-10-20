@@ -8,14 +8,14 @@ title: "Partitioning"
 ```{python}
 #| label: setup-partitioning
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 `dd.asset` passes `partitions_def` to `dg.asset` unchanged.
@@ -41,7 +41,7 @@ It has no Dagster asset upstream, so it reads the partition's file itself:
 daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
 
-@dd.asset(Orders, partitions_def=daily)
+@dd.asset(OrdersSchema, partitions_def=daily)
 def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     day = context.partition_key  # "2026-01-02"
     raw = pl.read_parquet(f"raw/orders/{day}.parquet")
@@ -56,7 +56,7 @@ An asset with the same `partitions_def` receives that partition's rows as its pa
 
 ```{python}
 #| label: partitioning-2
-@dd.asset(Orders, partitions_def=daily)
+@dd.asset(OrdersSchema, partitions_def=daily)
 def priority_orders(orders: pl.DataFrame) -> pl.DataFrame:
     # orders is one partition's rows, the same shape unpartitioned code sees
     return orders.filter(pl.col("amount") > 100)
@@ -69,7 +69,7 @@ The IO manager loads every partition and passes a dict keyed by partition key:
 
 ```{python}
 #| label: partitioning-3
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def rollup(orders: dict[str, pl.DataFrame]) -> pl.DataFrame:
     # orders == {
     #     "2026-01-01": pl.DataFrame,   # that day's rows
@@ -85,7 +85,7 @@ A `pl.DataFrame` annotation fails Dagster's type check, and only after the IO ma
 
 ```{python}
 #| label: partitioning-4
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def rollup(orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     # orders == {
     #     "2026-01-01": pl.LazyFrame,   # a scan of that day's file
@@ -111,14 +111,14 @@ grid = dg.MultiPartitionsDefinition({
 })
 
 
-@dd.asset(Orders, partitions_def=grid)
+@dd.asset(OrdersSchema, partitions_def=grid)
 def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     cell = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
     raw = pl.read_parquet(f"raw/orders/{cell['region']}/{cell['day']}.parquet")
     return raw
 
 
-@dd.asset(Orders, partitions_def=grid, filter=True)
+@dd.asset(OrdersSchema, partitions_def=grid, filter=True)
 def priority_orders(
     context: dg.AssetExecutionContext, orders: pl.DataFrame
 ) -> pl.DataFrame:
@@ -149,7 +149,7 @@ It has one entry per partition, keyed by the multi-partition key:
 
 ```{python}
 #| label: partitioning-6
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def eu_orders(orders: dict[dg.MultiPartitionKey, pl.LazyFrame]) -> pl.LazyFrame:
     # orders == {
     #     "2026-01-01|eu": pl.LazyFrame,   # one cell, one scan
@@ -246,12 +246,12 @@ With the spec, every write materializes the error rows, so `dg.AutomationConditi
 
 ```{python}
 #| label: partitioning-9
-@dd.asset(Orders, filter=True)
+@dd.asset(OrdersSchema, filter=True)
 def checked_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-checked_orders__error_rows = dd.build_error_rows_spec(Orders, checked_orders)
+checked_orders__error_rows = dd.build_error_rows_spec(OrdersSchema, checked_orders)
 
 
 @dg.asset(

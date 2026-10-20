@@ -17,12 +17,12 @@ from dagster_dataframely.errors import (
 from tests.scenario import SCHEMA_TAKERS
 
 
-class Reserved(dy.Schema):
+class ReservedSchema(dy.Schema):
     dy_rule = dy.String(nullable=False)
     amount = dy.Int64(min=1)
 
 
-class Colliding(dy.Schema):
+class CollidingSchema(dy.Schema):
     """Two rules that rewrite to `dy_rule__order_id__nullability`."""
 
     order_id = dy.String(nullable=False)
@@ -32,11 +32,11 @@ class Colliding(dy.Schema):
         return cls.order_id.col.is_not_null()
 
 
-class InvalidNames(dy.Schema):
+class InvalidNamesSchema(dy.Schema):
     total = dy.Int64(min=1, alias="Order Total")
 
 
-class Delimited(dy.Schema):
+class DelimitedSchema(dy.Schema):
     total = dy.Int64(min=1, alias="a|b")
 
 
@@ -45,11 +45,11 @@ def test_a_public_function_rejects_a_reserved_column(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(ReservedColumnError) as raised:
-        taker(Reserved)
+        taker(ReservedSchema)
 
     message = str(raised.value)
 
-    assert "Column 'dy_rule' of Reserved uses" in message
+    assert "Column 'dy_rule' of ReservedSchema uses" in message
     assert "Rename it." in message
     assert "amount" not in message
 
@@ -59,7 +59,7 @@ def test_a_public_function_rejects_two_rules_that_rewrite_to_one_check_name(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(CheckNameCollisionError) as raised:
-        taker(Colliding)
+        taker(CollidingSchema)
 
     message = str(raised.value)
 
@@ -73,11 +73,14 @@ def test_a_public_function_rejects_a_column_dagster_cannot_name(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(InvalidColumnNameError) as raised:
-        taker(InvalidNames)
+        taker(InvalidNamesSchema)
 
     message = str(raised.value)
 
-    assert "Column 'Order Total' of InvalidNames contains characters outside" in message
+    assert (
+        "Column 'Order Total' of InvalidNamesSchema contains characters outside"
+        in message
+    )
     assert "A-Za-z0-9_" in message
     assert "`alias=`" in message
 
@@ -88,4 +91,4 @@ def test_a_public_function_rejects_a_column_name_with_the_rule_delimiter(
 ) -> None:
     """`|` is Dataframely's rule delimiter, so `describe_rules` would read `a|b|min` as column `a` and rule `b|min`."""
     with pytest.raises(InvalidColumnNameError):
-        taker(Delimited)
+        taker(DelimitedSchema)

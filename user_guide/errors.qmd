@@ -5,14 +5,14 @@ title: "Errors"
 ```{python}
 #| label: setup-errors
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 Every error this package defines is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
@@ -83,7 +83,7 @@ Both accept an unannotated `context`, which is the only option in that message t
 
 ```{python}
 #| label: errors-1
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(context) -> pl.DataFrame:
     context.log.info("run %s", context.run_id)
     return pl.read_parquet("raw/orders.parquet")
@@ -94,14 +94,14 @@ Without it, Python still defines the schema class and the asset, and raises no e
 The run then fails when this package reads the rule's expression for the check metadata:
 
 ```text
-TypeError: Orders.amount_is_positive() takes 0 positional arguments but 1 was given
+TypeError: OrdersSchema.amount_is_positive() takes 0 positional arguments but 1 was given
 ```
 
 `@dy.rule()` is a classmethod-style decorator, so the body takes `cls`:
 
 ```{python}
 #| label: errors-2
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     status = dy.Enum(["new", "paid", "shipped", "cancelled"], nullable=False)
     amount = dy.Decimal(10, 2, nullable=False)
 

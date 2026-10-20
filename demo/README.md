@@ -4,7 +4,7 @@ An online retailer's pipeline, from bronze to silver to gold, validated by Dataf
 Every code block and screenshot in the repository's README comes from it.
 
 The bronze assets load a customer export and four order feeds, unchanged.
-The silver assets validate each order feed against [`Orders`](src/dagster_dataframely_demo/schema.py).
+The silver assets validate each order feed against `dd.data.OrdersSchema`, the schema the package ships for its examples.
 Three of those feeds have the kinds of errors real feeds have, so some of their rows fail validation.
 `customers` is the smallest silver asset: three columns, validated against a schema declared in the same module.
 It is the README's first example.
@@ -73,11 +73,10 @@ The lineage view draws them with a dashed outline, because they are external ass
 
 | file | what it is |
 | --- | --- |
-| `schema.py` | `Orders`, the schema `dd.asset` validates every order table against. |
-| `defs/silver/customers.py` | `Customers` and its asset sit in one module, which the README copies. |
+| `defs/silver/customers.py` | `CustomersSchema` and its asset sit in one module, which the README copies. |
 | `defs/bronze/`, `defs/silver/`, `defs/gold/` | The pipeline has one folder per layer. Each `defs.yaml` sets the group, so no asset repeats it. |
 | `defs/resources.py` | The IO manager that writes every table. |
-| `_data.py` | The sample data the bronze assets read, in place of real sources. |
+| `_data.py` | The sample data only the demo reads, derived from `dd.data`'s frames. |
 
 A comment that starts with `# demo:` explains the demo, not the pipeline.
 The rest of the code is ordinary pipeline code.
@@ -97,5 +96,5 @@ It needs Google Chrome, and nothing else may listen on port 3000.
 
 Take every screenshot in the same theme, light or dark.
 Record the Dagster version wherever you use the images, because they show Dagster's UI, which can change between releases.
-The rows in the samples are the fake data from `_data.py`.
+The rows in the samples are the fake data from `dd.data` and `_data.py`.
 That is the only reason they are safe to publish.

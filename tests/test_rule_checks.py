@@ -18,7 +18,7 @@ from tests.scenario import WAREHOUSE_SCHEMA, check_evaluations, warehouse
 _WARN = {"dagster_dataframely": {"severity": {"max": "warn"}}}
 
 
-class Events(dy.Schema):
+class EventsSchema(dy.Schema):
     event_id = dy.Int64(primary_key=True)
     amount = dy.Int64(nullable=False, min=0)
     score = dy.Int64(nullable=True, max=10, metadata=_WARN)
@@ -85,13 +85,13 @@ class TestDefinition:
     def test_the_checks_are_the_specs_asset_check_specs_returns(
         self, settings: dict[str, str]
     ):
-        checks = dd.build_rule_checks(Events, asset="events", **settings)  # pyrefly: ignore[bad-argument-type]
-        specs = build_asset_check_specs(Events, asset="events", **settings)  # pyrefly: ignore[bad-argument-type]
+        checks = dd.build_rule_checks(EventsSchema, asset="events", **settings)  # pyrefly: ignore[bad-argument-type]
+        specs = build_asset_check_specs(EventsSchema, asset="events", **settings)  # pyrefly: ignore[bad-argument-type]
 
         assert [spec.key for spec in checks.check_specs] == [spec.key for spec in specs]
 
     def test_the_input_is_a_data_frame(self):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         assert {
             input_def.name: input_def.dagster_type.typing_type
@@ -108,10 +108,10 @@ class TestDefinition:
     def test_the_default_name_is_the_key_with_a_checks_suffix(
         self, asset: str | dg.AssetKey, name: str
     ):
-        assert dd.build_rule_checks(Events, asset=asset).node_def.name == name
+        assert dd.build_rule_checks(EventsSchema, asset=asset).node_def.name == name
 
     def test_a_name_replaces_the_default(self):
-        checks = dd.build_rule_checks(Events, asset=KEY, name="audit")
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY, name="audit")
 
         assert checks.node_def.name == "audit"
 
@@ -123,12 +123,13 @@ class TestDefinition:
 
         dg.Definitions.validate_loadable(
             dg.Definitions(
-                assets=[events], asset_checks=[dd.build_rule_checks(Events, asset=KEY)]
+                assets=[events],
+                asset_checks=[dd.build_rule_checks(EventsSchema, asset=KEY)],
             )
         )
 
     def test_only_an_error_rule_check_is_blocking(self):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         assert {spec.name: spec.blocking for spec in checks.check_specs} == {
             "dy_schema__columns": True,
@@ -142,7 +143,7 @@ class TestDefinition:
     def test_every_spec_has_the_partitions(self):
         daily = dg.DailyPartitionsDefinition("2026-01-01")
 
-        checks = dd.build_rule_checks(Events, asset=KEY, partitions_def=daily)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY, partitions_def=daily)
 
         assert {spec.partitions_def for spec in checks.check_specs} == {daily}
 
@@ -154,7 +155,7 @@ class TestRun:
     def test_the_results_answer_exactly_the_specs(
         self, tmp_path: Path, settings: dict[str, str]
     ):
-        checks = dd.build_rule_checks(Events, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type]
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type]
 
         result = run(checks, lake(tmp_path, CLEAN))
 
@@ -167,7 +168,7 @@ class TestRun:
     ):
         """A run in an environment with another granularity still answers the declared specs."""
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "column")
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "rule")
 
         result = run(checks, lake(tmp_path, CLEAN))
@@ -183,7 +184,7 @@ class TestRun:
     def test_a_failing_error_rule_fails_at_error_and_fails_the_step(
         self, tmp_path: Path
     ):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         result = run(checks, lake(tmp_path, FAILING_ERROR), raise_on_error=False)
 
@@ -194,7 +195,7 @@ class TestRun:
         assert evaluation.metadata["dataframely/failed_row_count"].value == 1
 
     def test_a_failing_warn_rule_only_warns(self, tmp_path: Path):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         result = run(checks, lake(tmp_path, FAILING_WARN))
 
@@ -206,7 +207,7 @@ class TestRun:
     def test_a_run_that_selects_one_check_evaluates_only_that_check(
         self, tmp_path: Path
     ):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
         selected = dg.AssetCheckKey(KEY, "dy_rule__amount__min")
 
         result = run(
@@ -224,7 +225,7 @@ class TestWarehouse:
     def test_an_io_manager_that_loads_only_data_frames_reads_the_table(
         self, tmp_path: Path
     ):
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         result = run(
             checks,
@@ -241,14 +242,14 @@ class TestWarehouse:
         self, tmp_path: Path
     ):
         """SQL `INTEGER` reads back as `Int32`, and the schema declares `Int64`."""
-        checks = dd.build_rule_checks(Events, asset=KEY)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         with pytest.raises(ColumnSchemaError) as raised:
             run(checks, stored(tmp_path, "INTEGER"), spec=dg.AssetSpec(KEY))
 
         assert str(raised.value) == (
-            "Column 'amount' (expected Int64, got Int32) does not match Events. "
-            "Declare the dtype the table stores in Events, or change what writes the table. "
+            "Column 'amount' (expected Int64, got Int32) does not match EventsSchema. "
+            "Declare the dtype the table stores in EventsSchema, or change what writes the table. "
             "This package never casts for you."
         )
 
@@ -263,7 +264,7 @@ class TestPartitions:
         def events(context: dg.AssetExecutionContext) -> pl.DataFrame:
             return CLEAN if context.partition_key == "clean" else FAILING_ERROR
 
-        checks = dd.build_rule_checks(Events, asset=KEY, partitions_def=parts)
+        checks = dd.build_rule_checks(EventsSchema, asset=KEY, partitions_def=parts)
         definitions = dg.Definitions(
             assets=[events],
             asset_checks=[checks],

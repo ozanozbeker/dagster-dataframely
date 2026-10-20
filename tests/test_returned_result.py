@@ -20,7 +20,7 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     clean_orders,
     cooccurring_orders,
     materializations,
@@ -46,7 +46,7 @@ class TestMaterialization:
     """The materialization of an asset that returns a `dg.MaterializeResult` or a bare frame."""
 
     def test_the_returned_metadata_is_merged_into_the_materialization(self):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(), metadata={"source": "stripe", "batch": 7}
@@ -60,7 +60,7 @@ class TestMaterialization:
     def test_a_run_records_the_returned_metadata_beside_the_packages_own(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(), metadata={"source": "stripe"}
@@ -72,7 +72,7 @@ class TestMaterialization:
         assert metadata["dagster/row_count"].value == 3
 
     def test_the_packages_own_key_takes_precedence(self):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(), metadata={"dagster/row_count": 999}
@@ -84,7 +84,7 @@ class TestMaterialization:
         assert called["dagster/row_count"] == 3
 
     def test_a_call_yields_the_returned_data_version_and_tags(self):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(),
@@ -100,7 +100,7 @@ class TestMaterialization:
     def test_a_run_turns_the_returned_data_version_and_tags_into_event_tags(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(),
@@ -116,7 +116,7 @@ class TestMaterialization:
     def test_a_lazy_return_folds_the_same_way(self):
         """`dd.asset` merges a result with a `pl.LazyFrame` value like one with a `pl.DataFrame`."""
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.LazyFrame]:
             return dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
 
@@ -129,7 +129,7 @@ class TestMaterialization:
         self,
         tmp_path: Path,
     ):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=cooccurring_orders(),
@@ -150,7 +150,7 @@ class TestMaterialization:
         assert "run/flavour" not in (recorded[_ERROR_ROWS_KEY].tags or {})
 
     def test_a_bare_frame_has_no_data_version_and_no_tags(self):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> pl.DataFrame:
             return clean_orders()
 
@@ -162,11 +162,11 @@ class TestMaterialization:
     def test_a_bare_frame_and_a_returned_result_match_on_everything_else(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def bare() -> pl.DataFrame:
             return clean_orders()
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def returning_a_result() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(value=clean_orders())
 
@@ -240,7 +240,7 @@ _REJECTED_RETURNS = [
 
 def _orders_asset(fn: Callable[[], object]) -> dg.AssetsDefinition:
     """Declare `fn` as the `orders` asset, the name every message above expects."""
-    return dd.asset(Orders, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
+    return dd.asset(OrdersSchema, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
 
 class TestErrors:
@@ -271,7 +271,7 @@ class TestErrors:
     ):
         """With no valid rows, `with_returned_fields` receives no materialization and lets `NoValidRowsError` propagate."""
 
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=no_valid_orders(), metadata={"source": "stripe"}
@@ -283,7 +283,7 @@ class TestErrors:
     def test_an_abort_with_no_error_rows_still_raises_its_own_error(self):
         """With `filter=False`, failing rows produce no materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=mixed_orders(), metadata={"source": "stripe"}

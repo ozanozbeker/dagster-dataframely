@@ -28,7 +28,7 @@ from dagster_dataframely.wiring import (
     stream_results,
 )
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     Yielded,
     check_evaluations,
     clean_orders,
@@ -47,7 +47,7 @@ def _raw_orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
@@ -116,7 +116,7 @@ class TestReturnAnnotation:
 
         # Set at runtime, because pyrefly reports `bad-return` on either mismatch written in the source.
         fn.__annotations__ = {"return": annotation}
-        asset = dd.asset(Orders, name="orders")(fn)
+        asset = dd.asset(OrdersSchema, name="orders")(fn)
 
         assert materialize(tmp_path, asset).success
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
@@ -132,7 +132,7 @@ class TestContextParameter:
     def test_a_decorated_function_can_take_a_bare_context(self, tmp_path: Path):
         seen: dict[str, str] = {}
 
-        @dd.asset(Orders, name="orders", partitions_def=_DAYS)
+        @dd.asset(OrdersSchema, name="orders", partitions_def=_DAYS)
         # Unannotated, the only form that works with `from __future__ import annotations` in the user's module.
         def orders(context) -> pl.DataFrame:  # pyrefly: ignore[implicit-any-parameter]
             seen["partition"] = context.partition_key
@@ -149,7 +149,7 @@ class TestContextParameter:
     ):
         seen: dict[str, object] = {}
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders(
             context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
         ) -> pl.DataFrame:
@@ -166,7 +166,7 @@ class TestContextParameter:
         """With `filter=True`, a function that declares `context` receives the step's context, not a second one."""
         seen: dict[str, str] = {}
 
-        @dd.asset(Orders, name="orders", filter=True, partitions_def=_DAYS)
+        @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_DAYS)
         def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
             seen["partition"] = context.partition_key
             return mixed_orders()
@@ -190,7 +190,7 @@ class TestSharedName:
         """Their op names differ, because the op name is the step key (#70)."""
 
         def shipments(prefix: str) -> dg.AssetsDefinition:
-            @dd.asset(Orders, key_prefix=prefix, name="shipments")
+            @dd.asset(OrdersSchema, key_prefix=prefix, name="shipments")
             def _shipments() -> pl.DataFrame:
                 return clean_orders()
 
@@ -207,7 +207,7 @@ class TestSharedName:
         )
 
 
-@dd.asset(Orders, name="orders")
+@dd.asset(OrdersSchema, name="orders")
 def _wrong_dtype() -> pl.DataFrame:
     return wrong_dtype_orders()
 
@@ -222,12 +222,12 @@ class TestColumnSchemaMismatch:
         message = str(raised.value)
 
         assert (
-            "Column 'quantity' (expected Int32, got Int64) does not match Orders"
+            "Column 'quantity' (expected Int32, got Int64) does not match OrdersSchema"
             in message
         )
 
     def test_a_missing_column_aborts_too(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def missing_column() -> pl.DataFrame:
             return clean_orders().drop("quantity")
 
@@ -239,7 +239,7 @@ class TestColumnSchemaMismatch:
     def test_the_column_schema_error_reads_as_plural_for_several_columns(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def several() -> pl.DataFrame:
             return (
                 clean_orders()
@@ -253,7 +253,7 @@ class TestColumnSchemaMismatch:
         assert "Columns 'email' (expected String, got <missing>), 'quantity' " in str(
             raised.value
         )
-        assert "do not match Orders" in str(raised.value)
+        assert "do not match OrdersSchema" in str(raised.value)
 
     def test_the_column_schema_check_runs_before_row_filtering(self, tmp_path: Path):
         result = materialize(tmp_path, _wrong_dtype, raise_on_error=False)
@@ -279,7 +279,7 @@ class TestColumnSchemaMismatch:
         ]
 
 
-@dd.asset(Orders, name="orders")
+@dd.asset(OrdersSchema, name="orders")
 def _mixed() -> pl.DataFrame:
     return mixed_orders()
 
@@ -291,7 +291,7 @@ class TestErrorRowsWithoutFilter:
         with pytest.raises(ValidationAbortError) as raised:
             materialize(tmp_path, _mixed)
 
-        assert "3 rows failed an 'error' rule of Orders" in str(raised.value)
+        assert "3 rows failed an 'error' rule of OrdersSchema" in str(raised.value)
         assert "1 by 'amount|min'" in str(raised.value)
         assert "never drops rows for you" in str(raised.value)
         assert "filter=True" in str(raised.value)
@@ -323,15 +323,16 @@ class TestErrorRowsWithoutFilter:
         )
 
     def test_a_frame_with_no_valid_rows_aborts_the_same_way(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def all_invalid() -> pl.DataFrame:
             return no_valid_orders()
 
         with pytest.raises(ValidationAbortError) as raised:
             materialize(tmp_path, all_invalid)
 
-        assert "2 rows failed an 'error' rule of Orders, 2 by 'amount|min'" in str(
-            raised.value
+        assert (
+            "2 rows failed an 'error' rule of OrdersSchema, 2 by 'amount|min'"
+            in str(raised.value)
         )
         assert not list(tmp_path.rglob("*.parquet"))
 
@@ -353,7 +354,7 @@ _GOOD_KEY = dg.AssetKey(["orders"])
 _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
-@dd.asset(Orders, name="orders", filter=True)
+@dd.asset(OrdersSchema, name="orders", filter=True)
 def _filtered() -> pl.DataFrame:
     return mixed_orders()
 
@@ -387,7 +388,7 @@ class TestFilterWithValidRows:
     def test_an_upstream_and_a_error_rows_leave_the_graph_alone(self, tmp_path: Path):
         """Error rows add no step: the asset's own step writes them and logs their materialization."""
 
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
             return mixed_orders()
 
@@ -435,7 +436,7 @@ class TestFilterWithValidRows:
         self, tmp_path: Path
     ):
         evaluations = check_evaluations(materialize(tmp_path, _filtered))
-        direct = evaluate_checks(Orders, mixed_orders(), asset_key=_GOOD_KEY)
+        direct = evaluate_checks(OrdersSchema, mixed_orders(), asset_key=_GOOD_KEY)
 
         assert {name: e.description for name, e in evaluations.items()} == {
             result.check_name: result.description for result in direct
@@ -465,8 +466,12 @@ class TestFilterWithValidRows:
         ]
         checks = {spec.name for spec in _filtered.check_specs} - {"dy_schema__columns"}
 
-        assert error_rows.columns[: len(Orders.columns())] == list(Orders.columns())
-        assert set(error_rows.columns) == set(Orders.columns()) | set(get_rule_columns)
+        assert error_rows.columns[: len(OrdersSchema.columns())] == list(
+            OrdersSchema.columns()
+        )
+        assert set(error_rows.columns) == set(OrdersSchema.columns()) | set(
+            get_rule_columns
+        )
         # A rule column has the name of its rule's check.
         assert set(get_rule_columns) == checks
 
@@ -497,7 +502,7 @@ class TestFilterWithValidRows:
     def test_the_materialization_tabulates_the_rules_that_failed_together(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def cooccurring() -> pl.DataFrame:
             return cooccurring_orders()
 
@@ -531,7 +536,7 @@ class TestFilterWithValidRows:
             )
         )
 
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def repeated() -> pl.DataFrame:
             return pl.concat([mixed_orders(), duplicate_break])
 
@@ -546,7 +551,7 @@ class TestFilterWithValidRows:
         ]
 
 
-@dd.asset(Orders, name="orders", filter=True)
+@dd.asset(OrdersSchema, name="orders", filter=True)
 def _no_valid_rows() -> pl.DataFrame:
     return no_valid_orders()
 
@@ -568,7 +573,7 @@ class TestFilterWithNoValidRows:
     def test_no_valid_rows_leaves_the_last_known_good_table_intact(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def spotless() -> pl.DataFrame:
             return clean_orders()
 
@@ -581,7 +586,7 @@ class TestFilterWithNoValidRows:
         with pytest.raises(NoValidRowsError) as raised:
             materialize(tmp_path, _no_valid_rows)
 
-        assert "All 2 rows failed an 'error' rule of Orders" in str(raised.value)
+        assert "All 2 rows failed an 'error' rule of OrdersSchema" in str(raised.value)
         assert "2 by 'amount|min'" in str(raised.value)
         assert "orders__error_rows" in str(raised.value)
 
@@ -605,12 +610,12 @@ class TestFilterWithNoValidRows:
         )
 
 
-@dd.asset(Orders, name="orders")
+@dd.asset(OrdersSchema, name="orders")
 def _skipping() -> pl.DataFrame | None:
     return None
 
 
-@dd.asset(Orders, name="orders", filter=True)
+@dd.asset(OrdersSchema, name="orders", filter=True)
 def _skipping_with_error_rows() -> pl.DataFrame | None:
     return None
 
@@ -644,7 +649,7 @@ class TestSkip:
     ):
         """A skip yields a result for every check the asset declares, at every granularity."""
 
-        @dd.asset(Orders, name="orders", check_granularity=granularity)
+        @dd.asset(OrdersSchema, name="orders", check_granularity=granularity)
         def skipping() -> pl.DataFrame | None:
             return None
 
@@ -662,13 +667,13 @@ class TestSkip:
         @dg.asset(
             name="orders",
             output_required=False,
-            metadata=get_column_schema_metadata(Orders),
-            check_specs=build_asset_check_specs(Orders, asset="orders"),
+            metadata=get_column_schema_metadata(OrdersSchema),
+            check_specs=build_asset_check_specs(OrdersSchema, asset="orders"),
         )
         def orders_by_hand(
             context: dg.AssetExecutionContext,
         ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-            yield from stream_results(Orders, None, asset_key=context.asset_key)
+            yield from stream_results(OrdersSchema, None, asset_key=context.asset_key)
 
         result = materialize(tmp_path, orders_by_hand)
 
@@ -692,11 +697,11 @@ def _both_ways(
 ) -> tuple[dg.AssetsDefinition, dg.AssetsDefinition]:
     """Declare the same asset twice, with an eager and a lazy return."""
 
-    @dd.asset(Orders, name="orders", filter=filtering)
+    @dd.asset(OrdersSchema, name="orders", filter=filtering)
     def eager() -> pl.DataFrame:
         return frame()
 
-    @dd.asset(Orders, name="orders", filter=filtering)
+    @dd.asset(OrdersSchema, name="orders", filter=filtering)
     def lazy() -> pl.LazyFrame:
         return frame().lazy()
 
@@ -740,7 +745,7 @@ class TestLazyReturn:
     def test_a_lazy_return_executes_its_plan_once(self, tmp_path: Path):
         plan, seen = _pluralize(clean_orders())
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def lazy() -> pl.LazyFrame:
             return plan
 
@@ -752,7 +757,7 @@ class TestLazyReturn:
     ):
         plan, seen = _pluralize(wrong_dtype_orders())
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def lazy() -> pl.LazyFrame:
             return plan
 
@@ -761,7 +766,7 @@ class TestLazyReturn:
         assert seen == []
 
 
-@dd.asset(Orders, name="orders", filter=True, check_granularity="column")
+@dd.asset(OrdersSchema, name="orders", filter=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
@@ -825,7 +830,7 @@ class TestCollapsedChecks:
     def test_a_clean_run_passes_every_collapsed_check(self, tmp_path: Path):
         """A collapsed check reports 0 for each rule on a clean run, instead of omitting the count."""
 
-        @dd.asset(Orders, name="orders", check_granularity="column")
+        @dd.asset(OrdersSchema, name="orders", check_granularity="column")
         def spotless() -> pl.DataFrame:
             return clean_orders()
 
@@ -878,23 +883,27 @@ class TestColumnSchema:
     ):
         """`PolarsParquetIOManager` writes a column schema without constraints, and the package writes the schema's over it."""
 
-        @dd.asset(Orders, name="orders", filter=filtering)
+        @dd.asset(OrdersSchema, name="orders", filter=filtering)
         def orders() -> pl.DataFrame:
             return clean_orders()
 
-        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(Orders)
+        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(
+            OrdersSchema
+        )
 
     def test_the_schemas_column_schema_replaces_one_the_function_adds(
         self, tmp_path: Path
     ):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
             context.add_asset_metadata({
                 "dagster/column_schema": dg.TableSchema(columns=[])
             })
             return clean_orders()
 
-        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(Orders)
+        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(
+            OrdersSchema
+        )
 
 
 _ADDRESS = "orders__error_rows"
@@ -916,7 +925,7 @@ def _drained(
 
     yielded: Yielded = []
     results = stream_results(
-        Orders,
+        OrdersSchema,
         frame,
         asset_key=_GOOD_KEY,
         error_rows_writer=writer if filtering else None,
@@ -1016,7 +1025,7 @@ class TestOutcomeSelection:
         assert isinstance(sample, dg.TableMetadataValue)
 
         bounded = stream_results(
-            Orders,
+            OrdersSchema,
             mixed_orders(),
             asset_key=_GOOD_KEY,
             error_rows_writer=lambda _: _ADDRESS,
@@ -1074,7 +1083,7 @@ class TestOutcomeSelection:
         assert _checks(yielded)
 
     def test_severity_follows_the_rule_rather_than_the_runs_outcome(self):
-        """The same failing checks are `ERROR` with and without `filter`, because every rule of `Orders` is `"error"`."""
+        """The same failing checks are `ERROR` with and without `filter`, because every rule of `OrdersSchema` is `"error"`."""
         check_and_filter, _, _ = _drained(mixed_orders(), filtering=True)
         aborted, _, _ = _drained(mixed_orders(), filtering=False)
 

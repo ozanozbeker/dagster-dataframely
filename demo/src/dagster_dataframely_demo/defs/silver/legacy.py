@@ -3,14 +3,14 @@
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 
 
-@dd.asset(Orders, filter=True)
+@dd.asset(OrdersSchema, filter=True)
 def legacy_orders(raw_legacy_orders: pl.DataFrame) -> pl.DataFrame:
     """Migrate the old platform's order lines, and write the lines that fail an `"error"` rule to the error rows."""
     # demo: every legacy amount is negative, so no row is valid and the run fails.
     return raw_legacy_orders
 
 
-legacy_orders__error_rows = dd.build_error_rows_spec(Orders, legacy_orders)
+legacy_orders__error_rows = dd.build_error_rows_spec(OrdersSchema, legacy_orders)

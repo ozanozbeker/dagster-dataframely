@@ -16,7 +16,7 @@ from polars.testing import assert_frame_equal
 import dagster_dataframely as dd
 from dagster_dataframely.wiring import get_table_schema, stream_results
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     check_evaluations,
     clean_orders,
     materializations,
@@ -35,7 +35,7 @@ _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 _AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
 
 
-@dd.asset(Orders, name="orders", filter=True, partitions_def=_PARTITIONS)
+@dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_PARTITIONS)
 def _orders() -> pl.DataFrame:
     # `.get()` instead of a `context` parameter, so the suite also covers the accessor.
     return _FRAMES[dg.AssetExecutionContext.get().partition_key]()
@@ -55,7 +55,7 @@ def _partitions(result: dg.ExecuteInProcessResult) -> dict[dg.AssetKey, str | No
     return {key: m.partition for key, m in materializations(result).items()}
 
 
-class _Days(dy.Schema):
+class _DaysSchema(dy.Schema):
     day = dy.String()
     amount = dy.Int64(min=0)
 
@@ -64,7 +64,7 @@ _DAILY_ERROR_ROWS_KEY = dg.AssetKey(["daily__error_rows"])
 
 
 @dd.asset(
-    _Days,
+    _DaysSchema,
     name="daily",
     filter=True,
     partitions_def=dg.DailyPartitionsDefinition(start_date="2026-01-01"),
@@ -108,7 +108,7 @@ class TestPartitionRuns:
         result = materialize(tmp_path, _orders, partition_key="clean")
         metadata = materializations(result)[_GOOD_KEY].metadata
 
-        assert metadata["dagster/column_schema"].value == get_table_schema(Orders)
+        assert metadata["dagster/column_schema"].value == get_table_schema(OrdersSchema)
 
     def test_the_error_rows_is_written_under_the_partition_that_produced_it(
         self, tmp_path: Path
@@ -127,7 +127,7 @@ class TestPartitionRuns:
         days = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 
         def orders(frame: Callable[[], pl.DataFrame]) -> dg.AssetsDefinition:
-            @dd.asset(Orders, name="orders", filter=True, partitions_def=days)
+            @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=days)
             def orders() -> pl.DataFrame:
                 return frame()
 
@@ -227,7 +227,7 @@ class TestPartitionRuns:
         """Dagster updates the planned row in place, because the planned row and the result have the same partition."""
         daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
-        @dd.asset(Orders, name="daily_orders", partitions_def=daily)
+        @dd.asset(OrdersSchema, name="daily_orders", partitions_def=daily)
         def daily_orders() -> pl.DataFrame:
             return clean_orders()
 
@@ -250,7 +250,7 @@ class TestPartitionRuns:
         """`UPathIOManager` raises on a partition range, before it writes anything."""
 
         @dd.asset(
-            Orders,
+            OrdersSchema,
             name="ranged",
             partitions_def=_PARTITIONS,
             backfill_policy=dg.BackfillPolicy.single_run(),
@@ -308,7 +308,7 @@ class TestPartitionRuns:
         assert all("dagster/row_count" not in event.metadata for event in events)
 
 
-@dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)
+@dd.asset(OrdersSchema, name="orders", partitions_def=_PARTITIONS)
 def _pluralize() -> pl.DataFrame:
     return clean_orders()
 
@@ -324,7 +324,7 @@ class TestRowCount:
         assert "dagster/row_count" not in metadata
 
     def test_the_package_replaces_only_a_returned_partition_row_count(self):
-        @dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)
+        @dd.asset(OrdersSchema, name="orders", partitions_def=_PARTITIONS)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
             return dg.MaterializeResult(
                 value=clean_orders(),
@@ -352,7 +352,10 @@ class TestRowCount:
         (materialization,) = [
             r
             for r in stream_results(
-                Orders, clean_orders(), asset_key=_GOOD_KEY, partitioned=partitioned
+                OrdersSchema,
+                clean_orders(),
+                asset_key=_GOOD_KEY,
+                partitioned=partitioned,
             )
             if isinstance(r, dg.MaterializeResult)
         ]
@@ -371,7 +374,7 @@ _DEPARTED = dg.MultiPartitionKey({"month": "2026-02", "distributor": "departed"}
 _REPORTS_KEY = dg.AssetKey(["reports"])
 
 
-@dd.asset(Orders, name="reports", partitions_def=_MULTI_PARTITIONS)
+@dd.asset(OrdersSchema, name="reports", partitions_def=_MULTI_PARTITIONS)
 def _reports() -> pl.DataFrame | None:
     keys = dg.AssetExecutionContext.get().partition_key.keys_by_dimension
     if keys == {"month": "2026-02", "distributor": "departed"}:

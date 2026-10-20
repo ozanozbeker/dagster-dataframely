@@ -6,24 +6,24 @@ import dagster as dg
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 
 WAREHOUSE_ORDERS = dg.AssetKey(["warehouse_orders"])
 
 
-@dg.asset(metadata=dd.wiring.get_column_schema_metadata(Orders))
+@dg.asset(metadata=dd.wiring.get_column_schema_metadata(OrdersSchema))
 def warehouse_orders(raw_marketplace_orders: pl.LazyFrame) -> pl.LazyFrame:
     """Load the marketplace feed into the warehouse without validating it first."""
     return raw_marketplace_orders
 
 
 @dg.multi_asset_check(
-    specs=dd.wiring.build_asset_check_specs(Orders, asset=WAREHOUSE_ORDERS)
+    specs=dd.wiring.build_asset_check_specs(OrdersSchema, asset=WAREHOUSE_ORDERS)
 )
 def warehouse_orders_checks(
     warehouse_orders: pl.LazyFrame,
 ) -> Iterator[dg.AssetCheckResult]:
     """Check the written `warehouse_orders` table. A failing `"error"` rule's check is blocking, so assets downstream do not run."""
     yield from dd.wiring.evaluate_checks(
-        Orders, warehouse_orders, asset_key=WAREHOUSE_ORDERS
+        OrdersSchema, warehouse_orders, asset_key=WAREHOUSE_ORDERS
     )

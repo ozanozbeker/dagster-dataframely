@@ -5,14 +5,14 @@ title: "Settings"
 ```{python}
 #| label: setup-settings
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 This package resolves each setting from three sources, each overriding the one before: the package default, then an environment variable, then the argument to `dd.asset`.
@@ -56,12 +56,12 @@ from functools import partial
 audited = partial(dd.asset, filter=True, max_failure_examples=10)
 
 
-@audited(Orders)
+@audited(OrdersSchema)
 def marketing_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-@audited(Orders, filter=False)
+@audited(OrdersSchema, filter=False)
 def finance_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```
@@ -127,7 +127,7 @@ Per asset:
 
 ```{python}
 #| label: settings-1
-@dd.asset(Orders, max_failure_examples=0, row_sample=0)
+@dd.asset(OrdersSchema, max_failure_examples=0, row_sample=0)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```

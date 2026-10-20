@@ -15,7 +15,7 @@ import pytest
 import dagster_dataframely as dd
 from dagster_dataframely.errors import InvalidSettingError
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     check_evaluations,
     clean_orders,
     materializations,
@@ -52,7 +52,7 @@ def _invalid_orders(invalid: int) -> pl.DataFrame:
     )
 
 
-@dd.asset(Orders, name="orders")
+@dd.asset(OrdersSchema, name="orders")
 def _clean() -> pl.DataFrame:
     return clean_orders()
 
@@ -68,7 +68,7 @@ class TestMaterializationSamples:
         assert [row["email"] for row in sampled] == clean_orders()["email"].to_list()
 
     def test_the_row_sample_is_bounded(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def wide() -> pl.DataFrame:
             return _many_orders(_DEFAULT * 2)
 
@@ -81,7 +81,7 @@ class TestMaterializationSamples:
     ):
         """The head is the only sample a re-read of the same data reproduces."""
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def wide() -> pl.DataFrame:
             return _many_orders(_DEFAULT * 2)
 
@@ -95,14 +95,14 @@ class TestMaterializationSamples:
 
         assert [
             list(record) for record in records(metadata["dataframely/table_sample"])
-        ] == [list(Orders.columns())] * 3
+        ] == [list(OrdersSchema.columns())] * 3
 
     def test_a_row_sample_of_zero_leaves_the_key_absent_rather_than_empty(
         self, tmp_path: Path
     ):
         """An empty table would look like a run that wrote no rows."""
 
-        @dd.asset(Orders, name="orders", row_sample=0)
+        @dd.asset(OrdersSchema, name="orders", row_sample=0)
         def unsampled() -> pl.DataFrame:
             return clean_orders()
 
@@ -115,7 +115,7 @@ class TestMaterializationSamples:
     def test_a_frame_with_no_rows_materializes_without_a_sample(self, tmp_path: Path):
         """Dagster raises on a table value with no records and no schema, so an empty sample would fail the run."""
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def nothing_today() -> pl.DataFrame:
             return clean_orders().head(0)
 
@@ -130,7 +130,7 @@ class TestMaterializationSamples:
     ):
         monkeypatch.setenv(_ROW_SAMPLE_ENV, "1")
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def orders() -> pl.DataFrame:
             return clean_orders()
 
@@ -156,7 +156,7 @@ class TestMaterializationSamples:
         self,
         tmp_path: Path,
     ):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def with_error_rows() -> pl.DataFrame:
             return mixed_orders()
 
@@ -168,7 +168,7 @@ class TestMaterializationSamples:
         assert len(records(metadata["dataframely/error_rows_sample"])) == 3
 
     def test_the_invalid_sample_is_bounded_by_the_same_setting(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", filter=True, row_sample=1)
+        @dd.asset(OrdersSchema, name="orders", filter=True, row_sample=1)
         def bounded() -> pl.DataFrame:
             return mixed_orders()
 
@@ -178,7 +178,7 @@ class TestMaterializationSamples:
         assert len(records(metadata["dataframely/error_rows_sample"])) == 1
 
     def test_an_invalid_sample_has_the_rule_columns(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def with_error_rows() -> pl.DataFrame:
             return mixed_orders()
 
@@ -187,16 +187,18 @@ class TestMaterializationSamples:
         ].metadata
         (first, *_) = records(metadata["dataframely/error_rows_sample"])
 
-        assert list(first)[: len(Orders.columns())] == list(Orders.columns())
+        assert list(first)[: len(OrdersSchema.columns())] == list(
+            OrdersSchema.columns()
+        )
         assert any(name.startswith("dy_rule__") for name in first)
 
 
-@dd.asset(Orders, name="orders", filter=True)
+@dd.asset(OrdersSchema, name="orders", filter=True)
 def _with_error_rows() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dd.asset(Orders, name="orders", filter=True, check_granularity="column")
+@dd.asset(OrdersSchema, name="orders", filter=True, check_granularity="column")
 def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
@@ -224,7 +226,7 @@ class TestFailureSamples:
             ]
         )
 
-        assert list(sampled[0]) == list(Orders.columns())
+        assert list(sampled[0]) == list(OrdersSchema.columns())
 
     def test_a_passing_check_has_no_sample(self, tmp_path: Path):
         result = materialize(tmp_path, _with_error_rows)
@@ -234,7 +236,7 @@ class TestFailureSamples:
         assert {"dataframely/rule", "dataframely/rule_expr"} <= set(metadata)
 
     def test_the_failure_sample_is_bounded(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def many_invalid() -> pl.DataFrame:
             return _invalid_orders(_DEFAULT * 2)
 
@@ -249,7 +251,7 @@ class TestFailureSamples:
         tmp_path: Path,
     ):
         @dd.asset(
-            Orders,
+            OrdersSchema,
             name="orders",
             filter=True,
             max_failure_examples=0,
@@ -268,7 +270,7 @@ class TestFailureSamples:
     ):
         monkeypatch.setenv(_FAILURE_EXAMPLES_ENV, "0")
 
-        @dd.asset(Orders, name="orders", filter=True)
+        @dd.asset(OrdersSchema, name="orders", filter=True)
         def orders() -> pl.DataFrame:
             return mixed_orders()
 
@@ -282,7 +284,7 @@ class TestFailureSamples:
     def test_an_aborting_run_still_samples_what_failed(self, tmp_path: Path):
         """The run writes nothing, so the check's sample is the only record of the invalid rows."""
 
-        @dd.asset(Orders, name="orders")
+        @dd.asset(OrdersSchema, name="orders")
         def aborting() -> pl.DataFrame:
             return mixed_orders()
 
@@ -308,7 +310,7 @@ class TestFailureSamples:
         )
 
         assert [row["dy_rule"] for row in sampled] == ["amount|min"]
-        assert list(sampled[0]) == ["dy_rule", *Orders.columns()]
+        assert list(sampled[0]) == ["dy_rule", *OrdersSchema.columns()]
 
     def test_a_schema_level_rule_keeps_its_own_sample_at_column_granularity(
         self, tmp_path: Path
@@ -329,7 +331,7 @@ class TestSampleSettings:
     """The two sample settings, read separately from `statistics`."""
 
     def test_turning_the_statistics_off_leaves_both_samples_on(self, tmp_path: Path):
-        @dd.asset(Orders, name="orders", filter=True, statistics=False)
+        @dd.asset(OrdersSchema, name="orders", filter=True, statistics=False)
         def without_statistics() -> pl.DataFrame:
             return mixed_orders()
 
@@ -347,7 +349,7 @@ class TestSampleSettings:
 
     def test_turning_both_samples_off_leaves_the_statistics_on(self, tmp_path: Path):
         @dd.asset(
-            Orders,
+            OrdersSchema,
             name="orders",
             filter=True,
             row_sample=0,
@@ -371,7 +373,7 @@ class TestSampleSettings:
 
         with pytest.raises(InvalidSettingError) as raised:
 
-            @dd.asset(Orders, name="misconfigured", row_sample=wrong)
+            @dd.asset(OrdersSchema, name="misconfigured", row_sample=wrong)
             def _misconfigured() -> pl.DataFrame:
                 return pl.DataFrame()
 

@@ -17,12 +17,12 @@ from dagster_dataframely.errors import (
 from tests.scenario import records, storage
 
 
-class Customers(dy.Schema):
+class CustomersSchema(dy.Schema):
     customer_id = dy.Int64(primary_key=True)
     name = dy.String()
 
 
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     order_id = dy.Int64(primary_key=True)
     customer_id = dy.Int64()
 
@@ -30,9 +30,9 @@ class Orders(dy.Schema):
 class Shop(dy.Collection):
     """A foreign key: `orders.customer_id` references `customers.customer_id`."""
 
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -41,11 +41,11 @@ class Shop(dy.Collection):
         return self.orders.join(self.customers, on="customer_id", how="semi")
 
 
-class Invoices(dy.Schema):
+class InvoicesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
 
 
-class InvoiceLines(dy.Schema):
+class InvoiceLinesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
     line = dy.Int64(primary_key=True)
 
@@ -56,27 +56,27 @@ class InvoiceBook(dy.Collection):
     # Unannotated, because Dataframely raises for a Collection annotation that is not a frame.
     __dagster_dataframely__ = {"severity": {"invoice_has_lines": "warn"}}  # noqa: RUF012
 
-    invoices: dy.DataFrame[Invoices]
-    lines: dy.DataFrame[InvoiceLines]
+    invoices: dy.DataFrame[InvoicesSchema]
+    lines: dy.DataFrame[InvoiceLinesSchema]
 
     @dy.filter()
     def invoice_has_lines(self) -> pl.LazyFrame:
         return self.invoices.join(self.lines, on="invoice_id", how="semi").lazy()
 
 
-class Promos(dy.Schema):
+class PromosSchema(dy.Schema):
     customer_id = dy.Int64(primary_key=True)
 
 
 class ShopWithPromos(dy.Collection):
     """`Shop` plus an optional member."""
 
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
     promos: Annotated[
-        dy.LazyFrame[Promos] | None, dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[PromosSchema] | None, dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -95,11 +95,11 @@ INVOICE_MEMBERS = {
 def shop_assets(orders_rows: dict[str, list[int]]) -> list[dg.AssetsDefinition]:
     """Return the two member assets of `Shop`, with the orders given, and their checks."""
 
-    @dd.asset(Customers)
+    @dd.asset(CustomersSchema)
     def customers() -> pl.DataFrame:
         return pl.DataFrame({"customer_id": [1, 2], "name": ["Ada", "Bo"]})
 
-    @dd.asset(Orders)
+    @dd.asset(OrdersSchema)
     def orders() -> pl.DataFrame:
         return pl.DataFrame(orders_rows)
 
@@ -244,9 +244,9 @@ class TestCallErrors:
 
     def test_a_propagating_member_raises(self):
         class Propagating(dy.Collection):
-            invoices: dy.DataFrame[Invoices]
+            invoices: dy.DataFrame[InvoicesSchema]
             lines: Annotated[
-                dy.DataFrame[InvoiceLines],
+                dy.DataFrame[InvoiceLinesSchema],
                 dy.CollectionMember(propagate_row_failures=True),
             ]
 
@@ -263,9 +263,9 @@ class TestCallErrors:
 
     def test_an_ignored_propagating_member_does_not_raise(self):
         class IgnoredPropagating(dy.Collection):
-            invoices: dy.DataFrame[Invoices]
+            invoices: dy.DataFrame[InvoicesSchema]
             lines: Annotated[
-                dy.DataFrame[InvoiceLines],
+                dy.DataFrame[InvoiceLinesSchema],
                 dy.CollectionMember(
                     ignored_in_filters=True, propagate_row_failures=True
                 ),
@@ -280,9 +280,9 @@ class TestCallErrors:
 
     def test_a_propagating_optional_member_left_out_does_not_raise(self):
         class OptionalPropagating(dy.Collection):
-            invoices: dy.DataFrame[Invoices]
+            invoices: dy.DataFrame[InvoicesSchema]
             lines: Annotated[
-                dy.DataFrame[InvoiceLines] | None,
+                dy.DataFrame[InvoiceLinesSchema] | None,
                 dy.CollectionMember(propagate_row_failures=True),
             ]
 
@@ -296,8 +296,8 @@ class TestCallErrors:
         class Misdeclared(dy.Collection):
             __dagster_dataframely__ = {"severity": {"invoice_has_line": "warn"}}  # noqa: RUF012
 
-            invoices: dy.DataFrame[Invoices]
-            lines: dy.DataFrame[InvoiceLines]
+            invoices: dy.DataFrame[InvoicesSchema]
+            lines: dy.DataFrame[InvoiceLinesSchema]
 
             @dy.filter()
             def invoice_has_lines(self) -> pl.LazyFrame:
@@ -377,11 +377,11 @@ class TestRun:
         }
 
     def test_one_member_runs_alone_and_evaluates_only_its_checks(self, tmp_path: Path):
-        @dd.asset(Invoices)
+        @dd.asset(InvoicesSchema)
         def invoices() -> pl.DataFrame:
             return pl.DataFrame({"invoice_id": [1, 2]})
 
-        @dd.asset(InvoiceLines)
+        @dd.asset(InvoiceLinesSchema)
         def invoice_lines() -> pl.DataFrame:
             return pl.DataFrame({"invoice_id": [1], "line": [1]})
 

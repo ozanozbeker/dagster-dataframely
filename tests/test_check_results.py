@@ -21,7 +21,7 @@ from dagster_dataframely.wiring import (
     get_column_schema_metadata,
 )
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     clean_orders,
     mixed_orders,
     no_valid_orders,
@@ -38,7 +38,7 @@ COLUMN_SCHEMA = "dy_schema__columns"
 
 _FAILURE_EXAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
 
-_RULE_ORDER = list(describe_rules(Orders).values())
+_RULE_ORDER = list(describe_rules(OrdersSchema).values())
 """Read with `describe_rules`, not `_build_rule_sets`, which builds both the specs and the results."""
 
 _COLUMNS_WITH_RULES = list(
@@ -57,7 +57,7 @@ def _results(
 ) -> list[dg.AssetCheckResult]:
     return list(
         evaluate_checks(
-            Orders,
+            OrdersSchema,
             frame,
             asset_key=KEY,
             **settings,  # pyrefly: ignore[bad-argument-type]
@@ -83,7 +83,7 @@ def _before_the_raise(frame: pl.DataFrame) -> list[dg.AssetCheckResult]:
     """Return the results yielded before `ColumnSchemaError`, which `list()` would discard."""
     results: list[dg.AssetCheckResult] = []
     with pytest.raises(ColumnSchemaError):
-        results.extend(evaluate_checks(Orders, frame, asset_key=KEY))
+        results.extend(evaluate_checks(OrdersSchema, frame, asset_key=KEY))
     return results
 
 
@@ -97,7 +97,7 @@ class TestDirectCall:
     ):
         """The specs and the results name the same checks, in the schema's rule order."""
         specs = build_asset_check_specs(
-            Orders, asset=KEY, check_granularity=granularity
+            OrdersSchema, asset=KEY, check_granularity=granularity
         )
         results = _results(mixed_orders(), check_granularity=granularity)
         expected = [COLUMN_SCHEMA, *_CHECKS[granularity]]
@@ -121,10 +121,12 @@ class TestDirectCall:
         )
 
     def test_a_schema_with_no_rules_yields_only_the_column_schema_result(self):
-        class Blob(dy.Schema):
+        class BlobSchema(dy.Schema):
             payload = dy.String(nullable=True)
 
-        results = list(evaluate_checks(Blob, Blob.create_empty(), asset_key=KEY))
+        results = list(
+            evaluate_checks(BlobSchema, BlobSchema.create_empty(), asset_key=KEY)
+        )
 
         assert [result.check_name for result in results] == [COLUMN_SCHEMA]
         assert results[0].passed
@@ -152,7 +154,7 @@ class TestDirectCall:
         """`evaluate_checks` writes no rows, so it raises neither `ValidationAbortError` nor `NoValidRowsError`."""
         results = _results(frame())
 
-        assert len(results) == len(build_asset_check_specs(Orders, asset=KEY))
+        assert len(results) == len(build_asset_check_specs(OrdersSchema, asset=KEY))
 
     def test_no_valid_rows_is_not_a_special_case(self):
         results = _results(no_valid_orders())
@@ -235,14 +237,14 @@ class TestDescription:
         assert _descriptions(clean_orders())[COLUMN_SCHEMA] == "Every column matches."
 
 
-@dg.asset(name="orders", metadata=get_column_schema_metadata(Orders))
+@dg.asset(name="orders", metadata=get_column_schema_metadata(OrdersSchema))
 def _orders() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dg.multi_asset_check(specs=build_asset_check_specs(Orders, asset=KEY))
+@dg.multi_asset_check(specs=build_asset_check_specs(OrdersSchema, asset=KEY))
 def _orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
-    yield from evaluate_checks(Orders, orders, asset_key=KEY)
+    yield from evaluate_checks(OrdersSchema, orders, asset_key=KEY)
 
 
 class TestHandWiringExample:
@@ -255,7 +257,7 @@ class TestHandWiringExample:
         evaluations = {e.check_name: e for e in result.get_asset_check_evaluations()}
 
         assert set(evaluations) == {
-            spec.name for spec in build_asset_check_specs(Orders, asset=KEY)
+            spec.name for spec in build_asset_check_specs(OrdersSchema, asset=KEY)
         }
         assert not evaluations["dy_rule__amount__min"].passed
         assert evaluations["dy_rule__amount__min"].severity == ERROR

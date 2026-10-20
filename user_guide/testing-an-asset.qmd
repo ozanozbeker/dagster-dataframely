@@ -5,15 +5,15 @@ title: "Testing an asset"
 ```{python}
 #| label: setup-testing-an-asset
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
-from dagster_dataframely_demo._data import marketplace_orders, storefront_orders
+from dagster_dataframely.data import OrdersSchema
+from dagster_dataframely.data import marketplace_orders, storefront_orders
 
 
 from pathlib import Path
@@ -21,7 +21,7 @@ from pathlib import Path
 daily = dg.DailyPartitionsDefinition(start_date="2026-01-01")
 
 Path("raw/orders").mkdir(parents=True, exist_ok=True)
-storefront_orders().write_parquet("raw/orders/2026-01-02.parquet")
+storefront_orders.write_parquet("raw/orders/2026-01-02.parquet")
 ```
 
 To test an asset, call it.
@@ -41,14 +41,14 @@ def error_rows_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-@dd.asset(Orders, filter=True)
+@dd.asset(OrdersSchema, filter=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
 def test_orders_filters_the_failing_lines(error_rows_dir):
     result = dd.testing.DirectInvocationResult.from_invocation(
-        orders(dg.build_asset_context(), marketplace_orders())
+        orders(dg.build_asset_context(), marketplace_orders)
     )
 
     assert result.materialization is not None
@@ -99,12 +99,12 @@ An asset without `filter=True` needs neither the context nor the directory:
 
 ```{python}
 #| label: testing-an-asset-2
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-clean = storefront_orders()
+clean = storefront_orders
 result = dd.testing.DirectInvocationResult.from_invocation(plain_orders(clean))
 ```
 
@@ -117,7 +117,7 @@ A partitioned root asset has no upstream inputs, so its call passes only a conte
 
 ```{python}
 #| label: testing-an-asset-3
-@dd.asset(Orders, partitions_def=daily)
+@dd.asset(OrdersSchema, partitions_def=daily)
 def daily_orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     return pl.read_parquet(f"raw/orders/{context.partition_key}.parquet")
 
@@ -136,7 +136,7 @@ The helper iterates it, so put the helper inside `pytest.raises`:
 def test_plain_orders_stops_at_a_failing_line():
     with pytest.raises(dd.errors.ValidationAbortError):
         dd.testing.DirectInvocationResult.from_invocation(
-            plain_orders(marketplace_orders())
+            plain_orders(marketplace_orders)
         )
 ```
 

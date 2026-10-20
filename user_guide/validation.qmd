@@ -5,12 +5,12 @@ title: "Validation"
 ```{python}
 #| label: setup-validation
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 `dd.asset` validates the frame the decorated function returns.
@@ -60,15 +60,15 @@ To drop the failing rows yourself, drop them in the decorated function:
 
 ```{python}
 #| label: validation-1
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    valid, _ = Orders.filter(raw_orders)
+    valid, _ = OrdersSchema.filter(raw_orders)
     return valid
 ```
 
 **A row that fails only `"warn"` rules is written.**
 So the table satisfies every `"error"` rule, but not necessarily every `"warn"` rule.
-An asset downstream that reads the table as `dy.DataFrame[Orders]` can rely only on the `"error"` rules.
+An asset downstream that reads the table as `dy.DataFrame[OrdersSchema]` can rely only on the `"error"` rules.
 Those rows come after the valid rows, so the table does not keep the frame's row order when a `"warn"` rule fails.
 
 ## The package never casts
@@ -87,9 +87,9 @@ The table has the schema's columns in the schema's order, whatever order the fra
 
 ```{python}
 #| label: validation-2
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    # `net` is working state, and `raw_orders` has columns `Orders` never declared.
+    # `net` is working state, and `raw_orders` has columns `OrdersSchema` never declared.
     # `Schema.filter` drops both, and the table has the schema's thirteen columns, in its order.
     return raw_orders.with_columns(net=pl.col("amount") * 0.8)
 ```
@@ -100,9 +100,9 @@ So a decorated function that returns extra columns needs no `select`, and no `Sc
 
 ```{python}
 #| label: validation-3
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return Orders.cast(raw_orders)
+    return OrdersSchema.cast(raw_orders)
 ```
 
 This is the intended way to cast, not a workaround, and few assets need it.

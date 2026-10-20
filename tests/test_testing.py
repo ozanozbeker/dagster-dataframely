@@ -10,10 +10,10 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import dagster_dataframely as dd
-from tests.scenario import Orders, clean_orders, mixed_orders
+from tests.scenario import OrdersSchema, clean_orders, mixed_orders
 
 
-class Amounts(dy.Schema):
+class AmountsSchema(dy.Schema):
     """One `"warn"` rule, so a failing row is still written to the table."""
 
     amount = dy.Int64(
@@ -21,11 +21,11 @@ class Amounts(dy.Schema):
     )
 
 
-class Invoices(dy.Schema):
+class InvoicesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
 
 
-class InvoiceLines(dy.Schema):
+class InvoiceLinesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
     line = dy.Int64(primary_key=True)
 
@@ -33,8 +33,8 @@ class InvoiceLines(dy.Schema):
 class InvoiceBook(dy.Collection):
     """One collection filter, which has a check on each of the two members."""
 
-    invoices: dy.LazyFrame[Invoices]
-    lines: dy.LazyFrame[InvoiceLines]
+    invoices: dy.LazyFrame[InvoicesSchema]
+    lines: dy.LazyFrame[InvoiceLinesSchema]
 
     @dy.filter()
     def invoice_has_lines(self) -> pl.LazyFrame:
@@ -50,7 +50,7 @@ def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _orders(frame: pl.DataFrame, **settings: Any) -> dg.AssetsDefinition:
     """Declare the `orders` asset with the given `dd.asset` settings."""
 
-    @dd.asset(Orders, name="orders", **settings)
+    @dd.asset(OrdersSchema, name="orders", **settings)
     def orders() -> pl.DataFrame:
         return frame
 
@@ -85,7 +85,7 @@ class TestDirectInvocationResult:
         assert "dataframely/failed_examples" in failed.metadata
 
     def test_a_warn_only_failure_keeps_every_row_and_fails_at_warn(self):
-        @dd.asset(Amounts)
+        @dd.asset(AmountsSchema)
         def amounts() -> pl.DataFrame:
             return pl.DataFrame({"amount": [1, -1]})
 
@@ -98,7 +98,7 @@ class TestDirectInvocationResult:
         assert failed.severity == dg.AssetCheckSeverity.WARN
 
     def test_a_skip_has_no_materialization_and_every_check_passing(self):
-        @dd.asset(Orders)
+        @dd.asset(OrdersSchema)
         def orders() -> pl.DataFrame | None:
             return None
 

@@ -1,4 +1,4 @@
-"""The `Orders` schema, the frames the tests validate, and the helpers several test modules share."""
+"""The `OrdersSchema` schema, the frames the tests validate, and the helpers several test modules share."""
 
 import datetime as dt
 from collections.abc import Callable
@@ -126,7 +126,7 @@ def records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
     return [dict(record.data) for record in value.records]
 
 
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     """Customer orders, one row per order line.
 
     Each column or rule covers a case:
@@ -186,7 +186,7 @@ class Orders(dy.Schema):
         )
 
 
-# Not derived from `Orders`, so a frame that differs from the schema fails the column-schema check.
+# Not derived from `OrdersSchema`, so a frame that differs from the schema fails the column-schema check.
 POLARS_SCHEMA: dict[str, pl.DataType] = {
     "order_id": pl.String(),
     "line_no": pl.Int32(),
@@ -281,7 +281,7 @@ def wrong_dtype_orders() -> pl.DataFrame:
 
 
 _TAKER_KEY = dg.AssetKey(["orders"])
-_, _TAKER_FAILURE = Orders.filter(clean_orders())
+_, _TAKER_FAILURE = OrdersSchema.filter(clean_orders())
 
 SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
     "asset": dd.asset,  # raises before it returns a decorator (ADR-0008)

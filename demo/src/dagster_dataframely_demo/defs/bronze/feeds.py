@@ -1,17 +1,18 @@
 """The bronze assets, which load a customer export and four order feeds unchanged."""
 
-# demo: each asset returns sample rows from `_data`; a real pipeline reads its source here.
+# demo: each asset returns sample rows from `dd.data` or `_data`; a real pipeline reads its source here.
 
 import dagster as dg
 import polars as pl
 
+from dagster_dataframely.data import marketplace_orders, storefront_orders
 from dagster_dataframely_demo import _data
 
 
 @dg.asset
 def raw_orders() -> pl.DataFrame:
     """Load the storefront's nightly order export."""
-    return _data.storefront_orders()
+    return storefront_orders
 
 
 @dg.asset
@@ -23,7 +24,7 @@ def raw_customers() -> pl.DataFrame:
 @dg.asset
 def raw_marketplace_orders() -> pl.DataFrame:
     """Load the marketplace's order feed."""
-    return _data.marketplace_orders()
+    return marketplace_orders
 
 
 @dg.asset

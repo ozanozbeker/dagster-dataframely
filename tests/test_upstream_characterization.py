@@ -36,7 +36,7 @@ from dagster_dataframely.wiring import get_error_rows_path
 from tests.scenario import events
 
 
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     """A schema with a column rule, a primary key and a `@dy.rule()`."""
 
     order_id = dy.String(primary_key=True)
@@ -49,8 +49,8 @@ class Orders(dy.Schema):
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 
 
-class Refunds(dy.Schema):
-    """A schema with the same primary key as `Orders`."""
+class RefundsSchema(dy.Schema):
+    """A schema with the same primary key as `OrdersSchema`."""
 
     order_id = dy.String(primary_key=True)
 
@@ -58,10 +58,10 @@ class Refunds(dy.Schema):
 class OrderBook(dy.Collection):
     """A Collection with one collection filter, an eager member and an ignored optional member."""
 
-    orders: dy.LazyFrame[Orders]
-    refunds: dy.DataFrame[Refunds]
+    orders: dy.LazyFrame[OrdersSchema]
+    refunds: dy.DataFrame[RefundsSchema]
     notes: Annotated[
-        dy.LazyFrame[Refunds] | None,
+        dy.LazyFrame[RefundsSchema] | None,
         dy.CollectionMember(ignored_in_filters=True, propagate_row_failures=True),
     ]
 
@@ -84,25 +84,27 @@ class TestDataframely:
 
     def test_rules_are_keyed_by_pipe_delimited_rule_name(self):
         """`Schema._validation_rules` keys a column rule as `<column>|<rule>`, and `_rules.describe_rules` reads every rule from it."""
-        rules = Orders._validation_rules(with_cast=False)
+        rules = OrdersSchema._validation_rules(with_cast=False)
 
         assert "amount|min" in rules
         assert "primary_key" in rules
         assert "paid_orders_have_amount" in rules
         assert all(
-            name.split("|")[0] in Orders.columns() for name in rules if "|" in name
+            name.split("|")[0] in OrdersSchema.columns()
+            for name in rules
+            if "|" in name
         )
 
     def test_rule_values_are_rule_instances_carrying_a_polars_expr(self):
         """Each `_validation_rules` value is a `Rule` with a `pl.Expr` on `expr`, which `_rules.DescribedRule` stores and `_checks` writes to check metadata."""
-        rules = Orders._validation_rules(with_cast=False)
+        rules = OrdersSchema._validation_rules(with_cast=False)
 
         assert all(isinstance(rule, Rule) for rule in rules.values())
         assert all(isinstance(rule.expr, pl.Expr) for rule in rules.values())
 
     def test_a_dy_rule_stays_reachable_by_name_and_keeps_its_docstring(self):
         """A `@dy.rule()` leaves a `RuleFactory` on the class, and `DescribedRule.from_rule` reads the rule's description from its `validation_fn`."""
-        factory = Orders.paid_orders_have_amount
+        factory = OrdersSchema.paid_orders_have_amount
 
         assert isinstance(factory, RuleFactory)
         assert (
@@ -111,9 +113,9 @@ class TestDataframely:
 
     def test_a_column_rule_is_not_reachable_by_name(self):
         """No class attribute has a column rule's name, and `primary_key` names a method, so `DescribedRule.from_rule` checks for a `RuleFactory`."""
-        assert getattr(Orders, "amount|min", None) is None
+        assert getattr(OrdersSchema, "amount|min", None) is None
 
-        assert not isinstance(getattr(Orders, "primary_key", None), RuleFactory)
+        assert not isinstance(getattr(OrdersSchema, "primary_key", None), RuleFactory)
 
     def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it(self):
         """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering._get_value` reads with `getattr`."""
@@ -222,19 +224,21 @@ class TestDataframely:
         superset = _MIXED_ORDERS.select(
             "status", "amount", pl.lit("note").alias("shipping"), "order_id"
         )
-        expected = list(Orders.columns())
+        expected = list(OrdersSchema.columns())
 
-        valid, _ = Orders.filter(superset, cast=False)
+        valid, _ = OrdersSchema.filter(superset, cast=False)
         assert valid.columns == expected
 
-        lazy_valid, _ = Orders.filter(superset.lazy(), cast=False)
+        lazy_valid, _ = OrdersSchema.filter(superset.lazy(), cast=False)
         assert lazy_valid.collect_schema().names() == expected
 
     def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine(self):
         """On a `LazyFrame`, `Schema.filter` returns a result whose `collect_all` passes `engine=` to Polars, which `_checks.check_and_filter` calls with `engine="streaming"`."""
-        lazy_result = Orders.filter(_MIXED_ORDERS.lazy(), cast=False)
+        lazy_result = OrdersSchema.filter(_MIXED_ORDERS.lazy(), cast=False)
 
-        assert not hasattr(Orders.filter(_MIXED_ORDERS, cast=False), "collect_all")
+        assert not hasattr(
+            OrdersSchema.filter(_MIXED_ORDERS, cast=False), "collect_all"
+        )
 
         valid, failure = lazy_result.collect_all(engine="streaming")
 
@@ -249,12 +253,12 @@ class TestDataframely:
 
     def test_details_returns_invalid_rows_plus_one_column_per_rule(self):
         """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.get_error_rows` and `_checks._read_failure_examples` both read."""
-        _, failure = Orders.filter(_MIXED_ORDERS)
+        _, failure = OrdersSchema.filter(_MIXED_ORDERS)
         details = failure.details()
 
         assert details.height == failure.invalid().height
-        assert set(details.columns) == set(Orders.columns()) | set(
-            Orders._validation_rules(with_cast=False)
+        assert set(details.columns) == set(OrdersSchema.columns()) | set(
+            OrdersSchema._validation_rules(with_cast=False)
         )
 
         # An `Enum`, which `get_error_rows` casts to `String` because the Delta writer panics on it.
@@ -267,7 +271,7 @@ class TestDataframely:
     def test_the_failure_example_limit_does_not_truncate_the_filter_path(self):
         """`dy.Config(max_failure_examples=)` limits only the message `validate` builds, so only `max_failure_examples` limits the rows in check metadata."""
         with dy.Config(max_failure_examples=1):
-            _, failure = Orders.filter(_MIXED_ORDERS)
+            _, failure = OrdersSchema.filter(_MIXED_ORDERS)
 
         assert len(failure) == 3
         assert failure.details().height == 3
@@ -275,7 +279,7 @@ class TestDataframely:
 
     def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names(self):
         """`FailureInfo.cooccurrence_counts()` keys each count by a `frozenset` of rule names, which `_runtime._tabulate_cooccurrence` sorts before rendering."""
-        _, failure = Orders.filter(_MIXED_ORDERS)
+        _, failure = OrdersSchema.filter(_MIXED_ORDERS)
         cooccurrence = failure.cooccurrence_counts()
 
         assert all(isinstance(rules, frozenset) for rules in cooccurrence)

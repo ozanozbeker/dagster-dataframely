@@ -29,7 +29,7 @@ The schema declares each severity, so every asset that uses the schema has the s
 
 ```{python}
 #| label: rule-severity-1
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     order_id = dy.String(
         primary_key=True,
         regex=r"^ORD-\d{4}$",
@@ -62,11 +62,11 @@ The values are the strings `"error"` and `"warn"`.
 A subclass has its parent's declarations.
 The Columns tab does not show the `dagster_dataframely` key as a tag, because the checks already show each rule's severity.
 
-A check whose rules include an `"error"` rule is blocking, so the specs of `Orders` mark the checks whose failure stops the write:
+A check whose rules include an `"error"` rule is blocking, so the specs of `OrdersSchema` mark the checks whose failure stops the write:
 
 ```{python}
 #| label: rule-severity-2
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders() -> pl.DataFrame:
     return pl.DataFrame()
 

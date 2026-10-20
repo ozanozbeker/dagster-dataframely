@@ -4,25 +4,25 @@ import dagster as dg
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 
 #: The priority fulfilment team handles every line with an amount above this.
 HIGH_VALUE = 100
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def weekly_orders(daily_orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
     """Combine the week's daily partitions into one table."""
     return pl.concat(daily_orders.values())
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def high_value_orders(orders: pl.LazyFrame) -> pl.LazyFrame:
     """Keep the lines the priority fulfilment team handles."""
     return orders.filter(pl.col("amount") > HIGH_VALUE)
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders_snapshot(orders: pl.DataFrame) -> dg.MaterializeResult[pl.DataFrame]:
     """Snapshot `orders` for the BI dashboards, with its extract window in the metadata."""
     return dg.MaterializeResult(

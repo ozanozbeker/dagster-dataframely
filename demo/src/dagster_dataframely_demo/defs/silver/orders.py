@@ -3,10 +3,10 @@
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     """Validate the storefront's order lines."""
     return raw_orders

@@ -15,7 +15,7 @@ import pytest
 
 import dagster_dataframely as dd
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     clean_orders,
     materializations,
     materialize,
@@ -26,8 +26,8 @@ from tests.scenario import (
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 
-class Shipment(dy.Schema):
-    """The dtypes `Orders` lacks, so the two schemas together have every dtype a statistics table covers, plus both nested dtypes.
+class ShipmentSchema(dy.Schema):
+    """The dtypes `OrdersSchema` lacks, so the two schemas together have every dtype a statistics table covers, plus both nested dtypes.
 
     Every column is nullable, so a row or a whole column can be null.
     """
@@ -81,12 +81,12 @@ def _shipment_frame(durations: list[dt.timedelta | None]) -> pl.DataFrame:
     )
 
 
-@dd.asset(Orders, name="orders")
+@dd.asset(OrdersSchema, name="orders")
 def _orders() -> pl.DataFrame:
     return clean_orders()
 
 
-@dd.asset(Shipment, name="shipment")
+@dd.asset(ShipmentSchema, name="shipment")
 def _shipment() -> pl.DataFrame:
     return _shipment_frame(_DURATIONS)
 
@@ -133,10 +133,10 @@ def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
 
 
 def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
-    class Weights(dy.Schema):
+    class WeightsSchema(dy.Schema):
         weight = dy.Float64(nullable=False)
 
-    @dd.asset(Weights, name="weights")
+    @dd.asset(WeightsSchema, name="weights")
     def weights() -> pl.DataFrame:
         return pl.DataFrame({"weight": [1.0, 2.0]})
 
@@ -151,7 +151,7 @@ def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Pat
 
     assert "address" not in _statistics_columns(shipped)
     assert "tags" not in _statistics_columns(ordered)
-    # No boolean table, because `Orders` has no `Bool` column.
+    # No boolean table, because `OrdersSchema` has no `Bool` column.
     assert _groups(ordered) == {
         "dataframely/table_statistics/numeric",
         "dataframely/table_statistics/temporal",
@@ -245,7 +245,7 @@ def test_a_duration_renders_in_polars_own_friendly_style(tmp_path: Path):
 
 
 def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: Path):
-    @dd.asset(Shipment, name="shipment")
+    @dd.asset(ShipmentSchema, name="shipment")
     def unfulfilled() -> pl.DataFrame:
         return _shipment_frame([None, None, None, None])
 
@@ -324,7 +324,7 @@ def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
 def test_the_setting_off_at_the_asset_suppresses_the_pass(tmp_path: Path):
     """With `statistics=False`, the package still writes `dagster/row_count`, because it is not a statistic."""
 
-    @dd.asset(Orders, name="orders", filter=True, statistics=False)
+    @dd.asset(OrdersSchema, name="orders", filter=True, statistics=False)
     def without_statistics() -> pl.DataFrame:
         return mixed_orders()
 
@@ -341,7 +341,7 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
 ):
     monkeypatch.setenv(_STATISTICS_ENV, "false")
 
-    @dd.asset(Orders, name="orders")
+    @dd.asset(OrdersSchema, name="orders")
     def statistics_off_by_environment() -> pl.DataFrame:
         return clean_orders()
 
@@ -351,7 +351,7 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
 def test_the_error_rows_carries_no_statistics(tmp_path: Path):
     """Statistics cover only the table, because nothing downstream reads the error rows (ADR-0004)."""
 
-    @dd.asset(Orders, name="orders", filter=True)
+    @dd.asset(OrdersSchema, name="orders", filter=True)
     def check_and_filter() -> pl.DataFrame:
         return mixed_orders()
 

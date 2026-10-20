@@ -5,20 +5,20 @@ title: "Filtering error rows"
 ```{python}
 #| label: setup-filtering-error-rows
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import polars as pl
 from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo._data import storefront_orders
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import storefront_orders
+from dagster_dataframely.data import OrdersSchema
 
 
 @dg.asset
 def raw_orders() -> pl.DataFrame:
-    return storefront_orders()
+    return storefront_orders
 ```
 
 With `filter=True`, a run writes the rows that failed an `"error"` rule to a separate table, the error rows.
@@ -80,7 +80,7 @@ The same declaration writes the error rows to a different place under each IO ma
 
 ```{python}
 #| label: filtering-error-rows-1
-@dd.asset(Orders, filter=True)
+@dd.asset(OrdersSchema, filter=True)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```
@@ -136,7 +136,7 @@ from dagster_duckdb_polars import DuckDBPolarsIOManager
 
 
 @dd.asset(
-    Orders,
+    OrdersSchema,
     filter=True,
     error_rows_key=["audit", "orders__error_rows"],
     error_rows_io_manager_key="audit",
@@ -149,7 +149,7 @@ defs = dg.Definitions(
     assets=[
         raw_orders,
         audited_orders,
-        dd.build_error_rows_spec(Orders, audited_orders),
+        dd.build_error_rows_spec(OrdersSchema, audited_orders),
     ],
     resources={
         "io_manager": PolarsParquetIOManager(base_dir="data/warehouse"),
@@ -167,12 +167,12 @@ import tempfile
 
 import duckdb
 
-from dagster_dataframely_demo._data import marketplace_orders
+from dagster_dataframely.data import marketplace_orders
 
 
 @dg.asset(name="raw_orders")
 def marketplace_raw() -> pl.DataFrame:
-    return marketplace_orders()
+    return marketplace_orders
 
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -226,7 +226,7 @@ They are not in the asset graph, so no asset can depend on them until you add th
 ```{python}
 #| label: filtering-error-rows-4
 defs = dg.Definitions(
-    assets=[raw_orders, orders, dd.build_error_rows_spec(Orders, orders)],
+    assets=[raw_orders, orders, dd.build_error_rows_spec(OrdersSchema, orders)],
     resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
 )
 ```
@@ -272,17 +272,17 @@ The row count is under `dagster/partition_row_count` for a partition, and under 
 #| label: filtering-error-rows-5
 import tempfile
 
-from dagster_dataframely_demo._data import marketplace_orders
+from dagster_dataframely.data import marketplace_orders
 
 
 @dg.asset(name="raw_orders")
 def marketplace_raw() -> pl.DataFrame:
-    return marketplace_orders()
+    return marketplace_orders
 
 
 with tempfile.TemporaryDirectory() as tmp:
     result = dg.materialize(
-        [marketplace_raw, orders, dd.build_error_rows_spec(Orders, orders)],
+        [marketplace_raw, orders, dd.build_error_rows_spec(OrdersSchema, orders)],
         resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
     )
 

@@ -4,13 +4,15 @@ import dagster as dg
 import polars as pl
 
 import dagster_dataframely as dd
-from tests.scenario import WAREHOUSE_SCHEMA, Orders, mixed_orders
+from tests.scenario import WAREHOUSE_SCHEMA, OrdersSchema, mixed_orders
 
 
-@dd.asset(Orders, name="orders", key_prefix=WAREHOUSE_SCHEMA, filter=True)
+@dd.asset(OrdersSchema, name="orders", key_prefix=WAREHOUSE_SCHEMA, filter=True)
 def orders() -> pl.DataFrame:
     return mixed_orders()
 
 
-with_spec = dg.Definitions(assets=[orders, dd.build_error_rows_spec(Orders, orders)])
+with_spec = dg.Definitions(
+    assets=[orders, dd.build_error_rows_spec(OrdersSchema, orders)]
+)
 without_spec = dg.Definitions(assets=[orders])

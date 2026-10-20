@@ -33,20 +33,20 @@ Then pass the Collection and its member assets to `dd.build_collection_checks`:
 
 ```{python}
 #| label: collection-checks-1
-class Customers(dy.Schema):
+class CustomersSchema(dy.Schema):
     customer_id = dy.Int64(primary_key=True)
     name = dy.String()
 
 
-class Orders(dy.Schema):
+class OrdersSchema(dy.Schema):
     order_id = dy.Int64(primary_key=True)
     customer_id = dy.Int64()
 
 
 class Shop(dy.Collection):
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -55,12 +55,12 @@ class Shop(dy.Collection):
         return self.orders.join(self.customers, on="customer_id", how="semi")
 
 
-@dd.asset(Customers)
+@dd.asset(CustomersSchema)
 def customers() -> pl.DataFrame:
     return pl.DataFrame({"customer_id": [1, 2], "name": ["Ada", "Bo"]})
 
 
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders() -> pl.DataFrame:
     return pl.DataFrame({"order_id": [10, 11, 12], "customer_id": [1, 2, 99]})
 
@@ -96,8 +96,8 @@ A Collection whose collection filters span members with no primary-key column in
 try:
 
     class NoSharedKey(dy.Collection):
-        orders: dy.LazyFrame[Orders]
-        customers: dy.LazyFrame[Customers]
+        orders: dy.LazyFrame[OrdersSchema]
+        customers: dy.LazyFrame[CustomersSchema]
 
         @dy.filter()
         def order_references_customer(self) -> pl.LazyFrame:
@@ -117,18 +117,18 @@ A parent and its children share a primary key, so neither member needs to be ign
 
 ```{python}
 #| label: collection-checks-3
-class Invoices(dy.Schema):
+class InvoicesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
 
 
-class InvoiceLines(dy.Schema):
+class InvoiceLinesSchema(dy.Schema):
     invoice_id = dy.Int64(primary_key=True)
     line = dy.Int64(primary_key=True)
 
 
 class InvoiceBook(dy.Collection):
-    invoices: dy.LazyFrame[Invoices]
-    lines: dy.LazyFrame[InvoiceLines]
+    invoices: dy.LazyFrame[InvoicesSchema]
+    lines: dy.LazyFrame[InvoiceLinesSchema]
 
     @dy.filter()
     def invoice_has_lines(self) -> pl.LazyFrame:
@@ -268,9 +268,9 @@ Write it without an annotation, because Dataframely raises for any Collection an
 class LenientShop(dy.Collection):
     __dagster_dataframely__ = {"severity": {"order_references_customer": "warn"}}
 
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -300,9 +300,9 @@ Dagster then fails the step with `DagsterTypeCheckDidNotPass` for a lazy member,
 ```{python}
 #| label: collection-checks-9
 class EagerShop(dy.Collection):
-    orders: dy.DataFrame[Orders]
+    orders: dy.DataFrame[OrdersSchema]
     customers: Annotated[
-        dy.DataFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.DataFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -335,17 +335,17 @@ A collection filter evaluated in each partition alone would report a customer in
 
 ```{python}
 #| label: collection-checks-10
-class Promos(dy.Schema):
+class PromosSchema(dy.Schema):
     customer_id = dy.Int64(primary_key=True)
 
 
 class ShopWithPromos(dy.Collection):
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
     promos: Annotated[
-        dy.LazyFrame[Promos] | None, dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[PromosSchema] | None, dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()
@@ -403,9 +403,10 @@ It raises `FailurePropagationError` for a member with `propagate_row_failures=Tr
 ```{python}
 #| label: collection-checks-12
 class Propagating(dy.Collection):
-    invoices: dy.LazyFrame[Invoices]
+    invoices: dy.LazyFrame[InvoicesSchema]
     lines: Annotated[
-        dy.LazyFrame[InvoiceLines], dy.CollectionMember(propagate_row_failures=True)
+        dy.LazyFrame[InvoiceLinesSchema],
+        dy.CollectionMember(propagate_row_failures=True),
     ]
 
 
@@ -427,9 +428,9 @@ It raises `InvalidSeverityError` when `__dagster_dataframely__` names something 
 class Misdeclared(dy.Collection):
     __dagster_dataframely__ = {"severity": {"order_has_customer": "warn"}}
 
-    orders: dy.LazyFrame[Orders]
+    orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
-        dy.LazyFrame[Customers], dy.CollectionMember(ignored_in_filters=True)
+        dy.LazyFrame[CustomersSchema], dy.CollectionMember(ignored_in_filters=True)
     ]
 
     @dy.filter()

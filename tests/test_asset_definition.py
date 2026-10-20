@@ -24,11 +24,11 @@ from dagster_dataframely.errors import (
     ReservedColumnError,
 )
 from dagster_dataframely.wiring import get_code_version
-from tests.scenario import Orders
+from tests.scenario import OrdersSchema
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
-# Every rule of `Orders` in Dataframely's order, listed rather than derived so a rule that disappears fails a test.
+# Every rule of `OrdersSchema` in Dataframely's order, listed rather than derived so a rule that disappears fails a test.
 _RULES = [
     "paid_orders_have_amount",
     "line_numbers_are_dense",
@@ -53,7 +53,7 @@ _RULES = [
 ]
 
 
-@dd.asset(Orders, group_name="sales")
+@dd.asset(OrdersSchema, group_name="sales")
 def orders() -> pl.DataFrame:
     """The decorated function's own docstring."""
     return pl.DataFrame()
@@ -63,7 +63,7 @@ def _specs_by_name(asset: dg.AssetsDefinition) -> dict[str, dg.AssetCheckSpec]:
     return {spec.name: spec for spec in asset.check_specs}
 
 
-def _expression_text(rule: str, schema: type[dy.Schema] = Orders) -> str:
+def _expression_text(rule: str, schema: type[dy.Schema] = OrdersSchema) -> str:
     return str(describe_rules(schema)[rule].expr)
 
 
@@ -79,7 +79,7 @@ class TestAssetSpec:
         assert spec.skippable
 
     def test_a_key_prefix_applies_to_the_asset_and_its_checks(self):
-        @dd.asset(Orders, key_prefix="sales")
+        @dd.asset(OrdersSchema, key_prefix="sales")
         def prefixed() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -89,21 +89,21 @@ class TestAssetSpec:
         assert {spec.asset_key for spec in prefixed.check_specs} == {key}
 
     def test_a_sequence_key_prefix_nests(self):
-        @dd.asset(Orders, key_prefix=["warehouse", "sales"])
+        @dd.asset(OrdersSchema, key_prefix=["warehouse", "sales"])
         def nested() -> pl.DataFrame:
             return pl.DataFrame()
 
         assert nested.keys == {dg.AssetKey(["warehouse", "sales", "nested"])}
 
     def test_name_overrides_the_function_name(self):
-        @dd.asset(Orders, name="orders", key_prefix="sales")
+        @dd.asset(OrdersSchema, name="orders", key_prefix="sales")
         def _orders_impl() -> pl.DataFrame:
             return pl.DataFrame()
 
         assert _orders_impl.keys == {dg.AssetKey(["sales", "orders"])}
 
     def test_upstream_dependencies_bind_as_ordinary_parameters(self):
-        @dd.asset(Orders)
+        @dd.asset(OrdersSchema)
         def downstream(raw_orders: pl.DataFrame) -> pl.DataFrame:
             return raw_orders
 
@@ -117,7 +117,7 @@ class TestAssetSpec:
     def test_an_asset_without_other_kinds_has_only_the_polars_kind(
         self, kinds: set[str] | None
     ):
-        @dd.asset(Orders, kinds=kinds)
+        @dd.asset(OrdersSchema, kinds=kinds)
         def kinded() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -146,7 +146,7 @@ class TestForwardedParameters:
         backfill = dg.BackfillPolicy.single_run()
 
         @dd.asset(
-            Orders,
+            OrdersSchema,
             ins={"raw": dg.AssetIn(key=dg.AssetKey(["upstream_frame"]))},
             deps=["upstream"],
             description="Explicit description.",
@@ -186,7 +186,7 @@ class TestForwardedParameters:
 
     def test_pool_is_passed_to_the_underlying_op(self):
         # Separate, because one op cannot have both a pool and a `backfill_policy`.
-        @dd.asset(Orders, pool="limited")
+        @dd.asset(OrdersSchema, pool="limited")
         def pooled() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -197,7 +197,7 @@ class TestForwardedParameters:
         freshness = dg.FreshnessPolicy.time_window(fail_window=dt.timedelta(hours=24))
 
         @dd.asset(
-            Orders,
+            OrdersSchema,
             io_manager_key="warehouse",
             group_name="sales",
             metadata={"sla_hours": 4},
@@ -224,7 +224,7 @@ class TestForwardedParameters:
 
     def test_user_metadata_cannot_displace_the_packages_own(self):
         @dd.asset(
-            Orders,
+            OrdersSchema,
             metadata={_COLUMN_SCHEMA_KEY: "mine", "own": "kept"},
         )
         def collides() -> pl.DataFrame:
@@ -236,17 +236,17 @@ class TestForwardedParameters:
         assert isinstance(definition_metadata[_COLUMN_SCHEMA_KEY], dg.TableSchema)
 
 
-class _Documented(dy.Schema):
+class _DocumentedSchema(dy.Schema):
     """Postal codes, one row per code."""
 
     code = dy.String(primary_key=True)
 
 
-class _Undocumented(dy.Schema):
+class _UndocumentedSchema(dy.Schema):
     code = dy.String(primary_key=True)
 
 
-class _Blank(dy.Schema):
+class _BlankSchema(dy.Schema):
     """ """
 
     code = dy.String(primary_key=True)
@@ -256,7 +256,7 @@ class TestDescription:
     """The asset's description."""
 
     def test_the_schema_docstring_fills_a_description_the_decorator_was_not_given(self):
-        @dd.asset(_Documented)
+        @dd.asset(_DocumentedSchema)
         def postal_codes() -> pl.DataFrame:
             """The decorated function's own docstring."""
             return pl.DataFrame()
@@ -265,7 +265,7 @@ class TestDescription:
         assert spec.description == "Postal codes, one row per code."
 
     def test_an_explicit_description_takes_precedence_over_the_schema_docstring(self):
-        @dd.asset(_Documented, description="Said at the call site.")
+        @dd.asset(_DocumentedSchema, description="Said at the call site.")
         def explicit() -> pl.DataFrame:
             """The decorated function's own docstring."""
             return pl.DataFrame()
@@ -274,7 +274,7 @@ class TestDescription:
         assert spec.description == "Said at the call site."
 
     def test_a_schema_without_a_docstring_uses_the_decorated_functions_docstring(self):
-        @dd.asset(_Undocumented)
+        @dd.asset(_UndocumentedSchema)
         def undocumented() -> pl.DataFrame:
             """The decorated function's own docstring."""
             return pl.DataFrame()
@@ -286,7 +286,7 @@ class TestDescription:
         # `inspect.getdoc` would return this docstring for a schema without its own.
         assert dy.Schema.__doc__ is not None
 
-        @dd.asset(_Undocumented, name="inherits_nothing")
+        @dd.asset(_UndocumentedSchema, name="inherits_nothing")
         def inherits_nothing() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -294,7 +294,7 @@ class TestDescription:
         assert spec.description is None
 
     def test_an_empty_description_counts_as_absent_too(self):
-        @dd.asset(_Documented, description="")
+        @dd.asset(_DocumentedSchema, description="")
         def empty() -> pl.DataFrame:
             """The decorated function's own docstring."""
             return pl.DataFrame()
@@ -303,7 +303,7 @@ class TestDescription:
         assert spec.description == "Postal codes, one row per code."
 
     def test_a_whitespace_only_schema_docstring_counts_as_absent(self):
-        @dd.asset(_Blank)
+        @dd.asset(_BlankSchema)
         def blank() -> pl.DataFrame:
             """The decorated function's own docstring."""
             return pl.DataFrame()
@@ -312,7 +312,7 @@ class TestDescription:
         assert spec.description == "The decorated function's own docstring."
 
     def test_a_multi_line_schema_docstring_is_dedented(self):
-        @dd.asset(Orders)
+        @dd.asset(OrdersSchema)
         def dedented() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -334,37 +334,37 @@ _ROOT = Path(__file__).parent.parent
 _LETTERS = [chr(code) for code in range(ord("a"), ord("q"))]
 
 
-class _Priced(dy.Schema):
+class _PricedSchema(dy.Schema):
     amount = dy.Float64(min=0.0)
 
 
-class _PricedFromOne(dy.Schema):
+class _PricedFromOneSchema(dy.Schema):
     amount = dy.Float64(min=1.0)
 
 
-class _Redocumented(dy.Schema):
-    """The columns of `_Priced`, with a docstring."""
+class _RedocumentedSchema(dy.Schema):
+    """The columns of `_PricedSchema`, with a docstring."""
 
     amount = dy.Float64(min=0.0)
 
 
-class _Warned(dy.Schema):
+class _WarnedSchema(dy.Schema):
     amount = dy.Float64(
         min=0.0, metadata={"dagster_dataframely": {"severity": {"min": "warn"}}}
     )
 
 
-class _Lettered(dy.Schema):
+class _LetteredSchema(dy.Schema):
     code = dy.String(check=lambda column: column.is_in(_LETTERS))
 
 
-class _Relettered(dy.Schema):
+class _ReletteredSchema(dy.Schema):
     code = dy.String(
         check=lambda column: column.is_in([*_LETTERS[:7], "z", *_LETTERS[8:]])
     )
 
 
-class _Mapped(dy.Schema):
+class _MappedSchema(dy.Schema):
     code = dy.String(
         check=lambda column: column.map_elements(
             lambda value: value[0] == "A", return_dtype=pl.Boolean
@@ -372,7 +372,7 @@ class _Mapped(dy.Schema):
     )
 
 
-class _Raising(dy.Schema):
+class _RaisingSchema(dy.Schema):
     value = dy.Int64()
 
     @dy.rule()
@@ -393,29 +393,29 @@ class TestCodeVersion:
     def test_the_wiring_function_returns_the_code_version_the_decorator_sets(self):
         (spec,) = orders.specs
 
-        assert get_code_version(Orders) == spec.code_version
+        assert get_code_version(OrdersSchema) == spec.code_version
 
     def test_a_changed_column_constraint_changes_the_code_version(self):
-        assert get_code_version(_Priced) != get_code_version(_PricedFromOne)
+        assert get_code_version(_PricedSchema) != get_code_version(_PricedFromOneSchema)
 
     def test_a_changed_value_the_expression_text_elides_changes_the_code_version(
         self,
     ):
-        assert _expression_text("code|check", _Lettered) == _expression_text(
-            "code|check", _Relettered
+        assert _expression_text("code|check", _LetteredSchema) == _expression_text(
+            "code|check", _ReletteredSchema
         )
-        assert get_code_version(_Lettered) != get_code_version(_Relettered)
+        assert get_code_version(_LetteredSchema) != get_code_version(_ReletteredSchema)
 
     def test_a_changed_severity_changes_the_code_version(self):
-        assert get_code_version(_Priced) != get_code_version(_Warned)
+        assert get_code_version(_PricedSchema) != get_code_version(_WarnedSchema)
 
     def test_a_changed_docstring_leaves_the_code_version_unchanged(self):
-        assert get_code_version(_Priced) == get_code_version(_Redocumented)
+        assert get_code_version(_PricedSchema) == get_code_version(_RedocumentedSchema)
 
     def test_deriving_the_code_version_calls_every_rule_function(self):
         with pytest.raises(RuntimeError):
 
-            @dd.asset(_Raising)
+            @dd.asset(_RaisingSchema)
             def raising() -> pl.DataFrame:
                 return pl.DataFrame()
 
@@ -424,7 +424,7 @@ class TestCodeVersion:
     ):
         monkeypatch.setitem(sys.modules, "cloudpickle", None)
 
-        @dd.asset(_Mapped)
+        @dd.asset(_MappedSchema)
         def mapped() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -434,7 +434,7 @@ class TestCodeVersion:
 
     def test_two_processes_derive_the_same_code_version(self):
         """Two processes derive the same code version for a schema with a lambda `check=`."""
-        script = "from tests.scenario import Orders; import dagster_dataframely as dd; print(dd.wiring.get_code_version(Orders))"
+        script = "from tests.scenario import OrdersSchema; import dagster_dataframely as dd; print(dd.wiring.get_code_version(OrdersSchema))"
         versions = {
             subprocess.run(  # noqa: S603 - the script is a literal
                 [sys.executable, "-c", script],
@@ -446,7 +446,7 @@ class TestCodeVersion:
             for _ in range(2)
         }
 
-        assert versions == {get_code_version(Orders)}
+        assert versions == {get_code_version(OrdersSchema)}
 
 
 _COLUMNS_WITH_RULES = {rule.split("|")[0] for rule in _RULES if "|" in rule}
@@ -455,7 +455,7 @@ _COLUMNS_WITH_RULES = {rule.split("|")[0] for rule in _RULES if "|" in rule}
 _SCHEMA_LEVEL_RULES = [rule for rule in _RULES if "|" not in rule]
 
 
-@dd.asset(Orders, name="by_column", check_granularity="column")
+@dd.asset(OrdersSchema, name="by_column", check_granularity="column")
 def by_column() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -519,25 +519,25 @@ class TestCheckSpecs:
         )
 
     def test_an_element_check_rule_shows_its_key_and_expression(self):
-        class Tagged(dy.Schema):
+        class TaggedSchema(dy.Schema):
             tags = dy.List(
                 dy.String(check={"short": lambda expr: expr.str.len_chars() < 5})
             )
 
-        @dd.asset(Tagged)
+        @dd.asset(TaggedSchema)
         def tagged() -> pl.DataFrame:
             return pl.DataFrame()
 
         spec = _specs_by_name(tagged)["dy_rule__tags__inner_check__short"]
 
         assert spec.description == (
-            f"tags elements short `{_expression_text('tags|inner_check__short', Tagged)}`"
+            f"tags elements short `{_expression_text('tags|inner_check__short', TaggedSchema)}`"
         )
 
     def test_a_documented_rule_shows_its_docstring_without_building_its_expression(
         self,
     ):
-        class Unbuilt(dy.Schema):
+        class UnbuiltSchema(dy.Schema):
             value = dy.Int64()
 
             @dy.rule()
@@ -546,7 +546,7 @@ class TestCheckSpecs:
                 raise AssertionError
 
         # Set, because deriving a code version builds every expression.
-        @dd.asset(Unbuilt, code_version="v1")
+        @dd.asset(UnbuiltSchema, code_version="v1")
         def unbuilt() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -555,14 +555,14 @@ class TestCheckSpecs:
         )
 
     def test_an_expression_with_backticks_gets_a_longer_delimiter(self):
-        class Ticked(dy.Schema):
+        class TickedSchema(dy.Schema):
             value = dy.String(check={"ticked": lambda expr: expr != "``"})
 
-        @dd.asset(Ticked)
+        @dd.asset(TickedSchema)
         def ticked() -> pl.DataFrame:
             return pl.DataFrame()
 
-        expr = _expression_text("value|check__ticked", Ticked)
+        expr = _expression_text("value|check__ticked", TickedSchema)
         assert "``" in expr
         assert _specs_by_name(ticked)["dy_rule__value__check__ticked"].description == (
             f"value ticked ```{expr}```"
@@ -573,7 +573,7 @@ class TestCheckSpecs:
 
     def test_the_column_schema_check_names_the_schema(self):
         assert _specs_by_name(orders)["dy_schema__columns"].description == (
-            "Columns and dtypes match Orders."
+            "Columns and dtypes match OrdersSchema."
         )
 
     def test_column_granularity_collapses_the_rules_into_one_check_per_column_with_rules(
@@ -591,18 +591,18 @@ class TestCheckSpecs:
         )
 
     def test_a_ten_field_struct_is_ten_checks_by_rule_and_one_by_column(self):
-        class Addresses(dy.Schema):
+        class AddressesSchema(dy.Schema):
             address_id = dy.String(primary_key=True)
             address = dy.Struct(
                 {f"field_{n}": dy.String(nullable=False) for n in range(10)},
                 nullable=True,
             )
 
-        @dd.asset(Addresses, name="by_rule")
+        @dd.asset(AddressesSchema, name="by_rule")
         def by_rule() -> pl.DataFrame:
             return pl.DataFrame()
 
-        @dd.asset(Addresses, name="collapsed", check_granularity="column")
+        @dd.asset(AddressesSchema, name="collapsed", check_granularity="column")
         def collapsed() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -632,10 +632,10 @@ class TestCheckSpecs:
         self,
         granularity: Any,
     ):
-        class Blob(dy.Schema):
+        class BlobSchema(dy.Schema):
             payload = dy.String(nullable=True)
 
-        @dd.asset(Blob, name=f"blob_{granularity}", check_granularity=granularity)
+        @dd.asset(BlobSchema, name=f"blob_{granularity}", check_granularity=granularity)
         def blob() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -662,7 +662,7 @@ class TestCheckSpecs:
     ):
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "column")
 
-        @dd.asset(Orders, name="code_location_default")
+        @dd.asset(OrdersSchema, name="code_location_default")
         def code_location_default() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -707,7 +707,7 @@ class TestColumnsTab:
         assert _columns()["note"].constraints.nullable
 
     def test_every_schema_column_appears_in_the_catalog_in_order(self):
-        assert list(_columns()) == list(Orders.columns())
+        assert list(_columns()) == list(OrdersSchema.columns())
 
     def test_a_unique_column_is_marked_unique(self):
         assert _columns()["tracking_id"].constraints.unique
@@ -719,8 +719,8 @@ class TestColumnsTab:
         assert not _columns()["line_no"].constraints.unique
 
 
-class Measurements(dy.Schema):
-    """The constraint kinds that `Orders` has no column for."""
+class MeasurementsSchema(dy.Schema):
+    """The constraint kinds that `OrdersSchema` has no column for."""
 
     reading_at = dy.Datetime(resolution="1h")
     grade = dy.Int32(is_in=[1, 2, 3])
@@ -736,7 +736,7 @@ class Measurements(dy.Schema):
     )
 
 
-@dd.asset(Measurements)
+@dd.asset(MeasurementsSchema)
 def measurements() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -745,14 +745,14 @@ def _measured() -> dict[str, dg.TableColumn]:
     return _columns_of(measurements, dg.AssetKey(["measurements"]))
 
 
-class Ledger(dy.Schema):
+class LedgerSchema(dy.Schema):
     """A schema with a composite key whose `entry_id` also declares `unique=True`."""
 
     entry_id = dy.String(primary_key=True, unique=True)
     posted_at = dy.Datetime(primary_key=True)
 
 
-@dd.asset(Ledger)
+@dd.asset(LedgerSchema)
 def ledger() -> pl.DataFrame:
     return pl.DataFrame()
 
@@ -816,7 +816,9 @@ class TestColumnConstraints:
         )
 
     def test_the_three_rules_no_column_row_states_are_stated_by_a_collapsed_check(self):
-        @dd.asset(Measurements, name="measured_by_column", check_granularity="column")
+        @dd.asset(
+            MeasurementsSchema, name="measured_by_column", check_granularity="column"
+        )
         def collapsed() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -868,11 +870,11 @@ class TestErrorRows:
     def test_a_error_rows_adds_nothing_to_the_graph(self):
         """The error rows are not an executable asset (ADR-0004, ADR-0006)."""
 
-        @dd.asset(Orders, filter=True)
+        @dd.asset(OrdersSchema, filter=True)
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
-        @dd.asset(Orders, filter=False)
+        @dd.asset(OrdersSchema, filter=False)
         def plain() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -885,7 +887,7 @@ class TestErrorRows:
     def test_a_error_rows_needs_no_resource_declared(self):
         """The IO manager comes from the step, so a direct invocation does not have to pass one."""
 
-        @dd.asset(Orders, filter=True)
+        @dd.asset(OrdersSchema, filter=True)
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -915,7 +917,7 @@ class TestErrorRows:
     ):
         """`build_error_rows_spec` reads both entries, so the spec loads the rows from where the writer wrote them."""
 
-        @dd.asset(Orders, filter=True, **overrides)
+        @dd.asset(OrdersSchema, filter=True, **overrides)
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
@@ -938,7 +940,7 @@ class TestErrorRows:
         """A step's resources hold only the keys its op requires, so the writer finds the IO manager there."""
 
         @dd.asset(
-            Orders,
+            OrdersSchema,
             filter=True,
             error_rows_io_manager_key="audit",
             required_resource_keys={"warehouse"},
@@ -957,34 +959,34 @@ class TestDefinitionTimeErrors:
 
     # `test_reserved_namespace.py` tests the singular messages; these test the plural.
     def test_the_reserved_column_error_reads_as_plural_for_several_columns(self):
-        class Reserved(dy.Schema):
+        class ReservedSchema(dy.Schema):
             dy_flag = dy.Bool()
             dy_rule__amount__min = dy.Bool()
 
         with pytest.raises(ReservedColumnError) as raised:
 
-            @dd.asset(Reserved)
+            @dd.asset(ReservedSchema)
             def reserved() -> pl.DataFrame:
                 return pl.DataFrame()
 
-        assert "Columns 'dy_flag', 'dy_rule__amount__min' of Reserved use" in str(
+        assert "Columns 'dy_flag', 'dy_rule__amount__min' of ReservedSchema use" in str(
             raised.value
         )
         assert "Rename them." in str(raised.value)
 
     def test_the_invalid_column_name_error_reads_as_plural_for_several_columns(self):
-        class InvalidNames(dy.Schema):
+        class InvalidNamesSchema(dy.Schema):
             total = dy.Int64(alias="Order Total")
             net = dy.Int64(alias="Net/Total")
 
         with pytest.raises(InvalidColumnNameError) as raised:
 
-            @dd.asset(InvalidNames)
+            @dd.asset(InvalidNamesSchema)
             def invalid_names() -> pl.DataFrame:
                 return pl.DataFrame()
 
         assert (
-            "Columns 'Order Total', 'Net/Total' of InvalidNames contain characters outside"
+            "Columns 'Order Total', 'Net/Total' of InvalidNamesSchema contain characters outside"
             in str(raised.value)
         )
         assert "Rename them, or change the `alias=` that sets the name." in str(
@@ -993,7 +995,7 @@ class TestDefinitionTimeErrors:
 
     def test_a_collection_raises_at_decoration_time(self):
         class OrderBook(dy.Collection):
-            orders: dy.LazyFrame[Orders]
+            orders: dy.LazyFrame[OrdersSchema]
 
         with pytest.raises(CollectionNotSupportedError) as raised:
             dd.asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
@@ -1017,7 +1019,7 @@ class TestDefinitionTimeErrors:
 
         with pytest.raises(InvalidSettingError) as raised:
 
-            @dd.asset(Orders, name="misconfigured", check_granularity=wrong)
+            @dd.asset(OrdersSchema, name="misconfigured", check_granularity=wrong)
             def _misconfigured() -> pl.DataFrame:
                 return pl.DataFrame()
 
@@ -1040,7 +1042,7 @@ class TestDefinitionTimeErrors:
     ):
         with pytest.raises(dg.DagsterInvalidDefinitionError) as raised:
 
-            @dd.asset(Orders, name="unfiltered", **overrides)
+            @dd.asset(OrdersSchema, name="unfiltered", **overrides)
             def _unfiltered() -> pl.DataFrame:
                 return pl.DataFrame()
 
@@ -1058,7 +1060,7 @@ class TestDefinitionTimeErrors:
 
         with pytest.raises(InvalidSettingError) as raised:
 
-            @dd.asset(Orders, name="misconfigured", filter=filtering)
+            @dd.asset(OrdersSchema, name="misconfigured", filter=filtering)
             def _misconfigured() -> pl.DataFrame:
                 return pl.DataFrame()
 
@@ -1068,7 +1070,7 @@ class TestDefinitionTimeErrors:
 def _shipments(prefix: str, *, filtering: bool = False) -> dg.AssetsDefinition:
     """Return an asset named `shipments` under `prefix`."""
 
-    @dd.asset(Orders, key_prefix=prefix, name="shipments", filter=filtering)
+    @dd.asset(OrdersSchema, key_prefix=prefix, name="shipments", filter=filtering)
     def shipments() -> pl.DataFrame:
         return pl.DataFrame()
 
@@ -1079,7 +1081,7 @@ class TestUnderlyingOp:
     """The op under the asset."""
 
     def test_the_op_takes_its_name_from_the_key_exactly_as_dg_asset_takes_its_own(self):
-        @dd.asset(Orders, key_prefix=["warehouse", "sales"], name="shipments")
+        @dd.asset(OrdersSchema, key_prefix=["warehouse", "sales"], name="shipments")
         def attached() -> pl.DataFrame:
             return pl.DataFrame()
 

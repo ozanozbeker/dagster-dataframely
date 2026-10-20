@@ -6,8 +6,8 @@ import dagster as dg
 import polars as pl
 
 import dagster_dataframely as dd
+from dagster_dataframely.data import OrdersSchema
 from dagster_dataframely_demo import _data
-from dagster_dataframely_demo.schema import Orders
 
 DAILY = dg.DailyPartitionsDefinition(start_date="2026-08-01", end_date="2026-08-06")
 
@@ -17,7 +17,7 @@ BY_REGION = dg.MultiPartitionsDefinition({
 })
 
 
-@dd.asset(Orders, partitions_def=DAILY, check_granularity="column")
+@dd.asset(OrdersSchema, partitions_def=DAILY, check_granularity="column")
 def daily_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame:
@@ -25,7 +25,7 @@ def daily_orders(
     return _data.orders_on(raw_orders, dt.date.fromisoformat(context.partition_key))
 
 
-@dd.asset(Orders, partitions_def=BY_REGION, filter=True)
+@dd.asset(OrdersSchema, partitions_def=BY_REGION, filter=True)
 def regional_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame | None:
@@ -37,4 +37,4 @@ def regional_orders(
     return _data.orders_in(raw_orders, day, cell["region"])
 
 
-regional_orders__error_rows = dd.build_error_rows_spec(Orders, regional_orders)
+regional_orders__error_rows = dd.build_error_rows_spec(OrdersSchema, regional_orders)

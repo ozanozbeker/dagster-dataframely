@@ -17,7 +17,7 @@ import dagster_dataframely as dd
 from dagster_dataframely.errors import ColumnSchemaError, ErrorRowsDirError
 from dagster_dataframely.testing import DirectInvocationResult
 from tests.scenario import (
-    Orders,
+    OrdersSchema,
     clean_orders,
     cooccurring_orders,
     materialize,
@@ -32,7 +32,7 @@ _ERROR_ROWS_DIR_ENV = "DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR"
 def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefinition:
     """Declare the `orders` asset with the given `dd.asset` settings."""
 
-    @dd.asset(Orders, name="orders", **settings)
+    @dd.asset(OrdersSchema, name="orders", **settings)
     def orders() -> pl.DataFrame:
         return frame()
 
@@ -226,7 +226,7 @@ def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
 def test_a_called_partitioned_error_rows_lands_under_its_partition(
     error_rows_dir: Path,
 ):
-    @dd.asset(Orders, name="orders", filter=True, partitions_def=_DAYS)
+    @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_DAYS)
     def orders() -> pl.DataFrame:
         return mixed_orders()
 
@@ -241,7 +241,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
     """`dg.build_asset_context` does not set the ContextVar that `AssetExecutionContext.get()` reads."""
     seen: dict[str, str] = {}
 
-    @dd.asset(Orders, name="orders", partitions_def=_DAYS)
+    @dd.asset(OrdersSchema, name="orders", partitions_def=_DAYS)
     def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
         seen["partition"] = context.partition_key
         return clean_orders()
@@ -259,7 +259,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
 def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too():
     """The context comes first and the upstream frames follow, as in Dagster."""
 
-    @dd.asset(Orders, name="orders")
+    @dd.asset(OrdersSchema, name="orders")
     def orders(
         context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
     ) -> pl.DataFrame:

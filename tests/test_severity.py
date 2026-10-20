@@ -11,14 +11,14 @@ import pytest
 import dagster_dataframely as dd
 from dagster_dataframely._rules import describe_rules
 from dagster_dataframely.errors import InvalidSeverityError
-from tests.scenario import SCHEMA_TAKERS, Orders
+from tests.scenario import SCHEMA_TAKERS, OrdersSchema
 
 
 def _resolve_severities(schema: type[dy.Schema]) -> dict[str, str]:
     return {name: rule.severity for name, rule in describe_rules(schema).items()}
 
 
-class Declared(dy.Schema):
+class DeclaredSchema(dy.Schema):
     order_id = dy.String(
         primary_key=True,
         regex=r"^ORD-\d+$",
@@ -59,11 +59,11 @@ class Declared(dy.Schema):
         return cls.amount.col > 0
 
 
-class Inheriting(Declared):
+class Inheriting(DeclaredSchema):
     pass
 
 
-class AllSchemaLevel(dy.Schema):
+class AllSchemaLevelSchema(dy.Schema):
     order_id = dy.String(primary_key=True)
     amount = dy.Float64(nullable=False)
 
@@ -78,22 +78,22 @@ class TestDeclaredSeverity:
     """`describe_rules` reads each rule's severity from the schema."""
 
     def test_an_undeclared_rule_is_error(self):
-        assert set(_resolve_severities(Orders).values()) == {"error"}
+        assert set(_resolve_severities(OrdersSchema).values()) == {"error"}
 
     def test_a_single_value_covers_every_rule_on_the_column(self):
-        severities = _resolve_severities(Declared)
+        severities = _resolve_severities(DeclaredSchema)
 
         assert severities["note|nullability"] == "warn"
         assert severities["note|max_length"] == "warn"
 
     def test_a_mapping_sets_only_the_rules_it_names(self):
-        severities = _resolve_severities(Declared)
+        severities = _resolve_severities(DeclaredSchema)
 
         assert severities["order_id|regex"] == "warn"
         assert severities["order_id|nullability"] == "error"
 
     def test_an_argument_name_is_read_as_the_rule_it_generates(self):
-        severities = _resolve_severities(Declared)
+        severities = _resolve_severities(DeclaredSchema)
 
         assert severities["amount|nullability"] == "warn"
         assert severities["amount|inf"] == "warn"
@@ -101,58 +101,58 @@ class TestDeclaredSeverity:
         assert severities["amount|min"] == "error"
 
     def test_check_names_every_rule_its_dict_generates(self):
-        severities = _resolve_severities(Declared)
+        severities = _resolve_severities(DeclaredSchema)
 
         assert severities["email|check__lowercase"] == "warn"
         assert severities["email|check__trimmed"] == "warn"
         assert severities["email|max_length"] == "error"
 
     def test_a_schema_level_rule_is_declared_on_the_class(self):
-        severities = _resolve_severities(Declared)
+        severities = _resolve_severities(DeclaredSchema)
 
         assert severities["positive"] == "warn"
         assert severities["primary_key"] == "error"
 
     def test_a_single_value_on_the_class_covers_every_schema_level_rule(self):
-        severities = _resolve_severities(AllSchemaLevel)
+        severities = _resolve_severities(AllSchemaLevelSchema)
 
         assert severities["primary_key"] == "warn"
         assert severities["positive"] == "warn"
         assert severities["amount|nullability"] == "error"
 
     def test_a_subclass_has_its_parents_declarations(self):
-        assert _resolve_severities(Inheriting) == _resolve_severities(Declared)
+        assert _resolve_severities(Inheriting) == _resolve_severities(DeclaredSchema)
 
     def test_the_columns_tab_omits_the_declaration_and_keeps_other_tags(self):
         columns = {
             column.name: column
-            for column in dd.wiring.get_table_schema(Declared).columns
+            for column in dd.wiring.get_table_schema(DeclaredSchema).columns
         }
 
         assert columns["note"].tags == {"owner": "sales"}
         assert not columns["order_id"].tags
 
 
-class UnknownKey(dy.Schema):
+class UnknownKeySchema(dy.Schema):
     amount = dy.Int64(min=1, metadata={"dagster_dataframely": {"severty": "warn"}})
 
 
-class NotAMapping(dy.Schema):
+class NotAMappingSchema(dy.Schema):
     amount = dy.Int64(min=1, metadata={"dagster_dataframely": "warn"})
 
 
-class UnknownValue(dy.Schema):
+class UnknownValueSchema(dy.Schema):
     amount = dy.Int64(min=1, metadata={"dagster_dataframely": {"severity": "warning"}})
 
 
-class EnumValue(dy.Schema):
+class EnumValueSchema(dy.Schema):
     amount = dy.Int64(
         min=1,
         metadata={"dagster_dataframely": {"severity": dg.AssetCheckSeverity.WARN}},
     )
 
 
-class EnumInMapping(dy.Schema):
+class EnumInMappingSchema(dy.Schema):
     amount = dy.Int64(
         min=1,
         metadata={
@@ -161,7 +161,7 @@ class EnumInMapping(dy.Schema):
     )
 
 
-class UnknownRule(dy.Schema):
+class UnknownRuleSchema(dy.Schema):
     amount = dy.Int64(
         nullable=False,
         min=1,
@@ -169,31 +169,31 @@ class UnknownRule(dy.Schema):
     )
 
 
-class NoRules(dy.Schema):
+class NoRulesSchema(dy.Schema):
     note = dy.String(
         nullable=True, metadata={"dagster_dataframely": {"severity": "warn"}}
     )
 
 
-class ClassNamesColumnRule(dy.Schema):
+class ClassNamesColumnRuleSchema(dy.Schema):
     amount = dy.Int64(min=1)
 
     __dagster_dataframely__: ClassVar = {"severity": {"amount|min": "warn"}}
 
 
-class ClassNamesNoColumn(dy.Schema):
+class ClassNamesNoColumnSchema(dy.Schema):
     order_id = dy.String(primary_key=True)
 
     __dagster_dataframely__: ClassVar = {"severity": {"nope|min": "warn"}}
 
 
-class ClassUnknownRule(dy.Schema):
+class ClassUnknownRuleSchema(dy.Schema):
     order_id = dy.String(primary_key=True)
 
     __dagster_dataframely__: ClassVar = {"severity": {"positive": "warn"}}
 
 
-class ClassUnknownKey(dy.Schema):
+class ClassUnknownKeySchema(dy.Schema):
     order_id = dy.String(primary_key=True)
 
     __dagster_dataframely__: ClassVar = {"severty": {"primary_key": "warn"}}
@@ -201,39 +201,48 @@ class ClassUnknownKey(dy.Schema):
 
 _CASES = [
     pytest.param(
-        UnknownKey,
-        ["metadata of column 'amount' in UnknownKey", "'severty'", "'severity'"],
+        UnknownKeySchema,
+        ["metadata of column 'amount' in UnknownKeySchema", "'severty'", "'severity'"],
         id="unknown key",
     ),
-    pytest.param(NotAMapping, ["column 'amount'", "a str"], id="not a mapping"),
-    pytest.param(UnknownValue, ["'warning'", "'error' or 'warn'"], id="unknown value"),
-    pytest.param(EnumValue, ["Write the string 'warn'"], id="AssetCheckSeverity"),
+    pytest.param(NotAMappingSchema, ["column 'amount'", "a str"], id="not a mapping"),
     pytest.param(
-        EnumInMapping, ["Write the string 'warn'"], id="AssetCheckSeverity in a mapping"
+        UnknownValueSchema, ["'warning'", "'error' or 'warn'"], id="unknown value"
+    ),
+    pytest.param(EnumValueSchema, ["Write the string 'warn'"], id="AssetCheckSeverity"),
+    pytest.param(
+        EnumInMappingSchema,
+        ["Write the string 'warn'"],
+        id="AssetCheckSeverity in a mapping",
     ),
     pytest.param(
-        UnknownRule,
+        UnknownRuleSchema,
         ["'maximum'", "rules of column 'amount' are 'nullability', 'min'"],
         id="unknown rule",
     ),
-    pytest.param(NoRules, ["column 'note'", "has no rules"], id="column with no rules"),
     pytest.param(
-        ClassNamesColumnRule,
+        NoRulesSchema, ["column 'note'", "has no rules"], id="column with no rules"
+    ),
+    pytest.param(
+        ClassNamesColumnRuleSchema,
         ["'amount|min'", "metadata of column 'amount'"],
         id="column rule on the class",
     ),
     pytest.param(
-        ClassNamesNoColumn,
-        ["'nope|min'", "not a schema-level rule of ClassNamesNoColumn"],
+        ClassNamesNoColumnSchema,
+        ["'nope|min'", "not a schema-level rule of ClassNamesNoColumnSchema"],
         id="column rule of a column that does not exist",
     ),
     pytest.param(
-        ClassUnknownRule,
-        ["'positive'", "schema-level rules of ClassUnknownRule are 'primary_key'"],
+        ClassUnknownRuleSchema,
+        [
+            "'positive'",
+            "schema-level rules of ClassUnknownRuleSchema are 'primary_key'",
+        ],
         id="unknown schema-level rule",
     ),
     pytest.param(
-        ClassUnknownKey,
+        ClassUnknownKeySchema,
         ["__dagster_dataframely__", "'severty'"],
         id="unknown key on the class",
     ),
@@ -257,12 +266,12 @@ def test_a_declaration_the_package_cannot_read_raises(
 def test_an_explicit_error_repeats_the_default():
     """An explicit `"error"` repeats the default, so it is valid."""
 
-    class Explicit(dy.Schema):
+    class ExplicitSchema(dy.Schema):
         amount = dy.Int64(
             min=1, metadata={"dagster_dataframely": {"severity": "error"}}
         )
 
-    assert _resolve_severities(Explicit) == {
+    assert _resolve_severities(ExplicitSchema) == {
         "amount|nullability": "error",
         "amount|min": "error",
     }

@@ -5,14 +5,14 @@ title: "`LazyFrame`s"
 ```{python}
 #| label: setup-lazyframes
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 A `pl.LazyFrame` appears in two places: an input your asset reads, and the frame it returns.
@@ -42,7 +42,7 @@ Polars then pushes a `filter` or `select` down into the scan, so it drops those 
 
 ```{python}
 #| label: lazyframes-1
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def recent(orders: pl.LazyFrame) -> pl.LazyFrame:
     return orders.filter(pl.col("amount") > 100)
 ```
@@ -60,7 +60,7 @@ This package collects both in one `collect_all` call on the streaming engine, so
 
 ```{python}
 #| label: lazyframes-2
-@dd.asset(Orders)
+@dd.asset(OrdersSchema)
 def orders(raw_orders: pl.LazyFrame) -> pl.LazyFrame:
     return raw_orders.filter(pl.col("amount") > 0)
 ```

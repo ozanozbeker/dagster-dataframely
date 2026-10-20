@@ -5,14 +5,14 @@ title: "Declaring an asset"
 ```{python}
 #| label: setup-declaring-an-asset
 #| code-fold: true
-#| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
+#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
 #| output: false
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely_demo.schema import Orders
+from dagster_dataframely.data import OrdersSchema
 ```
 
 The schema is the only required argument, and it is positional.
@@ -22,7 +22,7 @@ You write the decorated function as you would for `@dg.asset`:
 
 ```{python}
 #| label: declaring-an-asset-1
-@dd.asset(Orders, filter=True, group_name="sales")
+@dd.asset(OrdersSchema, filter=True, group_name="sales")
 def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
     context.log.info("%d rows arrived", raw_orders.height)
     return raw_orders
@@ -39,7 +39,7 @@ This package does its work at two times: when the module imports, and when the a
 %%| label: declaring-an-asset-diagram
 flowchart TB
     subgraph load["when the module imports"]
-        D["@dd.asset(Orders)"] --> T["Columns tab"]
+        D["@dd.asset(OrdersSchema)"] --> T["Columns tab"]
         D --> C["a check spec per rule set"]
     end
     subgraph run["when the asset runs"]

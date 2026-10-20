@@ -5,19 +5,19 @@ import polars as pl
 import pytest
 
 from dagster_dataframely._rules import describe_rules
-from tests.scenario import Orders
+from tests.scenario import OrdersSchema
 
 
 def test_one_record_per_rule_in_the_schemas_own_order():
-    rules = describe_rules(Orders)
+    rules = describe_rules(OrdersSchema)
 
     # Dataframely sets the order; `tests/test_asset_definition.py` has the literal list of names.
-    assert list(rules) == list(Orders._validation_rules(with_cast=False))
+    assert list(rules) == list(OrdersSchema._validation_rules(with_cast=False))
 
 
 def test_only_a_delimited_rule_owns_a_column():
     """`describe_rules` sets `column` and `rule_name` from the `|`, or leaves both `None`."""
-    rules = describe_rules(Orders)
+    rules = describe_rules(OrdersSchema)
 
     assert (rules["amount|min"].column, rules["amount|min"].rule_name) == (
         "amount",
@@ -29,12 +29,12 @@ def test_only_a_delimited_rule_owns_a_column():
         (rule.column is None) == (rule.rule_name is None) for rule in rules.values()
     )
     assert {rule.column for rule in rules.values() if rule.column} <= set(
-        Orders.columns()
+        OrdersSchema.columns()
     )
 
 
 def test_a_description_appears_only_where_a_rule_wrote_one():
-    rules = describe_rules(Orders)
+    rules = describe_rules(OrdersSchema)
 
     assert rules["paid_orders_have_amount"].description == (
         "Paid orders must carry a positive amount."
@@ -45,7 +45,7 @@ def test_a_description_appears_only_where_a_rule_wrote_one():
 
 def test_the_check_name_is_the_rewrite():
     """The check and the error rows' rule column share this name."""
-    rules = describe_rules(Orders)
+    rules = describe_rules(OrdersSchema)
 
     assert rules["amount|min"].check_name == "dy_rule__amount__min"
     assert rules["primary_key"].check_name == "dy_rule__primary_key"
@@ -54,7 +54,7 @@ def test_the_check_name_is_the_rewrite():
 def test_the_expression_is_not_resolved_where_the_record_is_built():
     """Only a run reads the expression, because reading it at definition time is slow (`docs/pre-1.0.md`)."""
 
-    class Exploding(dy.Schema):
+    class ExplodingSchema(dy.Schema):
         amount = dy.Int64()
 
         @dy.rule()
@@ -62,7 +62,7 @@ def test_the_expression_is_not_resolved_where_the_record_is_built():
             message = "the expression was resolved"
             raise RuntimeError(message)
 
-    rules = describe_rules(Exploding)
+    rules = describe_rules(ExplodingSchema)
 
     assert rules["never_evaluated"].name == "never_evaluated"
     with pytest.raises(RuntimeError, match="the expression was resolved"):
