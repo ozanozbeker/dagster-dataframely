@@ -8,30 +8,36 @@ title: "Partitioning"
 ```{python}
 #| label: setup-partitioning
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: the imports and `OrdersSchema` from `dd.data`, which every example on this page uses"
 #| output: false
 import dagster as dg
-import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
 from dagster_dataframely.data import OrdersSchema
 ```
 
-`dd.asset` passes `partitions_def` to `dg.asset` unchanged.
+`dd.asset` passes `partitions_def` to `dg.asset` unchanged, so you partition an asset as you would a plain `@dg.asset`.
 Partitioning has no setting of its own.
+Validation runs on each partition's frame separately, so a failed check in one partition changes no other partition's data.
+
+## Each partition has its own results
+
 With `filter=True`, the writer writes the error rows under the same partition key as the asset.
 A run of a clean partition writes that partition's error rows empty and leaves every other partition's error rows as they were.
-Validation runs on each partition's frame separately.
+
 The materialization has the number of rows written to that partition under `dagster/partition_row_count`.
 Dagster defines `dagster/row_count` as the whole table's count, so the package does not write it for a partition.
-Dagster's Overview tab shows a row count only from `dagster/row_count`, so the stat is empty for a partitioned asset unless something writes that key.
+Dagster's Overview tab shows a row count only from `dagster/row_count`, so it shows none for a partitioned asset unless something writes that key.
 To show the table's count there, return it under `dagster/row_count` on a `dg.MaterializeResult`, and the package copies it onto the materialization unchanged.
-If one partition's frame fails the column-schema check, no other partition's data changes.
 
 Every check has the asset's partitions.
-Dagster records each check evaluation under the partition it ran for, so a clean partition does not hide a failure in another partition.
+Dagster records each check evaluation under the partition it ran for, so a run of a clean partition does not replace another partition's failing result.
 Dagster marks partitioned checks as preview, so a partitioned asset emits `dg.PreviewWarning` when you define it.
+
+## Reading a partition
+
+The rows an asset receives depend on how it and its upstream asset are partitioned.
 
 **A root asset reads its partition key from a declared `context`.**
 It has no Dagster asset upstream, so it reads the partition's file itself:
@@ -48,9 +54,6 @@ def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     return raw
 ```
 
-A partitioned `@dg.asset` reads its key the same way.
-In a direct invocation, only `dg.build_asset_context(partition_key=...)` can supply the key.
-
 **An asset downstream of it needs no partition key.**
 An asset with the same `partitions_def` receives that partition's rows as its parameter, because the IO manager loads only that partition:
 
@@ -58,14 +61,13 @@ An asset with the same `partitions_def` receives that partition's rows as its pa
 #| label: partitioning-2
 @dd.asset(OrdersSchema, partitions_def=daily)
 def priority_orders(orders: pl.DataFrame) -> pl.DataFrame:
-    # orders is one partition's rows, the same shape unpartitioned code sees
     return orders.filter(pl.col("amount") > 100)
 ```
 
 It is the same function you would write without partitioning.
 
-**An unpartitioned asset downstream of a partitioned one receives one frame per partition.**
-The IO manager loads every partition and passes a dict keyed by partition key:
+**Under a `UPathIOManager`, an unpartitioned asset downstream of a partitioned one receives one frame per partition.**
+`PolarsParquetIOManager` loads every partition and passes a dict keyed by partition key:
 
 ```{python}
 #| label: partitioning-3
@@ -95,12 +97,17 @@ def rollup(orders: dict[str, pl.LazyFrame]) -> pl.LazyFrame:
 ```
 
 `pl.concat` then builds one plan over every partition.
-Polars reads no rows until validation collects the plan.
-With a hundred partitions, the eager form holds all hundred in memory at once.
-The lazy form holds only the plan's output.
+Polars reads no rows until validation collects the plan, as [`LazyFrame`s](lazyframes.qmd#validation-collects-the-plan) describes.
+With a hundred partitions, the eager form reads all hundred into memory before the decorated function runs.
+In the lazy form, Polars holds only the plan's output, so it holds fewer rows when the plan filters them.
 The dict's keys and the validation are the same in both forms.
 
-**A `MultiPartitionsDefinition` needs nothing special either.**
+`DuckDBPolarsIOManager` passes one `pl.DataFrame` with every partition's rows instead.
+Under it, annotate the parameter as `pl.DataFrame`, because a dict annotation fails.
+
+## Multi-partitioned assets
+
+A `MultiPartitionsDefinition` works as one dimension does.
 The error rows use the same partitions as the asset:
 
 ```{python}
@@ -113,8 +120,8 @@ grid = dg.MultiPartitionsDefinition({
 
 @dd.asset(OrdersSchema, partitions_def=grid)
 def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
-    cell = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
-    raw = pl.read_parquet(f"raw/orders/{cell['region']}/{cell['day']}.parquet")
+    keys = context.partition_key.keys_by_dimension  # {"day": ..., "region": ...}
+    raw = pl.read_parquet(f"raw/orders/{keys['region']}/{keys['day']}.parquet")
     return raw
 
 
@@ -122,7 +129,7 @@ def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
 def priority_orders(
     context: dg.AssetExecutionContext, orders: pl.DataFrame
 ) -> pl.DataFrame:
-    # orders is one cell's rows: one day, one region
+    # orders has one partition's rows: one day, one region
     return orders.filter(pl.col("amount") > 100)
 ```
 
@@ -144,7 +151,7 @@ priority_orders/2026-01-01/eu.parquet
 priority_orders__error_rows/2026-01-01/eu.parquet
 ```
 
-**An unpartitioned asset downstream of a multi-partitioned one receives a flat dict, not a nested one.**
+**Under a `UPathIOManager`, an unpartitioned asset downstream of a multi-partitioned one receives a flat dict, not a nested one.**
 It has one entry per partition, keyed by the multi-partition key:
 
 ```{python}
@@ -152,7 +159,7 @@ It has one entry per partition, keyed by the multi-partition key:
 @dd.asset(OrdersSchema)
 def eu_orders(orders: dict[dg.MultiPartitionKey, pl.LazyFrame]) -> pl.LazyFrame:
     # orders == {
-    #     "2026-01-01|eu": pl.LazyFrame,   # one cell, one scan
+    #     "2026-01-01|eu": pl.LazyFrame,   # one partition, one scan
     #     "2026-01-01|us": pl.LazyFrame,
     #     "2026-01-02|eu": pl.LazyFrame,
     #     "2026-01-02|us": pl.LazyFrame,
@@ -168,41 +175,36 @@ Every key is a `MultiPartitionKey` at runtime, so `keys_by_dimension` works on i
 Annotate the keys as `dg.MultiPartitionKey`, as above, so a type checker accepts that read.
 `dict[str, pl.LazyFrame]` also works, but a type checker then needs a cast before each read.
 
-To depend on one dimension only, use a partition mapping.
-An asset partitioned by `day` alone can depend on the multi-partitioned asset through `dg.MultiToSingleDimensionPartitionMapping(partition_dimension_name="day")`.
-It then receives only that day's regions: two entries instead of four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
+An asset partitioned by `day` alone can depend on the multi-partitioned asset with no `partition_mapping`.
+Dagster infers `dg.MultiToSingleDimensionPartitionMapping` for it, because its partitions definition matches the `day` dimension.
+That asset then receives only that day's regions: two entries instead of four, still keyed `2026-01-02|eu` and `2026-01-02|us`.
 
 ## Single-run backfills
 
 With `backfill_policy=dg.BackfillPolicy.single_run()`, one run covers a range of partitions.
 The asset reads the range from `context.partition_keys` and returns one frame for all of it.
 Dagster logs one materialization of the table for each partition in the range.
-The package logs one materialization of the error rows for each partition in the range too.
+With the error rows' spec, the package also logs one materialization of the error rows for each partition in the range.
 Every one of those events has the range's row count under `dagster/partition_row_count`, because the run has no count for a single partition.
 
 The IO manager must write a range in one output.
 `DuckDBPolarsIOManager` does, through the asset's `partition_expr` metadata.
 `PolarsParquetIOManager` raises on an output for more than one partition, so a single-run backfill fails under it whatever `filter` is set to.
-It is a `UPathIOManager`, and the package has not tested the others.
+`PolarsParquetIOManager` subclasses `UPathIOManager`, which raises the error.
+The package has tested a single-run backfill only under `PolarsParquetIOManager` and `DuckDBPolarsIOManager`.
 
 ## A partition with no data
 
 Some partitions have no source data and never will.
-For example, take a monthly-by-distributor grid where one distributor left the marketplace two years ago.
+For example, take an asset partitioned by month and by distributor, where one distributor has since left the marketplace.
 Its old partitions have real data and must stay, and its recent ones have no source file.
 
 Such a partition is neither a failure nor an empty table.
 Return `None` and the asset skips: the package validates nothing, nothing materializes, and the run succeeds.
-The partition stays unmaterialized, instead of materializing zero rows or failing.
 
 ```{python}
 #| label: partitioning-8
 from pathlib import Path
-
-
-class SupplierReport(dy.Schema):
-    supplier_id = dy.String(primary_key=True)
-    reported_on = dy.Date(nullable=False)
 
 
 monthly = dg.MultiPartitionsDefinition({
@@ -212,12 +214,12 @@ monthly = dg.MultiPartitionsDefinition({
 
 
 def source_path(key: dg.MultiPartitionKey) -> Path:
-    cell = key.keys_by_dimension
-    return Path(f"raw/supplier_reports/{cell['distributor']}/{cell['month']}.parquet")
+    keys = key.keys_by_dimension
+    return Path(f"raw/distributor_orders/{keys['distributor']}/{keys['month']}.parquet")
 
 
-@dd.asset(SupplierReport, partitions_def=monthly)
-def supplier_reports(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
+@dd.asset(OrdersSchema, partitions_def=monthly)
+def distributor_orders(context: dg.AssetExecutionContext) -> pl.DataFrame | None:
     path = source_path(context.partition_key)
     if not path.exists():
         return None
@@ -233,45 +235,5 @@ A forgotten `return` also returns `None`, so it skips the asset.
 The run succeeds, and the missing materialization is the only sign of the mistake.
 
 **Every check still reports on a skipped run, and passes.**
-Dagster requires a result for every check spec, so the package runs the rules over `Schema.create_empty()`.
-Each rule then runs over zero rows, so none fails.
+Each rule runs over zero rows, so none fails.
 Dagster records these results with no `target_materialization_data`, so it never links a passing check on a skipped partition to the last materialization that had data.
-
-## Automation
-
-`dd.asset` passes `automation_condition` and `freshness_policy` to `dg.asset` unchanged, and they apply to the asset only.
-
-**An asset downstream of the error rows' spec can automate on the error rows.**
-With the spec, every write materializes the error rows, so `dg.AutomationCondition.eager()` requests a run after each one:
-
-```{python}
-#| label: partitioning-9
-@dd.asset(OrdersSchema, filter=True)
-def checked_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
-    return raw_orders
-
-
-checked_orders__error_rows = dd.build_error_rows_spec(OrdersSchema, checked_orders)
-
-
-@dg.asset(
-    deps=[checked_orders__error_rows],
-    automation_condition=dg.AutomationCondition.eager(),
-)
-def triage_queue() -> None: ...
-```
-
-**A clean run materializes the error rows too**, because it writes them empty.
-So `triage_queue` runs after every run of `checked_orders` that writes the error rows, not only after a run where rows failed.
-
-**Automate on the check to run only when rows failed.**
-Each failed rule is a failed asset check with its own history.
-You can also add your own asset check to the asset:
-
-```{python}
-#| label: partitioning-7
-@dg.asset_check(asset=orders, name="triage_needed")
-def triage_needed() -> dg.AssetCheckResult: ...
-```
-
-Or read the error rows on a schedule, through the spec `build_error_rows_spec` returns.

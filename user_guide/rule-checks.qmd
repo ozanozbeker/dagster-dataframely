@@ -21,7 +21,7 @@ from dagster_dataframely.errors import ColumnSchemaError
 ```
 
 `dd.build_rule_checks` reports a schema's rules as asset checks on an asset that `dd.asset` did not build.
-The asset can be a plain `@dg.asset`, an asset another integration builds, or a table written outside Dagster.
+The asset can be a plain `@dg.asset`, an asset another integration builds, or a `dg.AssetSpec` for a table written outside Dagster.
 The checks read the table and write nothing.
 A row that fails a rule stays in the table, and its check fails.
 
@@ -31,7 +31,7 @@ Pass the schema and the asset key to `dd.build_rule_checks`:
 
 ```{python}
 #| label: rule-checks-1
-class Events(dy.Schema):
+class EventsSchema(dy.Schema):
     event_id = dy.Int64(primary_key=True)
     amount = dy.Int64(nullable=False, min=0)
     score = dy.Int64(
@@ -42,9 +42,9 @@ class Events(dy.Schema):
 
 
 events = dg.AssetSpec(
-    "events", metadata=dd.wiring.get_column_schema_metadata(Events)
+    "events", metadata=dd.wiring.get_column_schema_metadata(EventsSchema)
 ).with_io_manager_key("warehouse")
-event_checks = dd.build_rule_checks(Events, asset="events")
+event_checks = dd.build_rule_checks(EventsSchema, asset="events")
 
 {
     "step": event_checks.node_def.name,
@@ -52,32 +52,30 @@ event_checks = dd.build_rule_checks(Events, asset="events")
 }
 ```
 
-`asset` takes a string or a `dg.AssetKey`, as `dd.wiring.build_asset_check_specs` does.
 `dd.build_rule_checks` returns one `dg.AssetChecksDefinition`, which goes in `dg.Definitions(asset_checks=[...])`.
 Dagster runs every check in it in one step, named `<key>__checks` unless you pass `name=`.
-The default is not the schema's name in snake case, because a step named `events` beside an asset named `events` fails to load.
 
-The checks are the ones an asset built with `dd.asset` has: the column-schema check, then one check per rule.
+The checks are the ones an asset built with `dd.asset` has: the column-schema check, then the checks for the schema's rules.
 `check_granularity` and `max_failure_examples` mean what they mean on `dd.asset`, and [Settings](settings.qmd) lists their sources.
-`dd.build_rule_checks` resolves each setting once, where you call it, so the results always name the checks it declares.
+`dd.build_rule_checks` resolves each setting once, when you call it.
 
 The Columns tab reads the asset's own definition metadata, so `dd.build_rule_checks` cannot fill it.
-Pass `dd.wiring.get_column_schema_metadata(Events)` as the asset's `metadata`, as `events` does above.
+Pass `dd.wiring.get_column_schema_metadata(EventsSchema)` as the asset's `metadata`, as `events` does above.
 
 ## How the checks read the table
 
 The checks read the table as a Dagster input, through the asset's own IO manager, as a `pl.DataFrame`.
-The input is always a `pl.DataFrame`, because some IO managers load no other type: `DuckDBPolarsIOManager` raises for a `pl.LazyFrame` input.
 
-So the asset needs an IO manager that reads its table.
+So the asset needs an IO manager that loads its table.
 `events` sets one with `dg.AssetSpec.with_io_manager_key`.
-An asset with no IO manager key reads through `io_manager`, and the step fails while loading the input if that IO manager does not store the table.
+The checks load an asset with no IO manager key through `io_manager`.
+If that IO manager does not store the table, the step fails while loading the input.
 For an asset another integration builds, such as a dbt model or a dlt resource, set the IO manager key where that integration takes one.
-This page tests only `dg.AssetSpec.with_io_manager_key`.
+The tests of `dd.build_rule_checks` set the key only with `dg.AssetSpec.with_io_manager_key`.
 [Open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues) for an integration whose assets the checks cannot load.
 
 The run below checks a DuckDB table that SQL wrote, as a dbt model would.
-It selects only the checks, as the "Execute" button does in the UI:
+It selects only the checks, as the "Execute all" button on the Checks tab does:
 
 ```{python}
 #| label: rule-checks-2
@@ -124,7 +122,6 @@ So Dagster fails the check step and does not run the assets downstream of `event
 result.success
 ```
 
-The table still has row 2, because the checks write nothing.
 `dd.build_rule_checks` takes no `filter` argument, and it writes no error rows.
 
 **A failing `"warn"` rule's check only reports.**
@@ -132,13 +129,13 @@ Declare a rule `"warn"` to report its failures without stopping anything.
 [Rule severity](rule-severity.qmd) lists the ways to declare it.
 
 The check results have the same descriptions and metadata as the results of an asset built with `dd.asset`.
-[What a run produces](what-a-run-produces.qmd) lists them.
+[What a run produces](what-a-run-produces.qmd#the-checks) lists them.
 
-**A run writes the sample rows to the Dagster event log unredacted.**
+**A run writes the failure examples to the Dagster event log unredacted.**
 
-## A dtype the table stores
+## A dtype that differs from the schema's
 
-A table that SQL wrote often stores another dtype than the schema declares.
+A table that SQL wrote can store a different dtype from the one the schema declares.
 DuckDB's `INTEGER` reads back as `Int32`, so it does not match `dy.Int64`:
 
 ```{python}
@@ -161,9 +158,8 @@ except ColumnSchemaError as error:
 ```
 
 The column-schema check fails, and the step fails with `ColumnSchemaError`.
-No rule is evaluated.
-Declare the dtype the table stores, `dy.Int32` here, or change what writes the table.
-This package never casts for you, and `dd.build_rule_checks` has no function body to cast in.
+The checks evaluate no rule.
+`dd.build_rule_checks` has no decorated function to cast in.
 
 ## Checking an asset you write yourself
 
@@ -172,15 +168,15 @@ Use it when the write must not depend on the check results:
 
 ```{python}
 #| label: rule-checks-5
-@dg.asset(metadata=dd.wiring.get_column_schema_metadata(Events))
+@dg.asset(metadata=dd.wiring.get_column_schema_metadata(EventsSchema))
 def staged_events() -> pl.DataFrame:
     return pl.DataFrame({"event_id": [1, 2], "amount": [5, -1], "score": [1, 2]})
 
 
-staged_checks = dd.build_rule_checks(Events, asset="staged_events")
+staged_checks = dd.build_rule_checks(EventsSchema, asset="staged_events")
 ```
 
-![The asset's Checks tab. The checks ran in their own step, against a table the IO manager had already written. The selected check is blocking, because its rule is `"error"`, and the rows that failed it are in that table, not in the error rows.](../assets/images/split-checks.png)
+![The Checks tab of the demo's `warehouse_orders` shows checks that run in their own step, after the IO manager writes the table. The selected check is blocking because its rule is `"error"`, and the rows that failed it are in the table, not in the error rows.](../assets/images/split-checks.png)
 
 The IO manager writes whatever the asset returns, and the checks run afterwards against the written table.
 Unlike with `dd.asset`, the table can contain rows that failed an `"error"` rule.
@@ -195,13 +191,17 @@ Pass the asset's `partitions_def`, and each run checks one partition:
 days = dg.StaticPartitionsDefinition(["2026-10-01", "2026-10-02"])
 
 
-@dg.asset(partitions_def=days, metadata=dd.wiring.get_column_schema_metadata(Events))
+@dg.asset(
+    partitions_def=days, metadata=dd.wiring.get_column_schema_metadata(EventsSchema)
+)
 def daily_events(context: dg.AssetExecutionContext) -> pl.DataFrame:
     amount = 5 if context.partition_key == "2026-10-01" else -1
     return pl.DataFrame({"event_id": [1], "amount": [amount], "score": [1]})
 
 
-daily_checks = dd.build_rule_checks(Events, asset="daily_events", partitions_def=days)
+daily_checks = dd.build_rule_checks(
+    EventsSchema, asset="daily_events", partitions_def=days
+)
 ```
 
 ```{python}
@@ -227,10 +227,11 @@ with tempfile.TemporaryDirectory() as tmp:
     assert {evaluation.partition for evaluation in evaluations} == {"2026-10-01"}
 ```
 
-The check reads only that partition's table, and Dagster records each evaluation under the partition.
-So each partition is validated separately, as an asset built with `dd.asset` validates it.
+The checks read only that partition's rows, and Dagster records each evaluation under the partition.
+So the checks validate each partition separately, as an asset built with `dd.asset` does.
 Nothing checks that `partitions_def` matches the asset's.
-Without it, the check reads every partition at once: with `dg.FilesystemIOManager`, it receives a `dict` and fails its type check.
+Without `partitions_def`, the checks read every partition at once.
+With `dg.FilesystemIOManager`, the input is a `dict`, and Dagster fails the step with `DagsterTypeCheckDidNotPass`.
 
 ## Selecting checks
 

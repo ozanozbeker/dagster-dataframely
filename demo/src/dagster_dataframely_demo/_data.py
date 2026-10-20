@@ -1,4 +1,4 @@
-"""The sample data the bronze assets return in place of a real source, derived from `dd.data`."""
+"""The module holds the sample rows the bronze assets return in place of a real source, and the helpers that select a day's or a region's orders."""
 
 import datetime as dt
 
@@ -26,12 +26,12 @@ def storefront_customers() -> pl.DataFrame:
 
 
 def partner_orders() -> pl.DataFrame:
-    """Return the B2B partner's order lines, whose export writes `quantity` as `Int64`."""
+    """Return the B2B partner's order lines, with `quantity` as `Int64`."""
     return storefront_orders.with_columns(pl.col("quantity").cast(pl.Int64))
 
 
 def legacy_orders() -> pl.DataFrame:
-    """Return the old platform's order lines, which stored refunds as negative amounts."""
+    """Return the old platform's order lines, with refunds as negative amounts."""
     return storefront_orders.head(3).with_columns(
         order_id=pl.Series(["ORD-0021", "ORD-0022", "ORD-0023"]),
         line_no=pl.lit(1, dtype=pl.Int32),

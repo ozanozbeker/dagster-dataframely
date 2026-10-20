@@ -1,4 +1,4 @@
-"""A hand-wired asset and its checks, which run after the asset writes the table."""
+"""`warehouse_orders` is hand-wired, so its checks run after the IO manager writes the table."""
 
 from collections.abc import Iterator
 
@@ -23,7 +23,10 @@ def warehouse_orders(raw_marketplace_orders: pl.LazyFrame) -> pl.LazyFrame:
 def warehouse_orders_checks(
     warehouse_orders: pl.LazyFrame,
 ) -> Iterator[dg.AssetCheckResult]:
-    """Check the written `warehouse_orders` table. A failing `"error"` rule's check is blocking, so assets downstream do not run."""
+    """Check the written `warehouse_orders` table.
+
+    A failing `"error"` rule's check is blocking, so assets downstream do not run.
+    """
     yield from dd.wiring.evaluate_checks(
         OrdersSchema, warehouse_orders, asset_key=WAREHOUSE_ORDERS
     )

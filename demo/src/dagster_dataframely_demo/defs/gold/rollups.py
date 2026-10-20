@@ -1,4 +1,4 @@
-"""Tables built from the validated order lines."""
+"""The gold assets build tables from the validated order lines."""
 
 import dagster as dg
 import polars as pl

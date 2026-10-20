@@ -5,7 +5,7 @@ title: "Rule severity"
 ```{python}
 #| label: setup-rule-severity
 #| code-fold: true
-#| code-summary: "Setup: the imports every example on this page uses"
+#| code-summary: "Setup: every example on this page uses these imports"
 #| output: false
 import dataframely as dy
 import polars as pl
@@ -19,7 +19,7 @@ A rule is `"error"` unless the schema declares `"warn"`.
 | severity | a row that fails the rule | the rule's check |
 | --- | --- | --- |
 | `"error"` | is not written to the table: the run fails, or with `filter=True` the package writes the row under `<name>__error_rows` | fails at `ERROR` |
-| `"warn"` | is written to the table | fails at `WARN` |
+| `"warn"` | is written to the table, unless it also fails an `"error"` rule | fails at `WARN` |
 
 [Validation](validation.qmd) shows what each kind of run writes, and [Filtering error rows](filtering-error-rows.qmd) shows the error rows.
 
@@ -29,7 +29,7 @@ The schema declares each severity, so every asset that uses the schema has the s
 
 ```{python}
 #| label: rule-severity-1
-class OrdersSchema(dy.Schema):
+class LenientOrdersSchema(dy.Schema):
     order_id = dy.String(
         primary_key=True,
         regex=r"^ORD-\d{4}$",
@@ -58,21 +58,8 @@ Dataframely does not read `metadata`, so the key does not change how Dataframely
 A schema-level rule is `primary_key` or a `@dy.rule()`, and neither has a column to declare it on.
 The attribute takes the same two forms: one value for every schema-level rule, or a mapping.
 
-The values are the strings `"error"` and `"warn"`.
 A subclass has its parent's declarations.
-The Columns tab does not show the `dagster_dataframely` key as a tag, because the checks already show each rule's severity.
-
-A check whose rules include an `"error"` rule is blocking, so the specs of `OrdersSchema` mark the checks whose failure stops the write:
-
-```{python}
-#| label: rule-severity-2
-@dd.asset(OrdersSchema)
-def orders() -> pl.DataFrame:
-    return pl.DataFrame()
-
-
-{spec.name: spec.blocking for spec in orders.check_specs}
-```
+The Columns tab does not show the `dagster_dataframely` key as a tag.
 
 ### Rule names
 
@@ -84,50 +71,64 @@ Four column arguments generate a rule under a different name, and the package re
 | `nullable` | `nullability` |
 | `allow_inf` | `inf` |
 | `allow_nan` | `nan` |
-| `check`, when `check=` is a dict | every `check__<key>` rule on the column |
+| `check`, when `check=` is a list or a dict | every `check__*` rule on the column |
 
-A `dy.List` or `dy.Array` adds `inner_` to the rule names of its inner column, and those rules have no argument of their own.
+A `dy.List` or `dy.Array` adds `inner_` to the rule names of its inner column, such as `inner_nullability`.
+A `dy.Struct` adds `inner_<field>_` to the rule names of each field, such as `inner_email_nullability`.
+The arguments in the table do not name those rules, so `dd.asset` raises on `inner_nullable`.
 
-### A declaration the package cannot read raises
+### `dd.asset` raises on a declaration it cannot read
 
-No type checker reads inside `metadata`.
-So every public function that takes a schema checks the declarations, and raises `InvalidSeverityError` when you declare the asset:
+`dd.asset` checks the declarations when you declare the asset, and raises `InvalidSeverityError` on one it cannot read:
 
 ```{python}
-#| label: rule-severity-3
-class Misspelled(dy.Schema):
+#| label: rule-severity-2
+class MisspelledSchema(dy.Schema):
     amount = dy.Float64(
         min=0.0, metadata={"dagster_dataframely": {"severity": {"minimum": "warn"}}}
     )
 
 
 try:
-    dd.asset(Misspelled)
+    dd.asset(MisspelledSchema)
 except dd.errors.InvalidSeverityError as error:
     print(error)
 ```
 
-It raises for six mistakes:
+It raises for these mistakes:
 
+- a `dagster_dataframely` entry or a `__dagster_dataframely__` that is not a mapping;
 - a key other than `severity` under `dagster_dataframely` or in `__dagster_dataframely__`;
 - a value other than `"error"`, `"warn"` or a mapping of rule names to those, including `dg.AssetCheckSeverity.WARN`;
 - a name that is not one of the column's rules;
-- one value for every rule on a column that has no rules;
+- one value for every rule, on a column that has no rules or in `__dagster_dataframely__` on a schema with no schema-level rules;
 - a column rule, such as `amount|min`, in `__dagster_dataframely__`;
 - a schema-level rule that does not exist.
 
 ## Blocking checks
 
 With `filter=False`, the default, a check whose rules include an `"error"` rule is blocking, like the column-schema check.
-With `filter=True`, no rule's check is blocking, because the run writes the table and succeeds.
+With `filter=True`, no rule's check is blocking.
+
+The check specs of `orders` show which checks are blocking:
+
+```{python}
+#| label: rule-severity-3
+@dd.asset(LenientOrdersSchema)
+def orders() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+{spec.name: spec.blocking for spec in orders.check_specs}
+```
 
 The Checks tab marks each blocking check.
-Dagster stops the assets downstream when a blocking check fails at `ERROR`, but it does not stop the asset's own write, so `dd.asset` does not write the table itself.
+Dagster does not execute the assets downstream in the same run when a blocking check fails at `ERROR`.
 A failing check also sets the asset's health: "Degraded" for a check at `ERROR`, and "Warning" for a check at `WARN`.
 
 ### Collapsed checks
 
-At `column` granularity, one check reports for several rules:
+With `check_granularity="column"`, one check reports for all of a column's rules ([Settings](settings.qmd)):
 
 - The check is blocking when `filter=False` and any of its rules is `"error"`.
 - It fails at `ERROR` when a failing rule is `"error"`, and at `WARN` when only `"warn"` rules failed.

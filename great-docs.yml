@@ -18,7 +18,7 @@ favicon: assets/dagster-dataframely-favicon-dark.svg
 # great-docs reads no pre-made icon sizes, so this links the exported Apple touch icon. The URL is absolute, because Quarto does not rewrite paths in header HTML.
 include_in_header: '<link rel="apple-touch-icon" href="https://ozanozbeker.com/dagster-dataframely/assets/dagster-dataframely-favicon-dark-180.png">'
 
-# The site is great-docs' default look in Nord's colors. `assets/theme.css` assigns the palette to the variables great-docs reads, and nothing else.
+# `assets/theme.css` sets Nord's colors on the variables great-docs reads, then overrides the great-docs and Quarto rules that its comments name.
 accent_color:
   light: "#5E81AC" # nord10
   dark: "#88C0D0" # nord8
@@ -26,7 +26,7 @@ accent_color:
 site:
   css: assets/theme.css
   highlight-style: nord
-  # Quarto's defaults give the body 800px, each sidebar 250px and each gutter 1.5em. The body takes the room instead.
+  # Quarto's defaults give the body 800px, each sidebar 250px and each gutter 1.5em.
   grid:
     sidebar-width: 220px
     body-width: 1000px
@@ -52,9 +52,9 @@ seo:
 # Adds braces to the Python fences in the build directory's copies, so `README.md` and docstrings keep plain fences for GitHub, PyPI and ruff (ADR-0009).
 pre_render: scripts/brace-example-fences.py
 
-# No `freeze:` key, so Quarto runs every page on every build, which the build check needs: a change in `src/` can break a page nobody edited. `freeze: false` would have no effect, because great-docs omits it. Keeping `_freeze/` out of git and the CI cache makes every page run again.
+# This file has no `freeze:` key, so Quarto runs every page on every build. The build check needs that, because a change in `src/` can break a page nobody edited. `freeze: false` would have no effect, because great-docs omits it. Keeping `_freeze/` out of git and the CI cache makes every page run again.
 
-# Listed here as pkgdown lists `articles:`, not by filename prefix. A reader reads the Guide pages once, in order, starting with Get started, and looks things up in the Details pages.
+# This list sets the page order and the Guide and Details sections, as pkgdown's `articles:` does. great-docs would otherwise order the pages by numeric filename prefix. A reader reads the Guide pages once, in order, starting with Get started, and looks things up in the Details pages.
 user_guide:
   - section: Guide
     contents:
@@ -77,18 +77,18 @@ user_guide:
       - hand-wiring.qmd
       - upgrading.qmd
 
-# Grouped by module, because the default groups by kind and puts `dd.wiring` under four headings.
+# The sections follow the modules, because the default groups by kind and puts `dd.wiring` under four headings.
 reference:
   desc: >-
-    Every public name, with its signature, every parameter and one example that runs, generated
-    from the source. The guide tells the story around them.
+    Generated from the source, these pages document every public name and its parameters. The
+    guide tells the story around them.
   sections:
     - title: Core
       desc: >-
         `dd.asset` builds an asset from a schema, and `build_error_rows_spec` adds that asset's
-        error rows to the asset graph. `build_collection_checks` reports a Collection's
-        collection filters as asset checks on its member assets. `build_rule_checks` reports
-        a schema's rules as asset checks on an asset `dd.asset` did not build.
+        error rows to the asset graph. `build_collection_checks` returns asset checks that report
+        a Collection's collection filters on its member assets. `build_rule_checks` returns asset
+        checks that report a schema's rules on an asset `dd.asset` did not build.
       contents:
         - asset
         - build_error_rows_spec
@@ -98,8 +98,9 @@ reference:
 
     - title: Data
       desc: >-
-        The example schema and frames every example on this site uses, shipped so an example
-        runs from an editor hover too.
+        `OrdersSchema`, `storefront_orders` and `marketplace_orders` are the example data that
+        most examples on this site use. The package ships them, so an example copied from an
+        editor hover runs as written.
       contents:
         - data.OrdersSchema
         - data.storefront_orders
@@ -114,8 +115,8 @@ reference:
 
     - title: Hand-wiring
       desc: >-
-        `dd.asset` assembles these parts. Use them to build a `@dg.asset` yourself, where
-        `dd.asset` does not fit.
+        `dd.asset` calls most of these functions. Use them to build a `@dg.asset` that `dd.asset` cannot
+        build.
       contents:
         - wiring.get_column_schema_metadata
         - wiring.get_table_schema
@@ -132,7 +133,7 @@ reference:
 
     - title: Errors
       desc: >-
-        This package raises these errors. Each one subclasses `DagsterDataframelyError`.
+        `DagsterDataframelyError` is the base class of every other error this package defines.
       contents:
         - errors.DagsterDataframelyError
         - errors.CollectionNotSupportedError
@@ -169,15 +170,15 @@ skill:
     - need: Build a @dg.asset from the parts yourself
       use: dd.wiring
   gotchas:
-    - "The decorated function must return the schema's dtypes. The package never casts, and a dtype that differs fails the run before `Schema.filter` runs."
-    - "Write the values of an `is_in` as a list, not a set. A set orders differently in each process, so the code version changes each time the code location starts."
-    - "`dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`. To skip, return `None` itself."
+    - "The decorated function must return a frame with the schema's dtypes. The package never casts, so a dtype that differs fails the run before `Schema.filter` runs."
+    - "Write the values of Polars' `is_in` in a `check=` or a `@dy.rule()` as a list, not a set of strings. Python orders a set of strings differently in each process, so the code version changes each time the code location starts."
+    - "Returning `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`. To skip, return `None` itself."
     - "A Polars upgrade can change every asset's code version at once, because the hash uses Polars' expression serialization."
     - "`filter=True` adds a `context` parameter to the asset, so a direct invocation passes `dg.build_asset_context()` first."
     - "A direct invocation with error rows needs `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or it raises `ErrorRowsDirError`."
-    - "A flag's environment variable accepts `true` or `false` only. `1`, `yes` and `on` raise `InvalidSettingError`."
+    - "`DAGSTER_DATAFRAMELY_STATISTICS` accepts only `true` or `false`, in any letter case. `1`, `yes` and `on` raise `InvalidSettingError`."
   best_practices:
     - "Import the module, not the name: `import dagster_dataframely as dd`, then `@dd.asset`. A bare `asset` reads as Dagster's."
     - "Name a `dy.Schema` subclass with the `Schema` suffix, as Dataframely does: `OrdersSchema` is the schema, `orders` is the asset."
-    - "Use `dd.data.OrdersSchema` and its frames to try something, so the example matches the documentation."
-    - "Pin to one minor version before 1.0, and read the Upgrading page before moving to the next."
+    - "To try the package, use `dd.data.OrdersSchema`, `dd.data.storefront_orders` and `dd.data.marketplace_orders`, so your output matches the examples in the documentation."
+    - "Pin to one minor version before 1.0, and read [Upgrading](https://ozanozbeker.com/dagster-dataframely/user-guide/upgrading.html) before moving to the next."

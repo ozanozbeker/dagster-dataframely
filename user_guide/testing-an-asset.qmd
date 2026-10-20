@@ -5,7 +5,7 @@ title: "Testing an asset"
 ```{python}
 #| label: setup-testing-an-asset
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: import `OrdersSchema` and its frames, declare `daily`, and write one day of raw orders"
 #| output: false
 import dagster as dg
 import dataframely as dy
@@ -27,8 +27,8 @@ storefront_orders.write_parquet("raw/orders/2026-01-02.parquet")
 To test an asset, call it.
 Direct invocation is Dagster's documented way to unit-test an asset.
 It needs no run, no IO manager and no instance.
-A call returns the same materialization and check results a run yields, as ordinary Python objects.
-`dd.testing.DirectInvocationResult.from_invocation` separates them into the materialization and the check results:
+A call yields the materialization and the check results a run yields, as ordinary Python objects.
+`dd.testing.DirectInvocationResult.from_invocation` returns them as one record, with a `materialization` and a dict of `checks`:
 
 ```{python}
 #| label: testing-an-asset-1
@@ -61,9 +61,7 @@ def test_orders_filters_the_failing_lines(error_rows_dir):
 #| label: testing-an-asset-4
 #| echo: false
 #| output: false
-# A cell cannot run a pytest test, so the assertions on this page would otherwise ship
-# unchecked on the one page that teaches testing. Call the bodies directly: only the fixture
-# carries a decorator, and what it supplies is a directory and an environment variable.
+# A cell cannot run pytest, so set what the fixture sets and call the test directly.
 import os
 import tempfile
 
@@ -72,26 +70,13 @@ with tempfile.TemporaryDirectory() as tmp:
     test_orders_filters_the_failing_lines(Path(tmp))
 ```
 
-**`materialization` is `None` when the decorated function returns `None`.**
-So a test asserts that it is not `None` before it reads the frame.
-The assertion also narrows its type to `dg.MaterializeResult` for a type checker.
-The validated frame is its `value`.
-Its `metadata` has the keys a run writes, such as `dataframely/error_rows_count`.
+## An asset with `filter=True` takes a context
 
-**`checks` holds each `dg.AssetCheckResult` whole, keyed by check name.**
-A failing rule's result has the failing rows in its `dataframely/failed_examples` metadata, so a test can assert which rows a rule failed.
-
-**Pass the helper the call's return value, not a list of it.**
-Dagster annotates the call as returning `object`, so a type checker rejects `list(orders(...))`.
-
-**A writer writes the error rows, and the call does not yield them.**
-The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from the result.
-A run also records a materialization for the error rows, but a call has no step to record one.
-
-**An asset with `filter=True` takes a `context` parameter**, even when your function does not declare one.
+**An asset with `filter=True` takes a `context` parameter**, even when the decorated function does not declare one.
+The package needs the context to write the error rows.
 Pass the context first and the upstream frames after it, as Dagster does.
 A call has no IO manager, so it writes the error rows to the directory in `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` instead.
-It reads that variable only when some rows failed an `"error"` rule.
+[Where a call writes the error rows](#where-a-call-writes-the-error-rows) covers that directory.
 An asset with `error_rows_io_manager_key` still requires that resource.
 Pass any value for it in `dg.build_asset_context(resources=...)`, because the call does not use it.
 
@@ -108,12 +93,10 @@ clean = storefront_orders
 result = dd.testing.DirectInvocationResult.from_invocation(plain_orders(clean))
 ```
 
-The call yields a separate `dg.AssetCheckResult` for every check the asset declares, with its asset key set.
-So a call reports the same check names against the same asset keys as a run.
-
 If the decorated function declares a `context` of its own, build one with `dg.build_asset_context()`.
 A partitioned root asset has no upstream inputs, so its call passes only a context with the partition key.
-`daily` is the `dg.DailyPartitionsDefinition` from [Partitioning](partitioning.qmd), declared in the setup cell above:
+[Partitioning](partitioning.qmd), the next page, covers partitioned assets.
+The setup cell above declares `daily`, a `dg.DailyPartitionsDefinition`:
 
 ```{python}
 #| label: testing-an-asset-3
@@ -127,9 +110,28 @@ result = dd.testing.DirectInvocationResult.from_invocation(
 )
 ```
 
-**An asset that aborts raises the error from the helper, not from the call.**
-The call returns a generator, and the package validates the frame only when something iterates it.
-The helper iterates it, so put the helper inside `pytest.raises`:
+## The result has the materialization and the checks
+
+**`materialization` is `None` when the decorated function returns `None`.**
+So a test asserts that it is not `None` before it reads the frame.
+The assertion also narrows its type to `dg.MaterializeResult` for a type checker.
+The validated frame is its `value`.
+Its `metadata` has the row count and the `dataframely/` keys a run writes, but not `dagster/column_schema`.
+
+**`checks` holds each `dg.AssetCheckResult` whole, keyed by check name.**
+A failing rule's result has up to `max_failure_examples` of the rows that failed it, under `dataframely/failed_examples`, so a test can assert which rows failed the rule.
+
+**Pass `from_invocation` the call's return value, not a list of it.**
+Dagster annotates the call as returning `object`, so a type checker rejects `list(orders(...))`.
+
+**The call writes the error rows to a parquet file and does not yield them.**
+The call yields one materialization, for the table, so the test reads the error rows from the parquet file, not from the result.
+
+## `from_invocation` raises the errors
+
+**`from_invocation` raises the asset's errors, not the call.**
+The call returns a generator, so neither the decorated function nor the validation runs until something iterates it.
+`from_invocation` iterates it, so put `from_invocation` inside `pytest.raises`:
 
 ```{python}
 #| label: testing-an-asset-5
@@ -147,12 +149,15 @@ def test_plain_orders_stops_at_a_failing_line():
 test_plain_orders_stops_at_a_failing_line()
 ```
 
-Test a failing `"error"` rule with `pytest.raises(dd.errors.ValidationAbortError)`, and a frame whose columns or dtypes differ from the schema with `pytest.raises(dd.errors.ColumnSchemaError)`.
+A frame whose columns or dtypes differ from the schema raises `dd.errors.ColumnSchemaError` the same way.
+An asset with `filter=True` raises `dd.errors.NoValidRowsError` only when every row fails an `"error"` rule.
 
-**The helper raises `TypeError` for anything that calling an asset built with `dd.asset` does not return.**
+**`from_invocation` raises `TypeError` for anything that calling an asset built with `dd.asset` does not return.**
 That covers the asset itself, uncalled, and the frame or `dg.MaterializeResult` a plain `@dg.asset` returns.
 It also covers a second materialization and a repeated check name.
-The check results of `dd.build_collection_checks` repeat each check name, once per member.
+So `from_invocation` cannot read the results of [`dd.build_collection_checks`](collection-checks.qmd), which repeat each check name once per member.
+
+## A call cannot add metadata through the context
 
 **Direct invocation does not support metadata added through the context.**
 `context.add_asset_metadata` raises when you call the asset directly:
@@ -163,3 +168,34 @@ AttributeError: 'DirectAssetExecutionContext' object has no attribute '_step_exe
 
 A plain `@dg.asset` raises the same error, so the limit is Dagster's, not this package's.
 Return a `dg.MaterializeResult` instead: a call yields it with its metadata, tags and data version, so a test reads them from `result.materialization`.
+
+## Where a call writes the error rows
+
+Direct invocation has no step, so there is no IO manager to write the error rows.
+Instead, the package writes them to a parquet file under `error_rows_dir`, the directory `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` sets.
+
+```bash
+DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR=/tmp/error_rows
+```
+
+The package uses the value the variable has when it writes the error rows, not its value at import.
+So a `monkeypatch.setenv` in a test takes effect even though Python imported the module that defines the asset earlier.
+A call with no error rows never reads it and writes no file.
+
+If the variable is unset, a call with error rows raises `ErrorRowsDirError`.
+There is no default directory.
+
+There is no per-asset override, for the reason [the out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/error-rows-dir-argument.md) gives.
+
+Under that directory, the file path follows `UPathIOManager`'s layout, built from the error-rows key and the partition key:
+
+```text
+<error_rows_dir>/<key part>/.../<name>__error_rows.parquet
+<error_rows_dir>/<key part>/.../<name>__error_rows/<partition>.parquet
+```
+
+Each partition is a separate file in a `<name>__error_rows/` directory, so a backfill of one partition rewrites one file.
+The file is always parquet, so it keeps every dtype the schema declares.
+
+The package formats a multi-partition key as its dimension keys joined by `/`, in dimension-name order.
+It escapes a partition key that contains `..` or starts with `/`, instead of rejecting it, so every file it writes is under `error_rows_dir`.

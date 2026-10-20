@@ -5,17 +5,17 @@ title: "Naming"
 ```{python}
 #| label: setup-naming
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: the imports every example on this page uses"
 #| output: false
-import dagster as dg
-import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
 from dagster_dataframely.data import OrdersSchema
 ```
 
-`dd.asset` sets four names: the asset's description, each check's description, the name of the asset's op, and the namespaces of the names and keys it generates.
+From the schema, `dd.asset` sets the asset's description, fills the Columns tab, and names and describes each check.
+To change the text the Dagster UI shows, find its source below, and edit that docstring, rule or argument.
+The page also covers the op name that Dagster builds from the asset key, and the three namespaces this package reserves.
 
 ## The description comes from the schema
 
@@ -23,17 +23,15 @@ from dagster_dataframely.data import OrdersSchema
 
 ```{python}
 #| label: naming-1
-class OrdersSchema(dy.Schema):
-    """A customer order line: one row per product on one order."""
-
-
 @dd.asset(OrdersSchema)
 def orders() -> pl.DataFrame:
-    """Joins the two extracts and drops the test accounts."""
+    """Join the two extracts and drop the test accounts."""
     ...
+
+
+orders.get_asset_spec().description
 ```
 
-The catalog shows `A customer order line: one row per product on one order.` as the description.
 The schema's docstring takes precedence over the function's, because it describes the table, not the code.
 Assets that share a schema share its description, and `description=` gives one of them its own.
 `dd.asset` reads the schema's own docstring only, and ignores one inherited from a parent class, including `dy.Schema`'s.
@@ -42,7 +40,7 @@ The spec from `build_error_rows_spec` has its own description: `Rows from <asset
 
 ## Where a check's text comes from
 
-The Dagster UI shows a schema's rules in three places, and each has its own fallback order.
+The Dagster UI shows a schema's rules in three places, and the table lists the sources of each in order.
 
 | place | first choice | then | then |
 | --- | --- | --- | --- |
@@ -60,22 +58,21 @@ Dataframely builds a `@dy.rule()` expression by calling its function.
 `dd.asset` builds every rule's expression to derive the [code version](declaring-an-asset.qmd#the-code-version), so a function that raises raises where you declare the asset, not when it runs.
 With your own `code_version`, `dd.asset` builds an expression only for a description that shows it.
 
-The package renders a rule's value, such as the bound of `min`, in the column constraint and in each check result's `dataframely/rule_expr` metadata, but never in the check name.
+A rule's value, such as the bound of `min`, appears in the column constraint, the check description and the check result's metadata, but never in the check name.
 So changing a bound does not rename the check or start a new check history.
 
 The package renders column constraints as operators: `>= 0.0`, `length <= 64 bytes`, `matches ^[a-z]+$`, `in (a, b)`, `aligned to 1h`.
 It omits `nullability` and `unique`, because Dagster has separate fields for them on the column.
 It omits `inf` and `nan` too, because Dataframely adds them to every float column by default.
-All four still appear in the check name and the check description.
+Each of the four still has its own check at `rule` granularity, and a collapsed check's description lists it at `column` granularity.
 
-A `check=` with a bare lambda has no name, so the package renders it as `custom check`, in the Columns tab and before the expression in a check description.
+Dataframely names a bare `check=` lambda `check`, which does not show what it tests.
+The package renders it as `custom check`, in the Columns tab and before the expression in a check description.
 Name your checks with a dict, such as `check={"lowercase": ...}`, and the package shows the key instead.
 
 ## Dagster names the op after the whole asset key
 
 `@dd.asset(OrdersSchema, key_prefix="sales", name="orders")` creates an op named `sales__orders`, the same way `@dg.asset` names its op.
-An op name must be unique within a code location, and an asset name need not be.
-With the asset name alone, two assets named `orders` under different prefixes would have two ops with the same name.
 
 The op name is also the step key and the key under `ops:` in run config, so both use the whole asset key:
 
@@ -88,12 +85,10 @@ ops:
 
 ## The reserved namespaces
 
-There are three.
+This package reserves three namespaces: `dy_`, `dataframely/` and `<name>__error_rows`.
 
 **`dy_`** starts every check name and every rule column in the error rows.
 The check names are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>`, and each collection filter's check `dy_filter__<name>`.
-A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
-So a check name cannot contain a slash.
 A collapsed check's failure examples also have a `dy_rule` column, which names the rule each row failed.
 
 A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
@@ -102,13 +97,7 @@ A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, wit
 A collection filter's check name is `dy_filter__` plus the collection filter's name, as [Collection checks](collection-checks.qmd) shows.
 
 **`dataframely/`** starts every metadata key this package names, on a materialization, a definition or a check result.
-A check result can have `dataframely/rule`, `dataframely/rule_expr`, `dataframely/rules`, `dataframely/filter`, `dataframely/failed_row_count`, `dataframely/failed_examples` and `dataframely/column_schema_errors`.
-A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.
-This package's keys then sort together, apart from Dagster's keys and your IO manager's.
-
-A check result can also have `dataframely/error_rows_address`.
-When every row fails an `"error"` rule, the run raises `NoValidRowsError` and the table has no materialization.
-So each check result has the error-rows address under that key.
+A check result can have `dataframely/rule`, `dataframely/rule_expr`, `dataframely/rules`, `dataframely/filter`, `dataframely/failed_row_count`, `dataframely/failed_examples`, `dataframely/column_schema_errors` and `dataframely/error_rows_address`.
 
 Every public function that takes a schema raises three errors for names this package cannot use ([ADR-0008](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0008-every-public-function-that-takes-a-schema-validates-it)).
 It raises `ReservedColumnError` for a column name that starts with `dy_`.
@@ -121,8 +110,7 @@ A `|` is one of them, and Dataframely also uses it to separate a column from its
 
 **`<name>__error_rows`** is the third: the default error-rows key, which a writer writes the error rows under.
 You also choose asset keys in this key space, so another asset can already have this key.
-Before the decorated function runs, a run of an asset with `filter=True` checks that no other asset in the code location materializes the error-rows key.
-If one does, the run raises `ErrorRowsKeyCollisionError`.
+A run raises `ErrorRowsKeyCollisionError` when another asset materializes this key, as [Errors](errors.qmd#common-mistakes) describes.
 
-No setting changes any of the three.
+No setting or argument changes `dy_` or `dataframely/`.
 `error_rows_key` replaces the third for one asset, as [Filtering error rows](filtering-error-rows.qmd#two-keywords-change-the-key-and-the-io-manager) describes.

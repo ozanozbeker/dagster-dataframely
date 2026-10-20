@@ -59,7 +59,7 @@ EXPECTED_GROUPS = {
     "gold": {"weekly_orders", "high_value_orders", "orders_snapshot"},
 }
 
-# Includes `dy_schema__columns`. The README and the screenshots quote these.
+# The counts include `dy_schema__columns`, and the demo README quotes each one.
 EXPECTED_CHECKS = {"orders": 24, "customers": 8, "daily_orders": 16}
 
 EXPECTED_ERROR_ROWS = {

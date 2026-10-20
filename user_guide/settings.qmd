@@ -5,17 +5,15 @@ title: "Settings"
 ```{python}
 #| label: setup-settings
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: every example on this page uses `OrdersSchema` from `dd.data`"
 #| output: false
-import dagster as dg
-import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
 from dagster_dataframely.data import OrdersSchema
 ```
 
-This package resolves each setting from three sources, each overriding the one before: the package default, then an environment variable, then the argument to `dd.asset`.
+This package resolves each setting from three sources, each overriding the one before: the package default, then an environment variable, then the argument to `dd.asset` or to another function that takes the setting, such as `dd.build_rule_checks`.
 An environment variable sets a default for the code location, and an argument overrides it for one asset.
 Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 
@@ -27,22 +25,22 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 | `row_sample` | how many rows of the table and how many error rows appear in the materialization | `5` |
 | `error_rows_dir` | the directory the package writes error rows to when you call the asset instead of running it | unset: a call with error rows raises `ErrorRowsDirError` |
 
-The package resolves the settings once, when you declare the asset, and the check specs and the validation both use those values.
+The package resolves the settings once, when you declare the asset.
+So the check results always name the checks the asset declares.
 
-`error_rows_dir` has two sources, not three, because `dd.asset` takes no argument for it ([ADR-0006](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#adr-0006-the-assets-own-io-manager-writes-the-quarantine)).
-The package reads its value when the writer writes the rows, not when you declare the asset.
-An empty value still raises `InvalidSettingError` when you declare the asset, not on the first call with error rows.
+`error_rows_dir` has two sources, not three, because `dd.asset` takes no argument for it.
+[The out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/error-rows-dir-argument.md) has the reasons.
+`dd.asset` validates its value when you declare the asset, and the package reads it again when a direct invocation writes error rows.
+So with an empty value, every `dd.asset` call raises `InvalidSettingError`, with or without `filter=True`.
 For example, `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR=${SCRATCH}` is empty when `SCRATCH` is unset.
 
 The package validates every source when it resolves the setting, including the package default and the argument.
 An invalid value raises `InvalidSettingError`, which names the value and its source.
 So `statistics="false"` raises instead of turning statistics on, and `max_failure_examples=True` raises instead of meaning one row.
 
-**A flag's environment variable accepts `true` or `false`, and nothing else.**
-Case does not matter, so `TRUE` is the same as `true`.
+**`DAGSTER_DATAFRAMELY_STATISTICS` accepts `true` or `false`, and nothing else.**
+Case does not matter.
 `1`, `yes` and `on` raise `InvalidSettingError`.
-
-There is no fourth source and no `set_default_*()` function.
 
 ## `functools.partial` sets defaults for many assets
 
@@ -70,60 +68,57 @@ def finance_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 For both, at most 10 of the rows that failed a rule appear in that rule's check.
 A bound argument is an argument to `dd.asset`, the third source.
 So `max_failure_examples=10` overrides `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`.
-To use `audited` in several modules, define it in one module and import it.
 
 In dbt, a `+` config in `dbt_project.yml` sets a default for many tests.
 A `partial` is the nearest equivalent.
 The reasons there is no project-wide default are in [the out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/dbt-test-configs.md#severity-store_failures-and-schema-in-dbt_projectyml).
 
-## Changing `check_granularity` starts a new check history
+## `check_granularity` sets how many checks report the rules
 
 `rule` gives each rule its own check and its own history.
 `column` gives one check per column with rules, `dy_col__<column>`, so a 40-column schema's check list stays readable.
 A column's check reports for every rule on that column.
-For a `Struct` column, Dataframely generates one `inner_<field>_nullability` rule per field, so a ten-field struct has ten rules and one check.
+For a `Struct` column, Dataframely generates one `inner_<field>_<rule>` rule for each rule on each field.
+So a struct with ten non-nullable fields has eleven rules: its own `nullability` and one `inner_<field>_nullability` per field.
+One check reports for all eleven.
 
 A schema-level rule, a `@dy.rule()` or the primary key, belongs to no single column, so it keeps its own `dy_rule__<rule>` check at `column` granularity.
 You wrote it, so it keeps its own history, as a dbt test does in dagster-dbt.
 
 A schema with no rules has only the column-schema check, at every granularity.
-That check is always present and always blocking.
 
 **Changing `check_granularity` on an asset that has already run starts a new check history.**
 The asset no longer reports the old checks, so their history ends with the last run before the change.
 The new checks start with no history.
 Nothing moves the old history to the new checks, so choose the granularity before you deploy the asset.
 
-`check_granularity` does not accept `schema`.
-`dd.asset` raises `InvalidSettingError` for it, from the argument or from `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`.
-An asset that used `schema` starts a new check history at `rule` or `column`.
-[The out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-granularity.md) has the reasons.
-
 ## Statistics, the row sample and the failure examples are on by default
 
 Each materialization has summary statistics for the rows it wrote.
-[The statistics tables](what-a-run-produces.qmd#the-statistics-tables) lists their columns.
+[What a run produces](what-a-run-produces.qmd#the-statistics-tables) lists their columns.
 
 ::: {.callout-important}
-Two of the settings write **real rows of your data to the Dagster event log**, and both are on by default.
+Two of the settings set how many **real rows of your data** the package writes **to the Dagster event log**, and both are on by default.
 A deployment shares one event log, and you can export it.
 This package redacts nothing.
 If a column contains an email address, a name or an account number, the package writes that value to the log, where it stays.
 :::
 
-| setting | what it writes | where |
+| setting | what the package writes | where |
 | --- | --- | --- |
 | `max_failure_examples` | up to this many of the rows that failed each rule | that rule's asset check, under `dataframely/failed_examples` |
 | `row_sample` | up to this many rows of the table and this many error rows | the materialization, under `dataframely/table_sample` and `dataframely/error_rows_sample` |
 
 Both are the first rows of the frame, not a random selection.
 Both are absent, never empty: with no rows to show, the package writes no metadata key for them.
+The row sample and the failure examples show a `Decimal` as a string, with every digit.
 
-Dataframely's comparable setting defaults to `0`.
+`dy.Config.set_max_failure_examples` sets Dataframely's own limit, which defaults to `0`.
+This package does not read that limit.
 This package defaults to `5`, because a count shows how many rows failed a rule but not what they contain.
 
 Set either setting to `0` to turn it off.
-Per asset:
+For one asset, pass `0` to `dd.asset`:
 
 ```{python}
 #| label: settings-1
@@ -139,6 +134,5 @@ DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES=0
 DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 ```
 
-Turning the row sample and the failure examples off does not change `statistics`, which is a separate setting.
-Both show a `Decimal` as a string, with every digit.
-The statistics tables convert it to a float for display.
+`statistics` stays on, and its `min` and `max` are real values from numeric and temporal columns.
+Set `statistics=False` too to keep those values out of the event log.

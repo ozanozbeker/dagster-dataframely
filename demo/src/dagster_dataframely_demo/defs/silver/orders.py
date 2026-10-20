@@ -1,4 +1,4 @@
-"""Order lines from the storefront, validated."""
+"""`orders` validates the storefront's order lines."""
 
 import polars as pl
 

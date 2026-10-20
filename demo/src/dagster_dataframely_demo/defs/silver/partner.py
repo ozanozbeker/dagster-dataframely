@@ -1,4 +1,4 @@
-"""Order lines from the B2B partner, validated."""
+"""`partner_orders` validates the B2B partner's order lines."""
 
 import polars as pl
 

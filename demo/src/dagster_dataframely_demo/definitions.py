@@ -1,4 +1,4 @@
-"""The code location's entry point, which `dg` loads by name."""
+"""`dg` loads this module by name, as the code location's entry point."""
 
 from pathlib import Path
 

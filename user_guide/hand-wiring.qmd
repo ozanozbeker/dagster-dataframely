@@ -5,12 +5,11 @@ title: "Hand-wiring"
 ```{python}
 #| label: setup-hand-wiring
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: import `OrdersSchema` from `dd.data`, and define the `orders_frame()` the examples call"
 #| output: false
 from collections.abc import Iterator
 
 import dagster as dg
-import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
@@ -23,23 +22,26 @@ def orders_frame() -> pl.LazyFrame:
 ```
 
 Use `dd.asset` where you can.
-One declaration fills the Columns tab, reports every rule as an asset check, filters the rows and, with `filter=True`, writes the error rows.
+One declaration fills the Columns tab, reports every rule as an asset check, sets what happens to rows that fail and, with `filter=True`, writes the error rows.
 `dd.asset` calls functions that `dd.wiring` also exports.
 Use them where `dd.asset` cannot build the asset: to attach a schema to an asset declared some other way, or to report checks in a way `dd.asset` does not offer.
 
 Together, the functions do less than `dd.asset`: you pass them the settings and asset keys that `dd.asset` resolves at definition time.
-This package will add nothing to `dd.wiring` to make reassembling the decorator easier.
+This package adds nothing to `dd.wiring` only to make reassembling the decorator easier.
 To see how `dd.asset` calls the functions, read its source, which is short.
 
 In the examples, `orders_frame()` represents whatever produces your frame.
 
 ## The parts
 
-**The Columns tab.**
-`get_column_schema_metadata(schema)` returns the definition metadata that an asset built with `dd.asset` declares.
+Each section below covers one part of what `dd.asset` does, and the `dd.wiring` functions for it.
+
+### The Columns tab
+
+`get_column_schema_metadata(schema)` returns the `dagster/column_schema` entry of the definition metadata that an asset built with `dd.asset` declares.
 Pass it as the `metadata` of any `@dg.asset`, and the Columns tab shows the schema: dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every other column constraint next to its column.
 It returns a mapping with one entry, so you can merge it with your own `metadata`.
-`dd.asset` merges it last, so its entry takes precedence over any `dagster/column_schema` in yours.
+Merge it last, as `dd.asset` does, so its entry takes precedence over any `dagster/column_schema` in yours.
 `get_table_schema(schema)` returns the `dg.TableSchema` in that entry.
 Put it under `dagster/column_schema` in a metadata dict you build yourself.
 
@@ -51,16 +53,16 @@ So in a run, `dd.asset` also calls `context.add_asset_metadata(get_column_schema
 Column tags come from `dy.Column(metadata=...)`, which Dataframely stores but does not use.
 `get_table_schema` converts tag values to strings, because `dg.TableColumn.tags` is `Mapping[str, str]` and Dagster rejects any other type at definition time.
 
-The Columns tab reads `unique` from each column's own flag, never from `primary_key`.
-Dataframely checks a primary key with one schema-level rule and does not set the key columns' `unique` flag.
-For a composite key, marking each column unique would show a constraint that no rule checks.
+The Columns tab shows a primary-key column as unique only when the column also has `unique=True`.
 
-**The code version.**
+### The code version
+
 `get_code_version(schema)` returns the code version that `dd.asset` sets when it gets none, as [The code version](declaring-an-asset.qmd#the-code-version) describes.
 Pass it as the `code_version` of `@dg.asset`.
 
-**The checks.**
-`build_asset_check_specs(schema, asset=key)` returns a spec for every check the schema defines, including the column-schema check.
+### The checks
+
+`build_asset_check_specs(schema, asset=key)` returns the column-schema check's spec, then one spec per rule set.
 For a partitioned asset, also pass its `partitions_def`, so Dagster records each check evaluation under its partition.
 Pass `filter=True` when the asset writes error rows, as `dd.asset(filter=True)` does, so that no rule's check is blocking.
 `evaluate_checks(schema, frame, asset_key=key)` yields a result for each of those checks and writes nothing.
@@ -69,10 +71,11 @@ Pass the same `check_granularity` to `build_asset_check_specs` and to the functi
 The setting determines the check names.
 Dagster matches each result to its spec by name, so different values fail the step.
 
-**Validation and the write.**
+### Validation and the write
+
 An asset built with `dd.asset` runs `stream_results(schema, frame, asset_key=key, error_rows_writer=...)` after its decorated function.
 It runs the column-schema check and `Schema.filter`, writes the error rows, and yields the materialization and every check result.
-Its return type is `Iterator[dg.MaterializeResult | dg.AssetCheckResult]`, which a hand-wired asset's function uses as its own annotation.
+Its return type is `Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]`, so annotate a hand-wired asset's function with the same type.
 The writer writes the error rows, and `stream_results` yields no result for them.
 For a partitioned asset, also pass `partitioned=True`, so the row count is under `dagster/partition_row_count` instead of `dagster/row_count`.
 You make one choice that changes what a run writes: whether to pass `error_rows_writer`.
@@ -97,9 +100,11 @@ flowchart TD
 ```
 
 Every failing check has its rule's severity, in every kind of run.
-[Validation](validation.qmd) and [Filtering error rows](filtering-error-rows.qmd) list the same five kinds of run as tables, with what each one writes.
+[Validation](validation.qmd) lists each kind of run without a writer, and what it writes.
+[Filtering error rows](filtering-error-rows.qmd) lists each kind of run with a writer, and what it writes.
 
-**The error rows.**
+### The error rows
+
 `stream_results` takes an `ErrorRowsWriter`: a function that receives the rows that failed an `"error"` rule, writes them and returns the error-rows address.
 The address is a string, not a path, because it can name a database table.
 When no row fails an `"error"` rule, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's error rows.
@@ -111,7 +116,8 @@ The IO manager receives a copy of the step's output context with only the asset 
 `build_io_manager_writer` takes `error_rows_key=` and `error_rows_io_manager_key=`, which mean what they mean on `dd.asset`.
 With `error_rows_io_manager_key=`, list the key in your asset's `required_resource_keys`.
 After the write, the writer logs a materialization for the error-rows key with the metadata the IO manager added, as [Filtering error rows](filtering-error-rows.qmd) describes.
-That metadata does not appear in the table's materialization, so the package reports the error-rows address itself.
+It logs none when the run's code location has no spec for that key.
+When some rows fail an `"error"` rule, the table's materialization has the error-rows address under `dataframely/error_rows_address`, as [What a run produces](what-a-run-produces.qmd) lists.
 
 `build_file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
@@ -122,12 +128,13 @@ It writes only parquet.
 Pass each one the same value, so the writer, the check and the path use the same key.
 
 `build_error_rows_spec(schema, definition)` reads the error-rows key and the IO manager key from two metadata entries that only `dd.asset` writes.
-So for a hand-wired asset that passes either keyword, set both on the spec yourself, with Dagster's own methods: `build_error_rows_spec(schema, orders).replace_attributes(key=...).with_io_manager_key(...)`.
+So for a hand-wired asset that passes either keyword, set the same value on the spec with Dagster's own methods: `.replace_attributes(key=...)` for `error_rows_key=`, and `.with_io_manager_key(...)` for `error_rows_io_manager_key=`.
 
-`dd.wiring` also exports two lower-level functions.
-`get_error_rows(schema, failure)` returns the frame every writer receives: the rows that failed an `"error"` rule, then one `String` rule column per rule, named in the reserved namespace.
+`dd.wiring` also exports three lower-level functions.
+`get_error_rows(schema, failure)` returns the frame every writer receives: the rows that failed an `"error"` rule, with their original columns and then one `String` rule column per rule, named in the reserved namespace.
 Use it in an asset that runs `Schema.filter` itself, to write the same frame `dd.asset` would.
 `get_error_rows_path(key, error_rows_dir, partition_key)` returns the path `build_file_writer` writes to, so a test can check the path without writing a file.
+`get_check_name_for_rule(rule_name)` returns a rule's check name at `rule` granularity, as [Naming](naming.qmd#the-reserved-namespaces) describes.
 
 ## The decorator is a `@dg.asset`, a writer and `stream_results`
 
@@ -145,7 +152,7 @@ Pass the schema's metadata and check specs to `@dg.asset`, and call `stream_resu
 )
 def orders(
     context: dg.AssetExecutionContext,
-) -> Iterator[dg.MaterializeResult | dg.AssetCheckResult]:
+) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
     dd.wiring.validate_error_rows_key(context)
     context.add_asset_metadata(dd.wiring.get_column_schema_metadata(OrdersSchema))
     yield from dd.wiring.stream_results(
@@ -167,7 +174,7 @@ When the frame matches the schema, a run of that asset makes these calls:
 sequenceDiagram
     participant A as orders
     participant V as stream_results
-    participant W as build_io_manager_writer
+    participant W as the writer
     participant D as Dagster
     A->>V: OrdersSchema, frame, asset_key, error_rows_writer
     V->>V: column-schema check
@@ -177,7 +184,7 @@ sequenceDiagram
         W-->>D: the error rows' AssetMaterialization
         W-->>V: error-rows address
     end
-    opt the table was written
+    opt the run writes the table
         V-->>D: MaterializeResult
     end
     V-->>D: an AssetCheckResult per check
@@ -187,11 +194,12 @@ sequenceDiagram
 `stream_results` calls the writer with the error rows, which have zero rows when no row failed an `"error"` rule.
 The writer logs the error rows' materialization unless the code location has no spec for them.
 It then returns the error-rows address.
-`stream_results` then yields the `MaterializeResult` if it wrote the asset's table, and one result for each check.
+`stream_results` then yields the `MaterializeResult` and one result for each check.
 `orders` passes each one to Dagster with `yield from`.
+When every row failed an `"error"` rule, `stream_results` yields only the check results and raises `NoValidRowsError`.
 
-`output_required=False` lets the step end without yielding the materialization, which happens on a column-schema mismatch, on `ValidationAbortError`, on `NoValidRowsError` and on the skip.
-Without it, every path that does not raise has to yield the output.
+`output_required=False` lets the step succeed without yielding the materialization, which happens only on the skip.
+Without it, a skip fails the step with `DagsterStepOutputNotFoundError`.
 
 Without an `error_rows_writer`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, as in an asset built with `dd.asset` and `filter=False`.
 
@@ -200,21 +208,20 @@ There, `dd.asset` uses `build_file_writer(context.asset_key, error_rows_dir, par
 `context.add_asset_metadata` also fails under direct invocation, with `AttributeError`.
 `dd.asset` makes the call only when `dg.AssetExecutionContext.get()` returns a context, which happens only in a run.
 
-Call `validate_error_rows_key(context)` before the rest of the body, as `dd.asset` does on every run.
+When the asset writes error rows, call `validate_error_rows_key(context)` before the rest of the body, as `dd.asset(filter=True)` does.
 Under direct invocation it does nothing, because there is no asset graph to check.
 
 ## Split the checks off entirely
 
-`dd.build_rule_checks` builds the checks for a table the IO manager has already written, as [Rule checks](rule-checks.qmd) shows.
+`dd.build_rule_checks` reports a schema's rules as asset checks on a table that is already written, as [Rule checks](rule-checks.qmd) shows.
 
 ## Without the package at all
 
-Every example above uses `dd.wiring`.
 This is the same asset without this package: the Columns tab, one check per rule, the column-schema check, the row filter and the error rows, all written by hand.
 
 ```{python}
 #| label: hand-wiring-3
-VALID = dg.AssetKey(["orders"])
+ORDERS = dg.AssetKey(["orders"])
 ERROR_ROWS = dg.AssetKey(["orders__error_rows"])
 COLUMNS = OrdersSchema.columns()
 # Private in Dataframely: nothing public lists a schema's rules before it runs.
@@ -248,9 +255,9 @@ COLUMN_SCHEMA = dg.TableSchema(
         "orders__error_rows": dg.AssetOut(is_required=False),
     },
     check_specs=[
-        dg.AssetCheckSpec(name="dy_schema__columns", asset=VALID, blocking=True),
+        dg.AssetCheckSpec(name="dy_schema__columns", asset=ORDERS, blocking=True),
         *(
-            dg.AssetCheckSpec(name=get_check_name_for_rule(rule), asset=VALID)
+            dg.AssetCheckSpec(name=get_check_name_for_rule(rule), asset=ORDERS)
             for rule in RULES
         ),
     ],
@@ -266,7 +273,7 @@ def orders():
         if frame.schema.get(name) != column.dtype
     }
     yield dg.AssetCheckResult(
-        check_name="dy_schema__columns", asset_key=VALID, passed=not drift
+        check_name="dy_schema__columns", asset_key=ORDERS, passed=not drift
     )
     if drift:
         raise ValueError(f"{OrdersSchema.__name__} does not match the frame: {drift}")
@@ -277,7 +284,7 @@ def orders():
 
     if len(valid):
         yield dg.MaterializeResult(
-            asset_key=VALID, value=valid, metadata={"dagster/row_count": len(valid)}
+            asset_key=ORDERS, value=valid, metadata={"dagster/row_count": len(valid)}
         )
     if len(failure):
         rule_columns = {rule: get_check_name_for_rule(rule) for rule in RULES}
@@ -292,7 +299,7 @@ def orders():
     for rule in RULES:
         yield dg.AssetCheckResult(
             check_name=get_check_name_for_rule(rule),
-            asset_key=VALID,
+            asset_key=ORDERS,
             passed=not counts.get(rule),
             severity=dg.AssetCheckSeverity.ERROR
             if aborting
@@ -312,12 +319,12 @@ It differs from `dd.asset` in these ways:
   After a run under an IO manager that writes its own column schema, the tab shows only that schema's dtypes and the descriptions.
 - The checks have no descriptions, so a failing check shows the rule's name but not what the rule checks.
 - No code version, so Dagster does not mark the asset stale after a schema edit.
-- No statistics, no row sample, no failure examples and no `error_rows_by_rules` table, so a failing check shows nothing about the rows that failed it.
-- No `check_granularity`, so a 40-column schema has around 40 checks or more, and you cannot collapse its rules into fewer checks.
+- The materialization has no statistics, no row sample and no `error_rows_by_rules` table.
+  The checks have no failure examples, so a failing check shows nothing about the rows that failed it.
+- No `check_granularity`, so the asset has one check per rule, and you cannot collapse the rules into one check per column.
 - You have to collect and filter a `LazyFrame` yourself.
-- No rule can be `"warn"`, and every failing check has the same severity, set by how the run ended.
-- It has three kinds of run.
-  A run where every row failed succeeds and skips the asset's table.
+- No rule can be `"warn"`, and every failing check has the same severity: `ERROR` when every row failed, and `WARN` otherwise.
+- A run where every row failed succeeds and writes only the error rows.
   `dd.asset` fails that run with `NoValidRowsError`, because `filter=True` lets a run succeed when some rows fail an `"error"` rule, not when every row does.
 - It writes the error rows only when a row fails.
   So a clean run leaves the error rows from the last run that had any.
@@ -327,11 +334,14 @@ It differs from `dd.asset` in these ways:
   `@dg.asset(deps=[orders])` depends on the table and on the error rows.
   Inside the function, `context.asset_key` raises, and so does `context.add_asset_metadata` without `asset_key=`.
   A job that selects only `orders` raises `DagsterInvalidDefinitionError` when Dagster loads it.
-- Nothing checks the names.
-  A column already named `dy_rule__amount__min`, or two rules that produce the same check name, cause a silent collision instead of an error at definition time.
+- Nothing reserves the `dy_` namespace.
+  With a column already named `dy_rule__amount__min`, `rename` raises Polars' `DuplicateError` in the first run where a row fails, not at definition time.
+  Two rules that produce the same check name make `dg.multi_asset` raise `DagsterInvalidDefinitionError`, which names the check but not the two rules.
 - With a `key_prefix`, you build both asset keys yourself, and nothing checks them.
 
-### Or you could just do
+## Or use `dd.asset`
+
+`dd.asset` builds the same asset in one declaration:
 
 ```{python}
 #| label: hand-wiring-4

@@ -1,4 +1,4 @@
-"""Order lines partitioned by day, and by day and region."""
+"""`daily_orders` partitions the order lines by day, and `regional_orders` by day and region."""
 
 import datetime as dt
 
@@ -30,11 +30,11 @@ def regional_orders(
     context: dg.AssetExecutionContext, raw_orders: pl.DataFrame
 ) -> pl.DataFrame | None:
     """Return one region's order lines for one day, or skip APAC before its storefront opened."""
-    cell = context.partition_key.keys_by_dimension
-    day = dt.date.fromisoformat(cell["day"])
-    if cell["region"] == "apac" and day < _data.APAC_LAUNCH:
+    keys = context.partition_key.keys_by_dimension
+    day = dt.date.fromisoformat(keys["day"])
+    if keys["region"] == "apac" and day < _data.APAC_LAUNCH:
         return None
-    return _data.orders_in(raw_orders, day, cell["region"])
+    return _data.orders_in(raw_orders, day, keys["region"])
 
 
 regional_orders__error_rows = dd.build_error_rows_spec(OrdersSchema, regional_orders)

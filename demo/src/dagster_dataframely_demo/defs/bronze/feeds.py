@@ -1,4 +1,4 @@
-"""The bronze assets, which load a customer export and four order feeds unchanged."""
+"""The bronze assets load a customer export and four order feeds unchanged."""
 
 # demo: each asset returns sample rows from `dd.data` or `_data`; a real pipeline reads its source here.
 

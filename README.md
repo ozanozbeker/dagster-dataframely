@@ -18,7 +18,7 @@ class CustomersSchema(dy.Schema):
     """A storefront customer account."""
 
     customer_id = dy.String(primary_key=True, description="Account identifier.")
-    email = dy.String(nullable=False, description="Where receipts are sent.")
+    email = dy.String(nullable=False, description="Address for receipts.")
     lifetime_value = dy.Float64(nullable=False, min=0.0, description="Spend to date.")
 
 
@@ -29,8 +29,10 @@ def customers(raw_customers: pl.DataFrame) -> pl.DataFrame:
 ```
 
 That is the whole integration.
-From one declaration you get the catalog's Columns tab, one asset check per rule, a code version derived from the schema, and a choice of what happens to a row that fails a rule: the run fails, or with `filter=True` the row is written to a table beside the asset's.
-[Get started](https://ozanozbeker.com/dagster-dataframely/user-guide/dagster-dataframely.html) walks through each of those with screenshots of the demo pipeline.
+From one declaration you get the catalog's Columns tab, one asset check per rule, and a code version derived from the schema.
+A row that fails an `"error"` rule fails the run.
+With `filter=True`, the run writes that row to a separate table instead and writes the other rows to the asset's table.
+[Get started](https://ozanozbeker.com/dagster-dataframely/user-guide/dagster-dataframely.html) covers each of those, with screenshots of the demo pipeline.
 
 ## Installation
 
@@ -48,16 +50,9 @@ Any IO manager that stores by asset key works.
 > **Pre-1.0.**
 > A characterization test covers the public surface, so it never changes by accident.
 > It can still change: a `0.x` minor release can include breaking changes.
-> If that matters to you, pin to one minor version: `>=` the version you installed, `<` the next minor.
 > [Upgrading](https://ozanozbeker.com/dagster-dataframely/user-guide/upgrading.html) has the migration for each one.
 
 ## Documentation
 
 [**https://ozanozbeker.com/dagster-dataframely**](https://ozanozbeker.com/dagster-dataframely/) has the guide, the reference and the changelog.
-The site is for users.
 Contributor documentation stays in the repository: [`CONTEXT.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/CONTEXT.md) is the glossary, and [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md) records the decisions and the measurements the package was built on.
-
-## License
-
-Apache 2.0.
-See [`LICENSE`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/LICENSE).

@@ -5,18 +5,19 @@ title: "Declaring an asset"
 ```{python}
 #| label: setup-declaring-an-asset
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: import `OrdersSchema` from `dd.data`, which the examples on this page use"
 #| output: false
 import dagster as dg
-import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
 from dagster_dataframely.data import OrdersSchema
 ```
 
+Use `dd.asset` in place of `@dg.asset` on a function that returns a Polars frame.
+This page covers its arguments, the code version it derives from the schema, and what the decorated function may return.
 The schema is the only required argument, and it is positional.
-Every other argument is `filter`, `error_rows_key`, `error_rows_io_manager_key`, one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
+Every other argument is `filter`, `error_rows_key` or `error_rows_io_manager_key` ([Filtering error rows](filtering-error-rows.qmd)), one of the [Settings](settings.qmd), or a `@dg.asset` parameter under the same name.
 
 You write the decorated function as you would for `@dg.asset`:
 
@@ -24,15 +25,17 @@ You write the decorated function as you would for `@dg.asset`:
 #| label: declaring-an-asset-1
 @dd.asset(OrdersSchema, filter=True, group_name="sales")
 def orders(context: dg.AssetExecutionContext, raw_orders: pl.DataFrame) -> pl.DataFrame:
-    context.log.info("%d rows arrived", raw_orders.height)
+    context.log.info("raw_orders has %d rows", raw_orders.height)
     return raw_orders
 ```
 
-Dagster passes upstream assets to it by parameter name, as it does for a plain `@dg.asset`.
+Dagster passes upstream assets to it by parameter name.
 Use `ins=` and `deps=` where a parameter name is not enough.
 Declare a `context` parameter to use the partition key, the log, resources or configuration.
 
-This package does its work at two times: when the module imports, and when the asset runs.
+## Import time and run time
+
+`dd.asset` builds the asset's definition when the module imports, and validates the frame when the asset runs.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
@@ -40,14 +43,14 @@ This package does its work at two times: when the module imports, and when the a
 flowchart TB
     subgraph load["when the module imports"]
         D["@dd.asset(OrdersSchema)"] --> T["Columns tab"]
-        D --> C["a check spec per rule set"]
+        D --> C["a check spec per rule, plus the column-schema check"]
     end
     subgraph run["when the asset runs"]
         direction TB
         F["decorated function returns a frame"] --> CS["column-schema check"]
         CS --> FL["Schema.filter"]
-        FL --> V["the table, to the asset's IO manager"]
-        FL --> I["with filter=True, the error rows, to a writer"]
+        FL --> V["the asset's IO manager writes the table"]
+        FL --> I["with filter=True, the IO manager writes the error rows"]
         FL --> R["a result per check"]
     end
     load --> run
@@ -56,35 +59,30 @@ flowchart TB
 Two things exist as soon as the module imports, before any run:
 
 - **The Columns tab**, built from the schema.
-  The tab shows dtypes, descriptions, nullability, uniqueness, the primary key at table level, and every other column constraint beside its column.
-- **A check spec per rule set**, so the catalog lists the asset's checks by name before the first run.
+- **A check spec per rule at the default granularity, plus one for the column-schema check**, so the catalog lists the asset's checks by name before the first run.
 
 The asset's description comes from the schema's docstring, as [Naming](naming.qmd) describes.
 
-A run checks the column schema of the frame the decorated function returns, then filters the frame with `Schema.filter`.
-The asset's IO manager writes the table.
-With `filter=True`, a writer writes the rows that failed an `"error"` rule, the error rows, under `<name>__error_rows` unless `error_rows_key` sets another key.
-Each check reports a result.
-Not every run writes the table: [Validation](validation.qmd) lists the five kinds of run and what each one writes.
+A run validates the frame the decorated function returns.
+[Validation](validation.qmd) lists the five kinds of run and what each one writes.
 
-![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
+## The parameters `dd.asset` passes to `@dg.asset`
 
-`dd.asset` builds a `@dg.asset` and accepts its parameters under the same names, except the six below.
-A test fails if `@dg.asset` adds a parameter that `dd.asset` lacks, or removes one that `dd.asset` passes on.
-`config_schema` is narrower than Dagster's: it takes only a mapping, not the union of six types that `@dg.asset` accepts.
-A type checker rejects the five legacy forms, but nothing rejects them at run time.
+`dd.asset` passes every `@dg.asset` parameter on under the same name, except the six in this table:
 
 | `@dg.asset` parameter | why it is not here | what to write instead |
 | --- | --- | --- |
-| `build_asset_check_specs` | they come from the schema's rules | nothing |
+| `check_specs` | they come from the schema's rules | nothing |
 | `key` | `key_prefix` and `name` set it | `key_prefix=` plus `name=` |
 | `output_required` | a run that writes nothing must end the step without an output | nothing |
 | `dagster_type` | declined ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and cannot set a severity, so it cannot apply the rules' severities | the schema, which this package validates against |
 | `is_virtual` | a virtual asset has no function to decorate | nothing |
 | `io_manager_def` | `resource_defs` already sets it | `resource_defs={"io_manager": ...}` |
 
+`config_schema` is narrower than Dagster's: it takes only a mapping, not the union of six types that `@dg.asset` accepts.
+A type checker rejects the five legacy forms, but nothing rejects them at run time.
+
 `dd.asset` adds the `polars` kind to `kinds`.
-With `kinds={"duckdb"}`, the asset has the kinds `polars` and `duckdb`.
 
 ## The code version
 
@@ -96,31 +94,29 @@ orders.get_asset_spec().code_version
 ```
 
 After a schema edit, Dagster marks the asset stale with the cause "has a new code version" until the asset runs again.
-Without a code version, Dagster reports the asset fresh after any schema edit.
 
 `dd.asset` hashes each column's name and dtype, then each rule's name, severity and expression.
-So a new column or rule, a changed dtype, column constraint, `check=` or `@dy.rule()`, and a changed severity all change the code version.
-The docstring, `filter`, the [Settings](settings.qmd) and column metadata other than the severity declaration do not.
+So adding, removing or renaming a column or rule changes the code version.
+So does a change to a dtype, a column constraint, a `check=`, a `@dy.rule()` or a severity.
+The schema's docstring, column descriptions, `filter`, the [Settings](settings.qmd) and column metadata other than the severity declaration do not.
 
 A `code_version` you pass replaces the derived one unchanged.
 
-**Write the values of an `is_in` as a list, not a set.**
+**Pass a list, not a set, to a Polars `is_in` in a `check=` or `@dy.rule()`.**
 Python orders a set of strings differently in each process, and the hash keeps that order.
-So with a set, the code version changes each time the code location starts, with no schema change.
+So with a set of strings, the code version can change each time the code location starts, with no schema change.
 
-**The code version reads only the schema.**
+**`dd.asset` derives the code version from the schema alone.**
 A change to the decorated function's body leaves it unchanged, so Dagster still reports the asset fresh after one.
 To cover the function too, pass your own `code_version` and change it when the function changes.
 
 **A Polars upgrade can change every asset's code version at once.**
 The hash uses Polars' serialization of each rule's expression, and Polars documents that format as unstable between versions.
-After such an upgrade, every asset reports "has a new code version" once, with no schema change.
+After such an upgrade, Dagster can mark every asset stale with the cause "has a new code version", with no schema change.
 
 Polars cannot serialize a Python function, such as the one `map_elements` calls, unless `cloudpickle` is installed.
 Without it, `dd.asset` hashes that rule's expression as text, and the text does not include the function's body.
 So a change inside the function leaves the code version unchanged.
-
-The error rows' spec has no code version, because Dagster reports an external asset as fresh whatever its code version.
 
 ## The schema is a single `dy.Schema`, never a `dy.Collection`
 
@@ -132,7 +128,7 @@ The parts under [Hand-wiring](hand-wiring.qmd) cannot validate a Collection eith
 
 ## What the decorated function returns
 
-It can return five things:
+The decorated function can return one of five types:
 
 ```text
 pl.DataFrame                dg.MaterializeResult[pl.DataFrame]
@@ -141,12 +137,9 @@ None
 ```
 
 **The returned value determines what happens, not the annotation.**
-The same `Schema.filter` call filters a `LazyFrame` and a `DataFrame`.
-A `dg.MaterializeResult` is unwrapped first.
-
 `@dg.asset` enforces its return annotation, because it infers the output's `dagster_type` from it.
 `dd.asset` does not.
-The asset always stores a `DataFrame`, because this package collects the valid rows even when the function returns a `LazyFrame`.
+The IO manager always receives a `DataFrame`, because `dd.asset` collects a returned `LazyFrame`, as [`LazyFrame`s](lazyframes.qmd) describes.
 Annotate the function anyway, so that a type checker enforces the annotation.
 Parameterize a returned result, because a strict type checker rejects a bare `dg.MaterializeResult` as an implicit `Any`.
 
@@ -155,6 +148,6 @@ Prefer it to `context.add_asset_metadata`: it is the only one of the two that wo
 [Attaching your own metadata](what-a-run-produces.qmd#attaching-your-own-metadata) describes both.
 
 Return `None` to skip, as [A partition with no data](partitioning.qmd#a-partition-with-no-data) describes.
-To skip, return `None` itself: `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`.
+To skip, return `None` itself: returning `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`.
 
 Return anything else and the run fails with `dg.DagsterInvariantViolationError` before the column-schema check.

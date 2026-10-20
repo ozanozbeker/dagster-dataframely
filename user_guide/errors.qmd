@@ -5,40 +5,40 @@ title: "Errors"
 ```{python}
 #| label: setup-errors
 #| code-fold: true
-#| code-summary: "Setup: the demo's `OrdersSchema` schema, which every example on this page uses"
+#| code-summary: "Setup: the imports every example on this page uses"
 #| output: false
-import dagster as dg
 import dataframely as dy
 import polars as pl
 
 import dagster_dataframely as dd
-from dagster_dataframely.data import OrdersSchema
+from dagster_dataframely.data import OrdersSchema, storefront_orders
 ```
 
 Every error this package defines is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
 Catch one by name, or catch `DagsterDataframelyError` to catch every one.
-Every message names what failed and how to fix it.
+Every message names what failed and what to do.
 
 | error | raised | what to do |
 | --- | --- | --- |
-| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema, then pass them to `dd.build_collection_checks` |
+| `CollectionNotSupportedError` | when you declare the asset | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema, then pass them to `dd.build_collection_checks` |
 | `InvalidMembersError` | when `dd.build_collection_checks` is called | map every required member, and only the Collection's members, to an unpartitioned asset; the message lists the members |
-| `FailurePropagationError` | the same | remove `propagate_row_failures=True` from the member, or write a collection filter that states the condition |
-| `ReservedColumnError` | at decoration, and by every public function that takes a schema | rename the column that starts with `dy_` |
-| `InvalidColumnNameError` | the same | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
-| `CheckNameCollisionError` | the same | rename one of the two rules that produce the same check name |
-| `InvalidSeverityError` | the same, and when `dd.build_collection_checks` is called | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms, and [Collection checks](collection-checks.qmd#severity) covers a Collection's |
-| `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
-| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` |
-| `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
+| `FailurePropagationError` | when `dd.build_collection_checks` is called | remove `propagate_row_failures=True` from the member, or write a collection filter that states the condition |
+| `ReservedColumnError` | when you declare the asset, and by every public function that takes a schema | rename the column that starts with `dy_` |
+| `InvalidColumnNameError` | when you declare the asset, and by every public function that takes a schema | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
+| `CheckNameCollisionError` | when you declare the asset, and by every public function that takes a schema | rename one of the two rules that produce the same check name |
+| `InvalidSeverityError` | when you declare the asset, by every public function that takes a schema, and when `dd.build_collection_checks` is called | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms, and [Collection checks](collection-checks.qmd#severity) covers a Collection's |
+| `InvalidSettingError` | when you declare the asset, or when another function that reads the setting is called | fix the value at the source the message names |
+| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata`; to skip, return `None` itself |
+| `MaterializeResultFieldError` | before the column-schema check | remove `asset_key=` or `check_results=`, which the decorator sets itself |
 | `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body; for `dd.build_rule_checks`, declare the dtype the table stores, or change what writes the table |
 | `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
-| `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
+| `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message, then fix the rows upstream or declare the rule `"warn"` |
 | `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `build_error_rows_spec` |
 | `ErrorRowsDirError` | under direct invocation only, when there are error rows to write | set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or run the asset |
 
-The package also raises two of Dagster's errors.
-`dd.asset` raises `dg.DagsterInvalidDefinitionError` at decoration when `error_rows_key` or `error_rows_io_manager_key` is set and `filter` is `False`.
+The package also raises Dagster's own errors in three cases.
+`dd.asset` raises `dg.DagsterInvalidDefinitionError` when you declare the asset, if `error_rows_key` or `error_rows_io_manager_key` is set and `filter` is `False`.
+When the decorated function returns anything other than a Polars frame, a `dg.MaterializeResult` or `None`, the run raises `dg.DagsterInvariantViolationError` before the column-schema check.
 `build_error_rows_spec` raises `dg.DagsterInvariantViolationError` when it receives both an asset definition and a `partitions_def`.
 
 `ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
@@ -48,16 +48,16 @@ The failing check's `dataframely/column_schema_errors` table lists the same colu
 
 `ValidationAbortError` and `NoValidRowsError` both give the failure count per `"error"` rule.
 The counts can add up to more than the number of failing rows, because one row can fail several rules.
-`NoValidRowsError` keeps its name although a frame whose rows fail only `"warn"` rules has no valid rows in Dataframely's sense and is written.
+When every row fails only `"warn"` rules, the run raises neither error and writes every row.
 
-## Three ways to get this wrong
+## Common mistakes
 
-**Do not declare an asset keyed `<name>__error_rows` if `<name>` has `filter=True`.**
+For each of these mistakes, the cause is not on the line where the traceback ends.
+
+**Do not define another asset that materializes `<name>__error_rows` if `<name>` has `filter=True`.**
 `orders` with `filter=True` writes its error rows to the asset key `orders__error_rows`, through the same IO manager that writes `orders`.
 An asset of your own keyed `orders__error_rows` has the same address.
 Both assets would write to the same table or file, and the second write would replace the first.
-With `error_rows_key`, the run checks that key instead.
-The run also raises when that key is the asset's own key.
 So every run of `orders` checks for such an asset before the decorated function runs, and raises:
 
 ```text
@@ -68,7 +68,10 @@ is your own table for the error rows, delete it and use `build_error_rows_spec` 
 error rows themselves to the asset graph.
 ```
 
-**A `from __future__ import annotations` in your own module breaks an annotated `context` parameter.**
+With `error_rows_key`, the run checks that key instead.
+The run also raises when that key is the asset's own key.
+
+**With `from __future__ import annotations` in your module, Dagster raises for an annotated `context` parameter.**
 Under PEP 563, Dagster receives every annotation as a string.
 Dagster compares the `context` annotation with the real classes, so it raises this error for both `context: dg.AssetExecutionContext` and `context: AssetExecutionContext`:
 
@@ -77,7 +80,6 @@ DagsterInvalidDefinitionError: Cannot annotate `context` parameter with type dg.
 `context` must be annotated with AssetExecutionContext, AssetCheckExecutionContext, OpExecutionContext, or left blank.
 ```
 
-The restriction is Dagster's, not this package's.
 `@dg.asset` raises the same error for the same annotation.
 Both accept an unannotated `context`, which is the only option in that message that still works under PEP 563:
 
@@ -86,29 +88,24 @@ Both accept an unannotated `context`, which is the only option in that message t
 @dd.asset(OrdersSchema)
 def orders(context) -> pl.DataFrame:
     context.log.info("run %s", context.run_id)
-    return pl.read_parquet("raw/orders.parquet")
+    return storefront_orders
 ```
 
 **A `@dy.rule()` body needs its class parameter.**
-Without it, Python still defines the schema class and the asset, and raises no error.
-The run then fails when this package reads the rule's expression for the check metadata:
+Without it, Python still defines the schema class.
+`dd.asset` reads the rule's expression when you declare the asset, and raises:
 
 ```text
-TypeError: OrdersSchema.amount_is_positive() takes 0 positional arguments but 1 was given
+TypeError: GiftOrdersSchema.gifts_have_note() takes 0 positional arguments but 1 was given
 ```
 
-`@dy.rule()` is a classmethod-style decorator, so the body takes `cls`:
+Dataframely calls the body with the schema class, so the body takes `cls`:
 
 ```{python}
 #| label: errors-2
-class OrdersSchema(dy.Schema):
-    status = dy.Enum(["new", "paid", "shipped", "cancelled"], nullable=False)
-    amount = dy.Decimal(10, 2, nullable=False)
-
+class GiftOrdersSchema(OrdersSchema):
     @dy.rule()
-    def paid_orders_have_amount(cls) -> pl.Expr:
-        """Require a positive amount on a paid line."""
-        return (cls.status.col != "paid") | (cls.amount.col > 0)
+    def gifts_have_note(cls) -> pl.Expr:
+        """Require a note on a gift line."""
+        return ~cls.is_gift.col | cls.note.col.is_not_null()
 ```
-
-The docstring becomes that check's description in the catalog.

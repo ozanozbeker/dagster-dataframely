@@ -1,4 +1,4 @@
-"""Customer accounts from the storefront, validated."""
+"""`customers` validates the storefront's customer accounts."""
 
 import dataframely as dy
 import polars as pl
@@ -10,7 +10,7 @@ class CustomersSchema(dy.Schema):
     """A storefront customer account."""
 
     customer_id = dy.String(primary_key=True, description="Account identifier.")
-    email = dy.String(nullable=False, description="Where receipts are sent.")
+    email = dy.String(nullable=False, description="Address for receipts.")
     lifetime_value = dy.Float64(nullable=False, min=0.0, description="Spend to date.")
 
 
