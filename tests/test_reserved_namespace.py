@@ -86,6 +86,6 @@ def test_a_public_function_rejects_a_column_dagster_cannot_name(
 def test_a_public_function_rejects_a_column_name_with_the_rule_delimiter(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
-    """`|` is Dataframely's rule delimiter, so `described_rules` would read `a|b|min` as column `a` and rule `b|min`."""
+    """`|` is Dataframely's rule delimiter, so `describe_rules` would read `a|b|min` as column `a` and rule `b|min`."""
     with pytest.raises(InvalidColumnNameError):
         taker(Delimited)

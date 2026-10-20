@@ -460,25 +460,25 @@ class TestFilterWithValidRows:
     ):
         materialize(tmp_path, _filtered)
         error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
-        rule_columns = [
+        get_rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
         checks = {spec.name for spec in _filtered.check_specs} - {"dy_schema__columns"}
 
         assert error_rows.columns[: len(Orders.columns())] == list(Orders.columns())
-        assert set(error_rows.columns) == set(Orders.columns()) | set(rule_columns)
+        assert set(error_rows.columns) == set(Orders.columns()) | set(get_rule_columns)
         # A rule column has the name of its rule's check.
-        assert set(rule_columns) == checks
+        assert set(get_rule_columns) == checks
 
     def test_the_rule_columns_are_cast_from_enum_to_string(self, tmp_path: Path):
         """Rule columns are strings, because the Delta writer panics on an `Enum` column."""
         materialize(tmp_path, _filtered)
         error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
-        rule_columns = [
+        get_rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
 
-        assert all(error_rows.schema[name] == pl.String for name in rule_columns)
+        assert all(error_rows.schema[name] == pl.String for name in get_rule_columns)
 
     def test_a_rule_column_says_which_rule_each_row_failed(self, tmp_path: Path):
         materialize(tmp_path, _filtered)
@@ -619,7 +619,9 @@ class TestSkip:
     """A run whose decorated function returns `None` (#95)."""
 
     @pytest.mark.parametrize(
-        "asset", [_skipping, _skipping_with_error_rows], ids=["bare", "filtered"]
+        "asset",
+        [_skipping, _skipping_with_error_rows],
+        ids=["bare", "check_and_filter"],
     )
     def test_a_skipped_run_succeeds_and_materializes_nothing(
         self, tmp_path: Path, asset: dg.AssetsDefinition
@@ -701,7 +703,7 @@ def _both_ways(
     return eager, lazy
 
 
-def _counted(frame: pl.DataFrame) -> tuple[pl.LazyFrame, list[int]]:
+def _pluralize(frame: pl.DataFrame) -> tuple[pl.LazyFrame, list[int]]:
     """Return a plan over `frame` and the heights of the batches it executes."""
     seen: list[int] = []
 
@@ -736,7 +738,7 @@ class TestLazyReturn:
         assert engines == ["streaming"]
 
     def test_a_lazy_return_executes_its_plan_once(self, tmp_path: Path):
-        plan, seen = _counted(clean_orders())
+        plan, seen = _pluralize(clean_orders())
 
         @dd.asset(Orders, name="orders")
         def lazy() -> pl.LazyFrame:
@@ -748,7 +750,7 @@ class TestLazyReturn:
     def test_a_plan_that_fails_the_column_schema_check_never_executes(
         self, tmp_path: Path
     ):
-        plan, seen = _counted(wrong_dtype_orders())
+        plan, seen = _pluralize(wrong_dtype_orders())
 
         @dd.asset(Orders, name="orders")
         def lazy() -> pl.LazyFrame:
@@ -868,7 +870,9 @@ def _column_schema(result: dg.ExecuteInProcessResult) -> object:
 class TestColumnSchema:
     """The `dagster/column_schema` entry on the table's materialization in a run."""
 
-    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
+    @pytest.mark.parametrize(
+        "filtering", [False, True], ids=["bare", "check_and_filter"]
+    )
     def test_the_schemas_column_schema_replaces_the_io_managers(
         self, tmp_path: Path, filtering: bool
     ):
@@ -1039,7 +1043,7 @@ class TestOutcomeSelection:
         checks = _checks(yielded)
 
         assert checks
-        # `_addressed` wraps the address, because `_replace` skips normalization.
+        # `_add_address` wraps the address, because `_replace` skips normalization.
         assert all(
             (c.metadata or {})["dataframely/error_rows_address"]
             == dg.MetadataValue.text(_ADDRESS)
@@ -1071,16 +1075,22 @@ class TestOutcomeSelection:
 
     def test_severity_follows_the_rule_rather_than_the_runs_outcome(self):
         """The same failing checks are `ERROR` with and without `filter`, because every rule of `Orders` is `"error"`."""
-        filtered, _, _ = _drained(mixed_orders(), filtering=True)
+        check_and_filter, _, _ = _drained(mixed_orders(), filtering=True)
         aborted, _, _ = _drained(mixed_orders(), filtering=False)
 
         def failing(yielded: Yielded) -> set[dg.AssetCheckSeverity]:
             return {c.severity for c in _rules(yielded) if not c.passed}
 
-        assert failing(filtered) == failing(aborted) == {dg.AssetCheckSeverity.ERROR}
+        assert (
+            failing(check_and_filter)
+            == failing(aborted)
+            == {dg.AssetCheckSeverity.ERROR}
+        )
 
     # The sixth outcome: the decorated function returned `None`.
-    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
+    @pytest.mark.parametrize(
+        "filtering", [False, True], ids=["bare", "check_and_filter"]
+    )
     def test_a_skip_writes_no_table_and_raises_nothing(self, filtering: bool):
         yielded, written, error = _drained(None, filtering=filtering)
 

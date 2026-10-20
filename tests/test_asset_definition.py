@@ -15,7 +15,7 @@ import pytest
 from dagster._config.field_utils import Shape
 
 import dagster_dataframely as dd
-from dagster_dataframely._rules import described_rules
+from dagster_dataframely._rules import describe_rules
 from dagster_dataframely.errors import (
     CollectionNotSupportedError,
     DagsterDataframelyError,
@@ -64,7 +64,7 @@ def _specs_by_name(asset: dg.AssetsDefinition) -> dict[str, dg.AssetCheckSpec]:
 
 
 def _expression_text(rule: str, schema: type[dy.Schema] = Orders) -> str:
-    return str(described_rules(schema)[rule].expr)
+    return str(describe_rules(schema)[rule].expr)
 
 
 class TestAssetSpec:
@@ -1048,7 +1048,9 @@ class TestDefinitionTimeErrors:
             f"Only an asset with `filter=True` writes error rows. Pass `filter=True`, or remove {named}"
         )
 
-    @pytest.mark.parametrize("filtering", [False, True], ids=["plain", "filtered"])
+    @pytest.mark.parametrize(
+        "filtering", [False, True], ids=["plain", "check_and_filter"]
+    )
     def test_a_malformed_error_rows_dir_raises_at_definition_time(
         self, monkeypatch: pytest.MonkeyPatch, filtering: bool
     ):
@@ -1087,7 +1089,9 @@ class TestUnderlyingOp:
 
         assert attached.op.name == plain.op.name
 
-    @pytest.mark.parametrize("filtering", [False, True], ids=["bare", "filtered"])
+    @pytest.mark.parametrize(
+        "filtering", [False, True], ids=["bare", "check_and_filter"]
+    )
     def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
         self, filtering: bool
     ):

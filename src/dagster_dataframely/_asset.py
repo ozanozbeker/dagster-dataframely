@@ -22,14 +22,14 @@ from dagster_dataframely._checks import build_asset_check_specs
 from dagster_dataframely._code_version import get_code_version
 from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
-    error_rows_writer,
+    build_error_rows_writer,
+    build_writer_metadata,
     validate_error_rows_key,
-    writer_metadata,
 )
 from dagster_dataframely._metadata import get_column_schema_metadata
 from dagster_dataframely._returns import (
     DecoratedReturn,
-    frame_and_result,
+    unpack_return,
     with_returned_fields,
 )
 from dagster_dataframely._rules import validate_namespace
@@ -255,11 +255,11 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         parameters = list(inspect.signature(fn).parameters.values())
         declares_context: bool = is_context_provided(parameters)
 
-        def asset_yields(
+        def stream_from(
             returned: DecoratedReturn, writer: ErrorRowsWriter | None
         ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
             _write_column_schema(column_schema_metadata)
-            frame, result = frame_and_result(returned, asset=key.to_user_string())
+            frame, result = unpack_return(returned, asset=key.to_user_string())
             yield from with_returned_fields(
                 stream_results(
                     schema,
@@ -283,7 +283,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
                 validate_error_rows_key(context, error_rows_key=error_rows_key)
-                writer = error_rows_writer(
+                writer = build_error_rows_writer(
                     context,
                     error_rows_key=error_rows_key,
                     error_rows_io_manager_key=error_rows_io_manager_key,
@@ -293,7 +293,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                     if declares_context
                     else fn(*args, **kwargs)
                 )
-                yield from asset_yields(returned, writer)
+                yield from stream_from(returned, writer)
 
             if not declares_context:
                 # Positional-only if the first parameter is, as `inspect.Signature` requires.
@@ -317,7 +317,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             def compute(
                 *args: object, **kwargs: object
             ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-                yield from asset_yields(fn(*args, **kwargs), None)
+                yield from stream_from(fn(*args, **kwargs), None)
 
         return dg.asset(
             name=asset_name,
@@ -327,7 +327,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                 **(metadata or {}),
                 **column_schema_metadata,
                 **(
-                    writer_metadata(
+                    build_writer_metadata(
                         key,
                         io_manager_key,
                         error_rows_key=error_rows_key,

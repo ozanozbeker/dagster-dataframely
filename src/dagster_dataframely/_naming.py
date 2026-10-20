@@ -21,7 +21,7 @@ def get_check_name_for_rule(rule_name: str) -> str:
     return f"dy_rule__{rule_name.replace('|', '__')}"
 
 
-def collection_filter_check_name(filter_name: str) -> str:
+def get_check_name_for_filter(filter_name: str) -> str:
     """Return the asset check name for the collection filter named `filter_name`.
 
     Not `dy_rule__`, because Dataframely allows a collection filter `amount__min` beside a member rule `amount|min`, and both would become `dy_rule__amount__min`.
@@ -29,6 +29,6 @@ def collection_filter_check_name(filter_name: str) -> str:
     return f"dy_filter__{filter_name}"
 
 
-def column_check_name(column: str) -> str:
+def get_check_name_for_column(column: str) -> str:
     """Return the check name for a column's rules."""
     return f"dy_col__{column}"

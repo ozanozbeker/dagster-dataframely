@@ -83,7 +83,7 @@ class TestDataframely:
     """The Dataframely behaviour this package depends on."""
 
     def test_rules_are_keyed_by_pipe_delimited_rule_name(self):
-        """`Schema._validation_rules` keys a column rule as `<column>|<rule>`, and `_rules.described_rules` reads every rule from it."""
+        """`Schema._validation_rules` keys a column rule as `<column>|<rule>`, and `_rules.describe_rules` reads every rule from it."""
         rules = Orders._validation_rules(with_cast=False)
 
         assert "amount|min" in rules
@@ -101,7 +101,7 @@ class TestDataframely:
         assert all(isinstance(rule.expr, pl.Expr) for rule in rules.values())
 
     def test_a_dy_rule_stays_reachable_by_name_and_keeps_its_docstring(self):
-        """A `@dy.rule()` leaves a `RuleFactory` on the class, and `_rules._described_rule` reads the rule's description from its `validation_fn`."""
+        """A `@dy.rule()` leaves a `RuleFactory` on the class, and `DescribedRule.from_rule` reads the rule's description from its `validation_fn`."""
         factory = Orders.paid_orders_have_amount
 
         assert isinstance(factory, RuleFactory)
@@ -110,13 +110,13 @@ class TestDataframely:
         )
 
     def test_a_column_rule_is_not_reachable_by_name(self):
-        """No class attribute has a column rule's name, and `primary_key` names a method, so `_rules._described_rule` checks for a `RuleFactory`."""
+        """No class attribute has a column rule's name, and `primary_key` names a method, so `DescribedRule.from_rule` checks for a `RuleFactory`."""
         assert getattr(Orders, "amount|min", None) is None
 
         assert not isinstance(getattr(Orders, "primary_key", None), RuleFactory)
 
     def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it(self):
-        """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering._value` reads with `getattr`."""
+        """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering._get_value` reads with `getattr`."""
         declared: dict[str, dy.Column] = {
             "min": dy.Int64(min=1),
             "max": dy.Int64(max=9),
@@ -134,7 +134,7 @@ class TestDataframely:
             assert getattr(column, parameter) is not None
 
     def test_length_bounds_are_declared_on_exactly_string_and_list(self):
-        """Only `dy.String` (bytes) and `dy.List` (elements) take length bounds, so `_rendering._length_unit` checks for `dy.List` alone."""
+        """Only `dy.String` (bytes) and `dy.List` (elements) take length bounds, so `_rendering._get_length_unit` checks for `dy.List` alone."""
         columns = [
             column
             for name in dy.__all__
@@ -173,7 +173,7 @@ class TestDataframely:
         }
 
     def test_a_list_and_an_array_still_reach_their_element_column_through_inner(self):
-        """`dy.List` and `dy.Array` keep the element column on `inner` and name its rules `inner_<rule>`, so `_rendering._column_constraint` renders `inner_min` as `elements >= 1`."""
+        """`dy.List` and `dy.Array` keep the element column on `inner` and name its rules `inner_<rule>`, so `_rendering._render_column_constraint` renders `inner_min` as `elements >= 1`."""
         tags = dy.List(dy.Int32(nullable=False, min=1), min_length=1)
         point = dy.Array(dy.Int32(nullable=False, min=1), shape=3)
 
@@ -194,7 +194,7 @@ class TestDataframely:
     def test_a_float_column_forbids_inf_and_nan_by_default_and_drops_the_rules_when_allowed(
         self,
     ):
-        """A float column has `inf` and `nan` rules until `allow_inf=True` and `allow_nan=True` remove them, so `_rendering.column_constraints` leaves both out of the Columns tab."""
+        """A float column has `inf` and `nan` rules until `allow_inf=True` and `allow_nan=True` remove them, so `_rendering.render_column_constraints` leaves both out of the Columns tab."""
         assert not dy.Float64().allow_inf
         assert not dy.Float64().allow_nan
         assert {"inf", "nan"} <= set(dy.Float64().validation_rules(pl.col("a")))
@@ -205,7 +205,7 @@ class TestDataframely:
     def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit(
         self,
     ):
-        """The undocumented `dy.Column.validate_dtype` rejects another `Datetime` time unit or time zone, and `_checks._column_schema_problems` calls it."""
+        """The undocumented `dy.Column.validate_dtype` rejects another `Datetime` time unit or time zone, and `_checks._find_column_schema_problems` calls it."""
         assert dy.Int64().validate_dtype(pl.Int64)
         assert not dy.Int64().validate_dtype(pl.Int32)
 
@@ -231,7 +231,7 @@ class TestDataframely:
         assert lazy_valid.collect_schema().names() == expected
 
     def test_a_lazy_filter_still_defers_to_collect_all_and_forwards_the_engine(self):
-        """On a `LazyFrame`, `Schema.filter` returns a result whose `collect_all` passes `engine=` to Polars, which `_checks.filtered` calls with `engine="streaming"`."""
+        """On a `LazyFrame`, `Schema.filter` returns a result whose `collect_all` passes `engine=` to Polars, which `_checks.check_and_filter` calls with `engine="streaming"`."""
         lazy_result = Orders.filter(_MIXED_ORDERS.lazy(), cast=False)
 
         assert not hasattr(Orders.filter(_MIXED_ORDERS, cast=False), "collect_all")
@@ -248,7 +248,7 @@ class TestDataframely:
             lazy_result.collect_all(engine="nonsense")
 
     def test_details_returns_invalid_rows_plus_one_column_per_rule(self):
-        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.get_error_rows` and `_checks._failed_rows` both read."""
+        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.get_error_rows` and `_checks._read_failure_examples` both read."""
         _, failure = Orders.filter(_MIXED_ORDERS)
         details = failure.details()
 
@@ -274,7 +274,7 @@ class TestDataframely:
         assert failure.counts()["primary_key"] == 2
 
     def test_cooccurrence_counts_are_keyed_by_a_frozenset_of_rule_names(self):
-        """`FailureInfo.cooccurrence_counts()` keys each count by a `frozenset` of rule names, which `_runtime._cooccurrence` sorts before rendering."""
+        """`FailureInfo.cooccurrence_counts()` keys each count by a `frozenset` of rule names, which `_runtime._tabulate_cooccurrence` sorts before rendering."""
         _, failure = Orders.filter(_MIXED_ORDERS)
         cooccurrence = failure.cooccurrence_counts()
 
@@ -283,7 +283,7 @@ class TestDataframely:
         assert cooccurrence[frozenset({"amount|min"})] == 1
 
     def test_a_collection_keeps_each_filter_by_name_with_its_function(self):
-        """`Collection._filters()` maps each `@dy.filter` name to a `Filter` whose `logic` is the decorated function, which `_rules.collection_filter_severities` and `_collection` read."""
+        """`Collection._filters()` maps each `@dy.filter` name to a `Filter` whose `logic` is the decorated function, which `_rules.get_filter_severities` and `_collection` read."""
         filters = OrderBook._filters()
 
         assert list(filters) == ["refund_has_order"]
@@ -581,13 +581,13 @@ class TestDagster:
         assert not ran
 
     def test_materialize_result_value_still_defaults_to_a_sentinel(self):
-        """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_returns.frame_and_result` covers a missing and a non-frame `value`."""
+        """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_returns.unpack_return` covers a missing and a non-frame `value`."""
         assert dg.MaterializeResult().value is not None
 
     def test_replace_still_skips_the_constructors_normalization_and_keeps_every_other_field(
         self,
     ):
-        """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._addressed` and `_returns.with_returned_fields` call it."""
+        """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._add_address` and `_returns.with_returned_fields` call it."""
         check = dg.AssetCheckResult(
             check_name="dy_schema__columns",
             asset_key=dg.AssetKey(["orders"]),
@@ -754,7 +754,7 @@ class TestDagster:
         self,
         tmp_path: Path,
     ):
-        """`UPathIOManager` formats a multi-partition key in a closure, so `_error_rows._formatted_partition_key` copies it and this test compares the two paths."""
+        """`UPathIOManager` formats a multi-partition key in a closure, so `_error_rows._format_partition_key` copies it and this test compares the two paths."""
         written: dict[str, UPath] = {}
 
         class Probe(dg.UPathIOManager):
@@ -787,11 +787,11 @@ class TestDagster:
             partition_key=key,
             resources={"io_manager": Probe(base_path=UPath(tmp_path))},
         )
-        filtered = get_error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
+        check_and_filter = get_error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
 
         assert result.success
         base = UPath(tmp_path)
-        assert filtered.relative_to(base / "orders__error_rows") == (
+        assert check_and_filter.relative_to(base / "orders__error_rows") == (
             written["path"].relative_to(base / "orders").with_suffix(".parquet")
         )
 
@@ -932,10 +932,10 @@ class TestPrivateDagsterApis:
 
 
 class TestExecutableKeys:
-    """The Dagster behaviour that `_executable_keys` and `build_io_manager_writer` read off the run's asset graph (ADR-0007)."""
+    """The Dagster behaviour that `_get_executable_keys` and `build_io_manager_writer` read off the run's asset graph (ADR-0007)."""
 
     def test_an_in_process_run_still_has_no_repository_definition(self):
-        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph and `_error_rows.build_io_manager_writer` catches to log the error rows' materialization."""
+        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._get_executable_keys` catches to read the job's asset graph and `_error_rows.build_io_manager_writer` catches to log the error rows' materialization."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -946,7 +946,7 @@ class TestExecutableKeys:
         assert dg.materialize([orders]).success
 
     def test_a_directly_invoked_asset_still_has_no_repository_definition(self):
-        """`repository_def` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows._executable_keys` catches to return no keys."""
+        """`repository_def` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows._get_executable_keys` catches to return no keys."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -957,7 +957,7 @@ class TestExecutableKeys:
         assert orders(dg.build_asset_context()) == "called"
 
     def test_the_job_graph_still_narrows_to_what_the_run_selected(self):
-        """The job's asset graph holds only the selected assets, so `_error_rows._executable_keys` reads it only when `repository_def` raises."""
+        """The job's asset graph holds only the selected assets, so `_error_rows._get_executable_keys` reads it only when `repository_def` raises."""
         seen: dict[str, set[str]] = {}
 
         @dg.asset(name="orders")

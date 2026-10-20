@@ -7,6 +7,8 @@ title: "Hand-wiring"
 #| code-fold: true
 #| code-summary: "Setup: the demo's `Orders` schema, which every example on this page uses"
 #| output: false
+from collections.abc import Iterator
+
 import dagster as dg
 import dataframely as dy
 import polars as pl

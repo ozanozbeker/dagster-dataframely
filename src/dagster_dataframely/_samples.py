@@ -12,7 +12,7 @@ type Cell = str | int | float | bool | None
 type Row = dict[str, Cell]
 
 
-def cell(value: object) -> Cell:
+def render_cell(value: object) -> Cell:
     """Render one value as a `dg.TableRecord` cell.
 
     A `Decimal` becomes a string rather than a float, so it keeps its digits.
@@ -28,12 +28,14 @@ def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
     A random sample would differ between two reads of the same frame.
     """
     return [
-        {name: cell(value) for name, value in row.items()}
+        {name: render_cell(value) for name, value in row.items()}
         for row in frame.head(limit).iter_rows(named=True)
     ]
 
 
-def sample_metadata(key: str, rows: list[Row]) -> dict[str, dg.TableMetadataValue]:
+def build_sample_metadata(
+    key: str, rows: list[Row]
+) -> dict[str, dg.TableMetadataValue]:
     """Return the metadata entry for a sample, or nothing when there are no rows.
 
     Dagster raises on a table value with no records and no schema.

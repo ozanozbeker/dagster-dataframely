@@ -352,10 +352,10 @@ def test_the_error_rows_carries_no_statistics(tmp_path: Path):
     """Statistics cover only the table, because nothing downstream reads the error rows (ADR-0004)."""
 
     @dd.asset(Orders, name="orders", filter=True)
-    def filtered() -> pl.DataFrame:
+    def check_and_filter() -> pl.DataFrame:
         return mixed_orders()
 
-    metadata = _metadata(tmp_path, filtered)
+    metadata = _metadata(tmp_path, check_and_filter)
 
     assert _groups(metadata)
     assert "dataframely/error_rows_count" in metadata

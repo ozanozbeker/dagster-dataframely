@@ -1,14 +1,14 @@
-"""`described_rules` builds a record per rule with its declared severity, and `collection_filter_severities` reads the same declaration on a Collection.
+"""`describe_rules` builds a record per rule with its declared severity, and `get_filter_severities` reads the same declaration on a Collection.
 
 `validate_namespace` checks a schema's names and declarations.
-Only this module splits a rule name at `|`, and `described_rules` builds its records on every call (ADR-0008).
+Only this module splits a rule name at `|`, and `describe_rules` builds its records on every call (ADR-0008).
 """
 
 import inspect
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Literal, Self, cast
 
 import dagster as dg
 import dataframely as dy
@@ -61,37 +61,37 @@ class DescribedRule:
         """The rule's expression, read on access, because a `@dy.rule()` builds it by calling its function."""
         return self._rule.expr
 
+    @classmethod
+    def from_rule(
+        cls, schema: type[dy.Schema], name: str, rule: Rule, severity: Severity
+    ) -> Self:
+        """Describe one rule.
 
-def _described_rule(
-    schema: type[dy.Schema], name: str, rule: Rule, severity: Severity
-) -> DescribedRule:
-    """Describe one rule.
-
-    `getattr` finds a `@dy.rule()`'s `RuleFactory` by name, and a column rule's `|` makes it miss.
-    """
-    column, delimiter, rule_name = name.partition("|")
-    factory = getattr(schema, name, None)
-    return DescribedRule(
-        name=name,
-        check_name=get_check_name_for_rule(name),
-        column=column if delimiter else None,
-        rule_name=rule_name if delimiter else None,
-        description=(
-            inspect.getdoc(factory.validation_fn)
-            if isinstance(factory, RuleFactory)
-            else None
-        ),
-        severity=severity,
-        _rule=rule,
-    )
+        `getattr` finds a `@dy.rule()`'s `RuleFactory` by name, and a column rule's `|` makes it miss.
+        """
+        column, delimiter, rule_name = name.partition("|")
+        factory = getattr(schema, name, None)
+        return cls(
+            name=name,
+            check_name=get_check_name_for_rule(name),
+            column=column if delimiter else None,
+            rule_name=rule_name if delimiter else None,
+            description=(
+                inspect.getdoc(factory.validation_fn)
+                if isinstance(factory, RuleFactory)
+                else None
+            ),
+            severity=severity,
+            _rule=rule,
+        )
 
 
-def quoted(names: Iterable[str]) -> str:
+def quote(names: Iterable[str]) -> str:
     """Quote and join names for an error message."""
     return ", ".join(f"'{name}'" for name in names)
 
 
-def _severity(value: object, place: str) -> Severity:
+def _parse_severity(value: object, place: str) -> Severity:
     """Return `value` if it is a severity, else raise."""
     if value in _SEVERITIES:
         return cast("Severity", value)
@@ -106,7 +106,7 @@ def _severity(value: object, place: str) -> Severity:
     )
 
 
-def _named_rules(
+def _resolve_named_rules(
     written: str, rules: list[str], place: str, owner: str, term: str
 ) -> list[str]:
     """Return the rules a written name stands for: itself, the rule its argument generates, or every `check__*` rule."""
@@ -118,7 +118,7 @@ def _named_rules(
     if written == "check" and checks:
         return checks
     listed: str = (
-        f"The {term}s of {owner} are {quoted(rules)}."
+        f"The {term}s of {owner} are {quote(rules)}."
         if rules
         else f"{owner} has no {term}s."
     )
@@ -127,7 +127,7 @@ def _named_rules(
     )
 
 
-def _declared_severities(
+def _read_declared_severities(
     entry: object, rules: list[str], place: str, owner: str, term: str
 ) -> dict[str, Severity]:
     """Return the severities one declaration sets, keyed by rule name."""
@@ -142,18 +142,18 @@ def _declared_severities(
     if unknown:
         raise InvalidSeverityError(
             place,
-            f"has the key {quoted(unknown)}, and the only key it reads is 'severity'.",
+            f"has the key {quote(unknown)}, and the only key it reads is 'severity'.",
         )
     if "severity" not in entry:
         return {}
     value: object = entry["severity"]
     if isinstance(value, Mapping):
         return {
-            rule: _severity(severity, place)
+            rule: _parse_severity(severity, place)
             for written, severity in value.items()
-            for rule in _named_rules(str(written), rules, place, owner, term)
+            for rule in _resolve_named_rules(str(written), rules, place, owner, term)
         }
-    severity: Severity = _severity(value, place)
+    severity: Severity = _parse_severity(value, place)
     if not rules:
         raise InvalidSeverityError(
             place,
@@ -176,7 +176,9 @@ def _reject_column_rules(entry: object, place: str, columns: Iterable[str]) -> N
             )
 
 
-def _severities(schema: type[dy.Schema], names: Iterable[str]) -> dict[str, Severity]:
+def _resolve_severities(
+    schema: type[dy.Schema], names: Iterable[str]
+) -> dict[str, Severity]:
     """Return every rule's severity, keyed by rule name: `"error"` unless the schema declares `"warn"`."""
     by_column: dict[str, list[str]] = {column: [] for column in schema.columns()}
     schema_level: list[str] = []
@@ -191,39 +193,39 @@ def _severities(schema: type[dy.Schema], names: Iterable[str]) -> dict[str, Seve
     for column, definition in schema.columns().items():
         place: str = f"The `{DECLARATION_KEY}` metadata of column '{column}' in {schema.__name__}"
         entry: object = (definition.metadata or {}).get(DECLARATION_KEY)
-        for rule_name, severity in _declared_severities(
+        for rule_name, severity in _read_declared_severities(
             entry, by_column[column], place, f"column '{column}'", "rule"
         ).items():
             declared[f"{column}|{rule_name}"] = severity
     attribute: object = getattr(schema, _CLASS_DECLARATION, None)
     place = f"`{_CLASS_DECLARATION}` on {schema.__name__}"
     _reject_column_rules(attribute, place, schema.columns())
-    declared |= _declared_severities(
+    declared |= _read_declared_severities(
         attribute, schema_level, place, schema.__name__, "schema-level rule"
     )
     return {name: declared.get(name, "error") for name in names}
 
 
-def described_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
+def describe_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
     """Return the schema's validation rules, keyed by rule name.
 
     `with_cast=False` drops the `<column>|dtype` rules, which repeat the column-schema check.
     """
     rules: dict[str, Rule] = schema._validation_rules(with_cast=False)  # noqa: SLF001
-    severities: dict[str, Severity] = _severities(schema, rules)
+    severities: dict[str, Severity] = _resolve_severities(schema, rules)
     return {
-        name: _described_rule(schema, name, rule, severities[name])
+        name: DescribedRule.from_rule(schema, name, rule, severities[name])
         for name, rule in rules.items()
     }
 
 
-def collection_filter_severities(
+def get_filter_severities(
     collection: type[dy.Collection],
 ) -> dict[str, Severity]:
     """Return every collection filter's severity, keyed by its name: `"error"` unless the Collection declares `"warn"`."""
     filters: list[str] = list(collection._filters())  # noqa: SLF001
     place: str = f"`{_CLASS_DECLARATION}` on {collection.__name__}"
-    declared: dict[str, Severity] = _declared_severities(
+    declared: dict[str, Severity] = _read_declared_severities(
         getattr(collection, _CLASS_DECLARATION, None),
         filters,
         place,
@@ -234,7 +236,7 @@ def collection_filter_severities(
 
 
 def validate_namespace(schema: type[dy.Schema]) -> None:
-    """Raise the three errors Dagster would otherwise report opaquely, or not at all, and `InvalidSeverityError` for a declaration `described_rules` cannot read."""
+    """Raise the three errors Dagster would otherwise report opaquely, or not at all, and `InvalidSeverityError` for a declaration `describe_rules` cannot read."""
     reserved: list[str] = [
         column for column in schema.columns() if column.startswith(RESERVED_NAMESPACE)
     ]
@@ -249,7 +251,7 @@ def validate_namespace(schema: type[dy.Schema]) -> None:
         raise InvalidColumnNameError(schema.__name__, invalid_names)
 
     seen: dict[str, str] = {}
-    for rule in described_rules(schema).values():
+    for rule in describe_rules(schema).values():
         if rule.check_name in seen:
             raise CheckNameCollisionError(
                 schema.__name__, seen[rule.check_name], rule.name, rule.check_name

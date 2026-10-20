@@ -17,7 +17,7 @@ Code does not refuse, decide, know, learn, ask, answer or promise: it raises, se
 Rows do not land, arrive, ride or survive: the package writes, passes, copies and keeps them.
 `CONTEXT.md` lists the words to avoid and what to write instead.
 
-Give every sentence a verb, including a heading's description or a caption: "The decorator, and the spec that puts the error rows in the graph" becomes "`dd.asset` builds an asset, and `error_rows_spec` adds its error rows to the asset graph".
+Give every sentence a verb, including a heading's description or a caption: "The decorator, and the spec that puts the error rows in the graph" becomes "`dd.asset` builds an asset, and `build_error_rows_spec` adds its error rows to the asset graph".
 
 Use the word Dagster, Polars or Dataframely already uses, in the meaning it has there.
 A step is Dagster's, a member is Dataframely's, and Polars collects a plan.
@@ -66,30 +66,30 @@ Doctest prompts avoid the bug because they start with a non-space character, but
 ## Naming
 
 `CONTEXT.md` lists the word for each thing.
-These two rules set the shape of an identifier.
+These rules set the shape of an identifier.
 
-### Name a function for what it returns
+### Name a function with a verb
 
-Name a function that returns a value after the value, not after what it does.
-`asset_check_specs` returns asset check specs, `error_rows_frame` returns the error-rows frame, `delegating_writer` returns a writer, `frame_and_result` returns a frame and a returned result.
+Every function that returns something is named with a verb, as the tidyverse style guide, Dagster and dagster-dbt name theirs.
+Three tiers set the verb.
 
-Where the value has no name, give it one instead of using a verb: `described_rules` returns `DescribedRule`s, so the function is the record's name in snake case.
-A verb name means the function returns nothing: `validate_error_rows_key` either raises or returns `None`.
+1. A function that returns a Dagster object is `build_*`: `build_rule_checks`, `build_asset_check_specs`, `build_sample_metadata`.
+   Dagster uses the prefix for the same thing, in `build_column_schema_change_checks` and `build_op_context`.
+2. A function that returns a plain value is a verb from the upstream vocabulary where one exists.
+   `get_*` derives a value from a schema, as dagster-dbt's `DagsterDbtTranslator.get_code_version` does: `get_code_version`, `get_check_name_for_rule`.
+   `evaluate_*` reads data and reports pass or fail, from Dagster's `AssetCheckEvaluation`: `evaluate_checks`.
+   `render_*` and `summarize_*` make text, `stream_*` yields Dagster results, from dagster-dbt's `.stream()`.
+3. A noun names only a constructor of a record this package defines: `DescribedRule(...)`, `DirectInvocationResult(...)`.
+   A function that makes one such record from something else is a classmethod in Polars' form: `DirectInvocationResult.from_invocation`, `DescribedRule.from_rule`.
 
-No prefix: the annotation already gives the type.
-D401 still requires an imperative summary, so `described_rules` starts with "Return the schema's validation rules".
+A function that returns nothing is a verb too: `validate_error_rows_key` raises or returns `None`.
 
-Avoid `get_*`, `build_*`, `make_*`, `compute_*`.
+### Change part of a value with `with_*`
 
-### Name a transformer with a participle
+A function that returns the same value with part of it changed uses Polars' prefix: `with_returned_fields` returns the same results with three fields set on one of them.
+Everything else that transforms a value takes the verb of the change: `_add_address`, `_separate_warned_and_error_rows`, `_to_snake_case`.
 
-Use the participle of the change to name a function that takes a value and returns it changed.
-`_addressed` returns check results with the error-rows address added, `_suffixed` returns key parts with a suffix on the last one, `_checked` returns a value the setting allows.
-
-Where only part of the value changes, a participle is misleading.
-Use Polars' `with_*` prefix instead: `with_returned_fields` returns the same results with three fields set on one of them.
-
-Avoid `apply_*`, `add_*`, `enrich_*`.
+Avoid a participle as a function name (`_addressed`, `_suffixed`), and avoid `apply_*`, `enrich_*`, `make_*`, `compute_*`.
 
 ## Tests
 

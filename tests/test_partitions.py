@@ -309,7 +309,7 @@ class TestPartitionRuns:
 
 
 @dd.asset(Orders, name="orders", partitions_def=_PARTITIONS)
-def _counted() -> pl.DataFrame:
+def _pluralize() -> pl.DataFrame:
     return clean_orders()
 
 
@@ -318,7 +318,7 @@ class TestRowCount:
     """The key the materialization files the row count under."""
 
     def test_a_partitioned_asset_counts_the_partitions_rows(self):
-        metadata = _materialization(_counted()).metadata or {}
+        metadata = _materialization(_pluralize()).metadata or {}
 
         assert metadata["dagster/partition_row_count"] == 3
         assert "dagster/row_count" not in metadata

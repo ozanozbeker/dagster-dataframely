@@ -3,17 +3,20 @@
 import dagster as dg
 import dataframely as dy
 
-from dagster_dataframely._rendering import column_constraints, table_constraints
+from dagster_dataframely._rendering import (
+    render_column_constraints,
+    render_table_constraints,
+)
 from dagster_dataframely._rules import (
     DECLARATION_KEY,
-    described_rules,
+    describe_rules,
     validate_namespace,
 )
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
 
-def _tags(column: dy.Column) -> dict[str, str] | None:
+def _build_tags(column: dy.Column) -> dict[str, str] | None:
     """Render a column's metadata as string tags, the only kind Dagster accepts, without the severity declaration the checks already show."""
     tags: dict[str, str] = {
         key: str(value)
@@ -44,7 +47,7 @@ def get_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
         The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
-    constraints: dict[str, list[str]] = column_constraints(schema)
+    constraints: dict[str, list[str]] = render_column_constraints(schema)
     return dg.TableSchema(
         columns=[
             dg.TableColumn(
@@ -56,15 +59,15 @@ def get_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                     unique=column.unique,
                     other=constraints[name],
                 ),
-                tags=_tags(column),
+                tags=_build_tags(column),
             )
             for name, column in schema.columns().items()
         ],
-        constraints=dg.TableConstraints(other=table_constraints(schema)),
+        constraints=dg.TableConstraints(other=render_table_constraints(schema)),
     )
 
 
-def _error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
+def _build_error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Return the error rows' column schema, without the constraints its rows fail."""
     return dg.TableSchema(
         columns=[
@@ -72,7 +75,7 @@ def _error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                 name=name,
                 type=str(column.dtype),
                 description=column.description,
-                tags=_tags(column),
+                tags=_build_tags(column),
             )
             for name, column in schema.columns().items()
         ]
@@ -84,7 +87,7 @@ def _error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
                     f"Whether the row is 'valid', 'invalid' or 'unknown' under rule '{rule.name}'."
                 ),
             )
-            for rule in described_rules(schema).values()
+            for rule in describe_rules(schema).values()
         ]
     )
 
@@ -110,6 +113,6 @@ def get_column_schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSch
     return {_COLUMN_SCHEMA_KEY: get_table_schema(schema)}
 
 
-def error_rows_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
+def build_error_rows_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Return the error rows' definition metadata."""
-    return {_COLUMN_SCHEMA_KEY: _error_rows_table_schema(schema)}
+    return {_COLUMN_SCHEMA_KEY: _build_error_rows_table_schema(schema)}

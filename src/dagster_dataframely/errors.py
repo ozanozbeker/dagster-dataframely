@@ -237,7 +237,7 @@ class ColumnSchemaError(DagsterDataframelyError):
         Parameters
         ----------
         problems
-            One mapping of `column`, `expected` and `actual` per mismatched column, as `_column_schema_problems` returns.
+            One mapping of `column`, `expected` and `actual` per mismatched column, as `_find_column_schema_problems` returns.
         stored
             Whether the frame is a table read back from storage, as in `dd.build_rule_checks`, where no asset body exists to cast in.
         """

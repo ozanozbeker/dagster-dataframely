@@ -20,7 +20,7 @@ ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.La
 DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None
 
 
-def frame_and_result(
+def unpack_return(
     returned: DecoratedReturn, *, asset: str
 ) -> tuple[pl.DataFrame | pl.LazyFrame | None, ReturnedResult | None]:
     """Separate the frame to validate from the returned result."""

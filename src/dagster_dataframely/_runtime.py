@@ -12,22 +12,26 @@ import dataframely as dy
 import polars as pl
 
 from dagster_dataframely._checks import (
-    column_schema_result,
-    filtered,
-    rule_check_results,
-    rule_columns,
+    build_column_schema_result,
+    check_and_filter,
+    evaluate_rule_checks,
+    get_rule_columns,
 )
 from dagster_dataframely._error_rows import ErrorRowsWriter
 from dagster_dataframely._naming import get_check_name_for_rule
-from dagster_dataframely._rules import described_rules, validate_namespace
-from dagster_dataframely._samples import TABLE_SAMPLE_KEY, sample_metadata, sample_rows
+from dagster_dataframely._rules import describe_rules, validate_namespace
+from dagster_dataframely._samples import (
+    TABLE_SAMPLE_KEY,
+    build_sample_metadata,
+    sample_rows,
+)
 from dagster_dataframely._settings import (
     MAX_FAILURE_EXAMPLES,
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
 )
-from dagster_dataframely._statistics import statistics_metadata
+from dagster_dataframely._statistics import build_statistics_metadata
 from dagster_dataframely.errors import NoValidRowsError, ValidationAbortError
 
 _ADDRESS_KEY = "dataframely/error_rows_address"
@@ -54,14 +58,15 @@ def _require_frame(frame: object, asset: str) -> None:
 def _with_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> pl.DataFrame:
     """Rename the rule columns to their check names, as `String`."""
     renames: dict[str, str] = {
-        rule: get_check_name_for_rule(rule) for rule in rule_columns(schema, details)
+        rule: get_check_name_for_rule(rule)
+        for rule in get_rule_columns(schema, details)
     }
     return details.rename(renames).with_columns(
         pl.col(name).cast(pl.String) for name in renames.values()
     )
 
 
-def _warned_and_error_rows(
+def _separate_warned_and_error_rows(
     schema: type[dy.Schema], failure: dy.FailureInfo, errors: AbstractSet[str]
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Return the invalid rows that failed only `"warn"` rules, with the schema's columns, and the error rows as a writer receives them.
@@ -81,11 +86,11 @@ def _warned_and_error_rows(
     )
 
 
-def _error_rules(schema: type[dy.Schema]) -> set[str]:
+def _get_error_rule_names(schema: type[dy.Schema]) -> set[str]:
     """Return the names of the schema's `"error"` rules."""
     return {
         name
-        for name, rule in described_rules(schema).items()
+        for name, rule in describe_rules(schema).items()
         if rule.severity == "error"
     }
 
@@ -109,16 +114,18 @@ def get_error_rows(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataF
         The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
-    _, error_rows = _warned_and_error_rows(schema, failure, _error_rules(schema))
+    _, error_rows = _separate_warned_and_error_rows(
+        schema, failure, _get_error_rule_names(schema)
+    )
     return error_rows
 
 
-def _addressed(
+def _add_address(
     checks: list[dg.AssetCheckResult], address: str
 ) -> list[dg.AssetCheckResult]:
     """Copy the error-rows address onto every check result.
 
-    `_replace` skips the constructor's normalization, so `_addressed` wraps the address itself.
+    `_replace` skips the constructor's normalization, so `_add_address` wraps the address itself.
     """
     return [
         check._replace(
@@ -131,7 +138,9 @@ def _addressed(
     ]
 
 
-def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue:
+def _tabulate_cooccurrence(
+    counts: Mapping[frozenset[str], int],
+) -> dg.TableMetadataValue:
     """Tabulate how many rows failed each set of rules together.
 
     It sorts the sets because `cooccurrence_counts()` returns them in arbitrary order.
@@ -210,11 +219,11 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
-    def checks_for(failure: dy.FailureInfo) -> list[dg.AssetCheckResult]:
+    def evaluate_checks_for(failure: dy.FailureInfo) -> list[dg.AssetCheckResult]:
         """Return a passing column-schema result and every rule result."""
         return [
-            column_schema_result(asset_key=asset_key),
-            *rule_check_results(
+            build_column_schema_result(asset_key=asset_key),
+            *evaluate_rule_checks(
                 schema,
                 failure,
                 asset_key=asset_key,
@@ -226,20 +235,20 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     if frame is None:
         # A check spec is a non-optional op output, so the rules report over an empty frame.
         _, nothing = schema.filter(schema.create_empty(), cast=False)
-        yield from checks_for(nothing)
+        yield from evaluate_checks_for(nothing)
         return
 
-    valid, failure = yield from filtered(schema, frame, asset_key=asset_key)
-    checks: list[dg.AssetCheckResult] = checks_for(failure)
-    errors: set[str] = _error_rules(schema)
-    warned, error_rows = _warned_and_error_rows(schema, failure, errors)
+    valid, failure = yield from check_and_filter(schema, frame, asset_key=asset_key)
+    checks: list[dg.AssetCheckResult] = evaluate_checks_for(failure)
+    errors: set[str] = _get_error_rule_names(schema)
+    warned, error_rows = _separate_warned_and_error_rows(schema, failure, errors)
     table: pl.DataFrame = pl.concat([valid, warned])
     count_key: str = (
         "dagster/partition_row_count" if partitioned else "dagster/row_count"
     )
 
-    def table_result(
-        error_rows_metadata: ErrorRowsMetadata | None = None,
+    def build_table_result(
+        build_error_rows_metadata: ErrorRowsMetadata | None = None,
     ) -> dg.MaterializeResult[pl.DataFrame]:
         """Return the asset's materialization."""
         return dg.MaterializeResult(
@@ -247,9 +256,11 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
             value=table,
             metadata={
                 count_key: len(table),
-                **statistics_metadata(table, enabled=emit_statistics),
-                **sample_metadata(TABLE_SAMPLE_KEY, sample_rows(table, sampled_rows)),
-                **(error_rows_metadata or {}),
+                **build_statistics_metadata(table, enabled=emit_statistics),
+                **build_sample_metadata(
+                    TABLE_SAMPLE_KEY, sample_rows(table, sampled_rows)
+                ),
+                **(build_error_rows_metadata or {}),
             },
         )
 
@@ -257,7 +268,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         if error_rows_writer is not None:
             # An IO manager has no delete, so only an empty write replaces the last run's rows.
             error_rows_writer(error_rows)
-        yield table_result()
+        yield build_table_result()
         yield from checks
         return
 
@@ -270,22 +281,22 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
 
     # The writer runs before anything below can raise, so the error rows are written however the run ends.
     address: str = error_rows_writer(error_rows)
-    error_rows_metadata: ErrorRowsMetadata = {
+    build_error_rows_metadata: ErrorRowsMetadata = {
         _ADDRESS_KEY: address,
         _ERROR_ROWS_COUNT_KEY: len(error_rows),
-        _ERROR_ROWS_BY_RULES_KEY: _cooccurrence({
+        _ERROR_ROWS_BY_RULES_KEY: _tabulate_cooccurrence({
             together: n
             for together, n in failure.cooccurrence_counts().items()
             if together & errors
         }),
-        **sample_metadata(
+        **build_sample_metadata(
             _ERROR_ROWS_SAMPLE_KEY, sample_rows(error_rows, sampled_rows)
         ),
     }
 
     if table.is_empty():
-        yield from _addressed(checks, address)
+        yield from _add_address(checks, address)
         raise NoValidRowsError(schema.__name__, len(error_rows), error_counts, address)
 
-    yield table_result(error_rows_metadata)
+    yield build_table_result(build_error_rows_metadata)
     yield from checks

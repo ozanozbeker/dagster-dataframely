@@ -34,15 +34,15 @@ class _Setting[T]:
     def resolve(self, argument: T | None) -> T:
         """Return the setting's value, validated."""
         if argument is not None:
-            return self._checked(argument, f"the `{self.name}=` argument")
+            return self._check(argument, f"the `{self.name}=` argument")
         word: str | None = os.environ.get(self.env_var)
         if word is not None:
-            return self._checked(
+            return self._check(
                 self.parse(word), f"the environment variable {self.env_var}"
             )
-        return self._checked(self.default, "the package default")
+        return self._check(self.default, "the package default")
 
-    def _checked(self, value: object, source: str) -> T:
+    def _check(self, value: object, source: str) -> T:
         """Return `value` if `accepts` passes it, else raise."""
         if not self.accepts(value):
             raise InvalidSettingError(
@@ -61,12 +61,12 @@ _GRANULARITIES: tuple[Granularity, ...] = ("rule", "column")
 _FLAG_WORDS = {"true": True, "false": False}
 
 
-def _flag(word: str) -> object:
+def _parse_flag(word: str) -> object:
     """Return the word as a `bool`, or unchanged so the error shows it."""
     return _FLAG_WORDS.get(word.lower(), word)
 
 
-def _count(word: str) -> object:
+def _parse_count(word: str) -> object:
     """Return the word as an `int`, or unchanged."""
     try:
         return int(word)
@@ -74,12 +74,12 @@ def _count(word: str) -> object:
         return word
 
 
-def _non_negative(value: object) -> bool:
+def _is_non_negative(value: object) -> bool:
     """Accept a non-negative `int`, excluding `bool`, which subclasses it."""
     return type(value) is int and value >= 0
 
 
-def _path(value: object) -> bool:
+def _is_path(value: object) -> bool:
     """Accept a non-blank path, or `None` for no directory.
 
     It rejects a blank value instead of reading it as unset, because `${SCRATCH}` expands to one when nothing sets `SCRATCH`.
@@ -99,30 +99,30 @@ STATISTICS = _Setting[bool](
     default=True,
     allowed=tuple(_FLAG_WORDS),
     accepts=lambda value: type(value) is bool,
-    parse=_flag,
+    parse=_parse_flag,
 )
 
 MAX_FAILURE_EXAMPLES = _Setting[int](
     name="max_failure_examples",
     default=5,
     allowed="non-negative integers",
-    accepts=_non_negative,
-    parse=_count,
+    accepts=_is_non_negative,
+    parse=_parse_count,
 )
 
 ROW_SAMPLE = _Setting[int](
     name="row_sample",
     default=5,
     allowed="non-negative integers",
-    accepts=_non_negative,
-    parse=_count,
+    accepts=_is_non_negative,
+    parse=_parse_count,
 )
 
 ERROR_ROWS_DIR = _Setting[str | None](
     name="error_rows_dir",
     default=None,
     allowed="filesystem paths",
-    accepts=_path,
+    accepts=_is_path,
     takes_argument=False,
 )
 """`dd.asset` takes no argument for it, because a warehouse stores tables, not files (ADR-0006)."""

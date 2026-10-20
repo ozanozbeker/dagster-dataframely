@@ -9,13 +9,13 @@ import polars as pl
 import pytest
 
 import dagster_dataframely as dd
-from dagster_dataframely._rules import described_rules
+from dagster_dataframely._rules import describe_rules
 from dagster_dataframely.errors import InvalidSeverityError
 from tests.scenario import SCHEMA_TAKERS, Orders
 
 
-def _severities(schema: type[dy.Schema]) -> dict[str, str]:
-    return {name: rule.severity for name, rule in described_rules(schema).items()}
+def _resolve_severities(schema: type[dy.Schema]) -> dict[str, str]:
+    return {name: rule.severity for name, rule in describe_rules(schema).items()}
 
 
 class Declared(dy.Schema):
@@ -75,25 +75,25 @@ class AllSchemaLevel(dy.Schema):
 
 
 class TestDeclaredSeverity:
-    """`described_rules` reads each rule's severity from the schema."""
+    """`describe_rules` reads each rule's severity from the schema."""
 
     def test_an_undeclared_rule_is_error(self):
-        assert set(_severities(Orders).values()) == {"error"}
+        assert set(_resolve_severities(Orders).values()) == {"error"}
 
     def test_a_single_value_covers_every_rule_on_the_column(self):
-        severities = _severities(Declared)
+        severities = _resolve_severities(Declared)
 
         assert severities["note|nullability"] == "warn"
         assert severities["note|max_length"] == "warn"
 
     def test_a_mapping_sets_only_the_rules_it_names(self):
-        severities = _severities(Declared)
+        severities = _resolve_severities(Declared)
 
         assert severities["order_id|regex"] == "warn"
         assert severities["order_id|nullability"] == "error"
 
     def test_an_argument_name_is_read_as_the_rule_it_generates(self):
-        severities = _severities(Declared)
+        severities = _resolve_severities(Declared)
 
         assert severities["amount|nullability"] == "warn"
         assert severities["amount|inf"] == "warn"
@@ -101,27 +101,27 @@ class TestDeclaredSeverity:
         assert severities["amount|min"] == "error"
 
     def test_check_names_every_rule_its_dict_generates(self):
-        severities = _severities(Declared)
+        severities = _resolve_severities(Declared)
 
         assert severities["email|check__lowercase"] == "warn"
         assert severities["email|check__trimmed"] == "warn"
         assert severities["email|max_length"] == "error"
 
     def test_a_schema_level_rule_is_declared_on_the_class(self):
-        severities = _severities(Declared)
+        severities = _resolve_severities(Declared)
 
         assert severities["positive"] == "warn"
         assert severities["primary_key"] == "error"
 
     def test_a_single_value_on_the_class_covers_every_schema_level_rule(self):
-        severities = _severities(AllSchemaLevel)
+        severities = _resolve_severities(AllSchemaLevel)
 
         assert severities["primary_key"] == "warn"
         assert severities["positive"] == "warn"
         assert severities["amount|nullability"] == "error"
 
     def test_a_subclass_has_its_parents_declarations(self):
-        assert _severities(Inheriting) == _severities(Declared)
+        assert _resolve_severities(Inheriting) == _resolve_severities(Declared)
 
     def test_the_columns_tab_omits_the_declaration_and_keeps_other_tags(self):
         columns = {
@@ -262,7 +262,7 @@ def test_an_explicit_error_repeats_the_default():
             min=1, metadata={"dagster_dataframely": {"severity": "error"}}
         )
 
-    assert _severities(Explicit) == {
+    assert _resolve_severities(Explicit) == {
         "amount|nullability": "error",
         "amount|min": "error",
     }

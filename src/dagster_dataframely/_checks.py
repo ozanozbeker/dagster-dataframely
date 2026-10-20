@@ -1,23 +1,27 @@
 """Asset check specs derived from a schema, and the results `_runtime` and `evaluate_checks` yield for them.
 
-Specs and results both group the rules with `_rule_sets`, so they name the same checks only when given the same settings.
+Specs and results both group the rules with `_build_rule_sets`, so they name the same checks only when given the same settings.
 """
 
 from collections.abc import Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Self
 
 import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._naming import COLUMN_SCHEMA_CHECK, column_check_name
-from dagster_dataframely._rendering import check_description, column_rule_summary
+from dagster_dataframely._naming import COLUMN_SCHEMA_CHECK, get_check_name_for_column
+from dagster_dataframely._rendering import (
+    render_check_description,
+    summarize_column_rules,
+)
 from dagster_dataframely._rules import (
     DescribedRule,
-    described_rules,
+    describe_rules,
     validate_namespace,
 )
-from dagster_dataframely._samples import Row, sample_metadata, sample_rows
+from dagster_dataframely._samples import Row, build_sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_EXAMPLES,
@@ -35,13 +39,13 @@ class _RuleSet:
     rules: list[DescribedRule]
     collapsed: bool = field(default=False, kw_only=True)
 
+    @classmethod
+    def from_rule(cls, schema: type[dy.Schema], rule: DescribedRule) -> Self:
+        """Return the rule set of a check for one rule."""
+        return cls(rule.check_name, render_check_description(schema, rule), [rule])
 
-def _single_rule_set(schema: type[dy.Schema], rule: DescribedRule) -> _RuleSet:
-    """Return the rule set of a check for one rule."""
-    return _RuleSet(rule.check_name, check_description(schema, rule), [rule])
 
-
-def _rule_sets(
+def _build_rule_sets(
     schema: type[dy.Schema], check_granularity: Granularity | None
 ) -> list[_RuleSet]:
     """Group the schema's rules under the checks that report for them.
@@ -50,11 +54,11 @@ def _rule_sets(
     At `column`, a schema-level rule keeps its own check, because the user wrote it (`docs/out-of-scope/schema-rules.md`).
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    rules: list[DescribedRule] = list(described_rules(schema).values())
+    rules: list[DescribedRule] = list(describe_rules(schema).values())
     if not rules:
         return []
     if granularity == "rule":
-        return [_single_rule_set(schema, rule) for rule in rules]
+        return [_RuleSet.from_rule(schema, rule) for rule in rules]
 
     columns: dict[str, list[DescribedRule]] = {}
     schema_level: list[DescribedRule] = []
@@ -66,14 +70,14 @@ def _rule_sets(
 
     rule_sets: list[_RuleSet] = [
         _RuleSet(
-            column_check_name(column),
-            f"Every rule on {column}: {column_rule_summary(schema, members)}.",
+            get_check_name_for_column(column),
+            f"Every rule on {column}: {summarize_column_rules(schema, members)}.",
             members,
             collapsed=True,
         )
         for column, members in columns.items()
     ]
-    rule_sets.extend(_single_rule_set(schema, rule) for rule in schema_level)
+    rule_sets.extend(_RuleSet.from_rule(schema, rule) for rule in schema_level)
     return rule_sets
 
 
@@ -115,7 +119,7 @@ def build_asset_check_specs(
         The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
-    rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity)
+    rule_sets: list[_RuleSet] = _build_rule_sets(schema, check_granularity)
     # Dagster's guide documents partitioned checks, so this passes `partitions_def` despite its `PreviewWarning`.
     column_schema = dg.AssetCheckSpec(
         COLUMN_SCHEMA_CHECK,
@@ -140,12 +144,12 @@ def build_asset_check_specs(
     ]
 
 
-def _column_schema_problems(
+def _find_column_schema_problems(
     schema: type[dy.Schema], frame: pl.DataFrame | pl.LazyFrame
 ) -> list[dict[str, str]]:
     """Return one mapping per schema column the frame lacks or has with another dtype.
 
-    `filtered` calls it first, because `Schema.filter` fails only at `collect_all`, on the first mismatched column.
+    `check_and_filter` calls it first, because `Schema.filter` fails only at `collect_all`, on the first mismatched column.
     """
     actual: pl.Schema = frame.collect_schema()
     return [
@@ -159,12 +163,12 @@ def _column_schema_problems(
     ]
 
 
-def _counted(count: int, noun: str) -> str:
+def _pluralize(count: int, noun: str) -> str:
     """Return `count` and `noun`, plural unless `count` is 1."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def column_schema_result(
+def build_column_schema_result(
     problems: Sequence[dict[str, str]] = (), *, asset_key: dg.AssetKey
 ) -> dg.AssetCheckResult:
     """Return the column-schema check's result.
@@ -185,7 +189,7 @@ def column_schema_result(
         asset_key=asset_key,
         passed=False,
         severity=dg.AssetCheckSeverity.ERROR,
-        description=f"{_counted(len(problems), 'column')} {verb} not match: {columns}.",
+        description=f"{_pluralize(len(problems), 'column')} {verb} not match: {columns}.",
         metadata={
             "dataframely/column_schema_errors": dg.MetadataValue.table([
                 dg.TableRecord(problem) for problem in problems
@@ -194,7 +198,7 @@ def column_schema_result(
     )
 
 
-def filtered(
+def check_and_filter(
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
@@ -204,9 +208,9 @@ def filtered(
 
     On a mismatch it yields the failing result before it raises, or the check would have no result.
     """
-    problems: list[dict[str, str]] = _column_schema_problems(schema, frame)
+    problems: list[dict[str, str]] = _find_column_schema_problems(schema, frame)
     if problems:
-        yield column_schema_result(problems, asset_key=asset_key)
+        yield build_column_schema_result(problems, asset_key=asset_key)
         raise ColumnSchemaError(schema.__name__, problems)
     # `docs/pre-1.0.md` has why; `tests/test_upstream_characterization.py` pins the engine forward.
     result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
@@ -220,13 +224,13 @@ def filtered(
 _INVALID = "invalid"
 
 
-def rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
+def get_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
     """Return the rule columns in `details`, in the schema's rule order."""
     present: pl.Schema = details.collect_schema()
-    return [rule for rule in described_rules(schema) if rule in present]
+    return [rule for rule in describe_rules(schema) if rule in present]
 
 
-def _failed_rows(
+def _read_failure_examples(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     counts: dict[str, int],
@@ -238,32 +242,34 @@ def _failed_rows(
     # `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     # Dropped: the check already shows the rule.
-    columns: list[str] = rule_columns(schema, details)
+    columns: list[str] = get_rule_columns(schema, details)
     return {
         rule: sample_rows(details.filter(pl.col(rule) == _INVALID).drop(columns), limit)
         for rule in counts
     }
 
 
-def failed_rows_description(failed: int) -> str:
+def describe_failed_rows(failed: int) -> str:
     """Describe the result of a check for one rule or one collection filter.
 
     It omits the rule, because the spec's description already shows it.
     """
-    return f"{_counted(failed, 'row')} failed." if failed else "No row failed."
+    return f"{_pluralize(failed, 'row')} failed." if failed else "No row failed."
 
 
-def _failed_rules_description(failed: dict[str, int]) -> str:
+def _describe_failed_rules(failed: dict[str, int]) -> str:
     """Describe the result of a check for several rules, naming each rule that failed."""
     counts: list[str] = [
-        f"{rule} ({_counted(count, 'row')})" for rule, count in failed.items() if count
+        f"{rule} ({_pluralize(count, 'row')})"
+        for rule, count in failed.items()
+        if count
     ]
     if not counts:
         return "No rule failed."
-    return f"{_counted(len(counts), 'rule')} failed: {', '.join(counts)}."
+    return f"{_pluralize(len(counts), 'rule')} failed: {', '.join(counts)}."
 
 
-def _rule_metadata(
+def _build_rule_metadata(
     rule: DescribedRule, failed: int, sampled: list[Row]
 ) -> dict[str, str | int | dg.TableMetadataValue]:
     """Return the metadata of a check for one rule."""
@@ -274,10 +280,10 @@ def _rule_metadata(
     if failed:
         # The key follows dagster-dbt's `dagster_dbt/failed_row_count`.
         metadata["dataframely/failed_row_count"] = failed
-    return metadata | sample_metadata("dataframely/failed_examples", sampled)
+    return metadata | build_sample_metadata("dataframely/failed_examples", sampled)
 
 
-def _collapsed_metadata(
+def _build_collapsed_metadata(
     rules: Sequence[DescribedRule],
     failed: dict[str, int],
     sampled: dict[str, list[Row]],
@@ -298,10 +304,10 @@ def _collapsed_metadata(
         for rule in rules
         for row in sampled.get(rule.name, [])
     ]
-    return metadata | sample_metadata("dataframely/failed_examples", attributed)
+    return metadata | build_sample_metadata("dataframely/failed_examples", attributed)
 
 
-def rule_check_results(
+def evaluate_rule_checks(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,
@@ -314,23 +320,23 @@ def rule_check_results(
     A result is `ERROR` when an `"error"` rule in its set failed, so a collapsed check that only warns never stops a step.
     """
     counts: dict[str, int] = failure.counts()
-    sampled: dict[str, list[Row]] = _failed_rows(
+    sampled: dict[str, list[Row]] = _read_failure_examples(
         schema, failure, counts, MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     )
     results: list[dg.AssetCheckResult] = []
-    for rule_set in _rule_sets(schema, check_granularity):
+    for rule_set in _build_rule_sets(schema, check_granularity):
         failed: dict[str, int] = {
             rule.name: counts.get(rule.name, 0) for rule in rule_set.rules
         }
         first: DescribedRule = rule_set.rules[0]
         if rule_set.collapsed:
-            description: str = _failed_rules_description(failed)
+            description: str = _describe_failed_rules(failed)
             metadata: Mapping[str, str | int | dg.TableMetadataValue] = (
-                _collapsed_metadata(rule_set.rules, failed, sampled)
+                _build_collapsed_metadata(rule_set.rules, failed, sampled)
             )
         else:
-            description = failed_rows_description(failed[first.name])
-            metadata = _rule_metadata(
+            description = describe_failed_rows(failed[first.name])
+            metadata = _build_rule_metadata(
                 first, failed[first.name], sampled.get(first.name, [])
             )
         results.append(
@@ -392,9 +398,9 @@ def evaluate_checks(
     # Before the settings resolve or anything reads the frame (ADR-0008).
     validate_namespace(schema)
     # Collects the valid rows too; `docs/pre-1.0.md` has why.
-    _, failure = yield from filtered(schema, frame, asset_key=asset_key)
-    yield column_schema_result(asset_key=asset_key)
-    yield from rule_check_results(
+    _, failure = yield from check_and_filter(schema, frame, asset_key=asset_key)
+    yield build_column_schema_result(asset_key=asset_key)
+    yield from evaluate_rule_checks(
         schema,
         failure,
         asset_key=asset_key,

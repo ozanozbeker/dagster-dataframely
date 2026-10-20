@@ -9,10 +9,10 @@ import hashlib
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._rules import DescribedRule, described_rules
+from dagster_dataframely._rules import DescribedRule, describe_rules
 
 
-def _serialized_expression(rule: DescribedRule) -> bytes | str:
+def _serialize_expression(rule: DescribedRule) -> bytes | str:
     """Return the rule's serialized expression, or its repr where Polars cannot serialize it, as for a Python UDF without `cloudpickle`."""
     expr: pl.Expr = rule.expr
     try:
@@ -32,8 +32,8 @@ def get_code_version(schema: type[dy.Schema]) -> str:
     content = (
         [(name, str(column.dtype)) for name, column in schema.columns().items()],
         [
-            (rule.name, rule.severity, _serialized_expression(rule))
-            for rule in described_rules(schema).values()
+            (rule.name, rule.severity, _serialize_expression(rule))
+            for rule in describe_rules(schema).values()
         ],
     )
     return hashlib.sha1(repr(content).encode(), usedforsecurity=False).hexdigest()

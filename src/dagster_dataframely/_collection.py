@@ -13,10 +13,10 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._checks import failed_rows_description
-from dagster_dataframely._naming import collection_filter_check_name
-from dagster_dataframely._rules import Severity, collection_filter_severities, quoted
-from dagster_dataframely._samples import sample_metadata, sample_rows
+from dagster_dataframely._checks import describe_failed_rows
+from dagster_dataframely._naming import get_check_name_for_filter
+from dagster_dataframely._rules import Severity, get_filter_severities, quote
+from dagster_dataframely._samples import build_sample_metadata, sample_rows
 from dagster_dataframely._settings import MAX_FAILURE_EXAMPLES
 from dagster_dataframely.errors import FailurePropagationError, InvalidMembersError
 
@@ -32,7 +32,7 @@ class _FilterCheck:
     spec: dg.AssetCheckSpec
 
 
-def _snake_cased(name: str) -> str:
+def _to_snake_case(name: str) -> str:
     """Return a class name in snake case: `HTTPLogs` becomes `http_logs`."""
     spaced: str = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", spaced).lower()
@@ -45,9 +45,9 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
     unknown: list[str] = [member for member in members if member not in names]
     if unknown:
         problem = (
-            f"names {quoted(unknown)}, which is not a member of {owner}."
+            f"names {quote(unknown)}, which is not a member of {owner}."
             if len(unknown) == 1
-            else f"names {quoted(unknown)}, which are not members of {owner}."
+            else f"names {quote(unknown)}, which are not members of {owner}."
         )
         raise InvalidMembersError(owner, problem, names)
     required: set[str] = collection.required_members()
@@ -58,7 +58,7 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
         plural: str = "" if len(missing) == 1 else "s"
         raise InvalidMembersError(
             owner,
-            f"lacks the required member{plural} {quoted(missing)} of {owner}.",
+            f"lacks the required member{plural} {quote(missing)} of {owner}.",
             names,
         )
     several: list[str] = [
@@ -69,7 +69,7 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
     if several:
         raise InvalidMembersError(
             owner,
-            f"maps {quoted(several)} to a definition of several assets. Pass the member's `dg.AssetSpec` from its `specs`.",
+            f"maps {quote(several)} to a definition of several assets. Pass the member's `dg.AssetSpec` from its `specs`.",
             names,
         )
     partitioned: list[str] = [
@@ -81,12 +81,12 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
         )
         raise InvalidMembersError(
             owner,
-            f"maps {quoted(partitioned)} to {assets}, and the checks read every member's whole table. Pass unpartitioned assets.",
+            f"maps {quote(partitioned)} to {assets}, and the checks read every member's whole table. Pass unpartitioned assets.",
             names,
         )
 
 
-def _filter_checks(
+def _build_filter_checks(
     collection: type[dy.Collection],
     keys: Mapping[str, dg.AssetKey],
     severities: Mapping[str, Severity],
@@ -98,7 +98,7 @@ def _filter_checks(
             filter_name,
             member,
             dg.AssetCheckSpec(
-                collection_filter_check_name(filter_name),
+                get_check_name_for_filter(filter_name),
                 asset=key,
                 description=inspect.getdoc(collection_filter.logic) or filter_name,
                 additional_deps=[
@@ -148,9 +148,9 @@ def build_collection_checks(
     keys: dict[str, dg.AssetKey] = {
         member: asset.key for member, asset in members.items()
     }
-    severities: dict[str, Severity] = collection_filter_severities(collection)
+    severities: dict[str, Severity] = get_filter_severities(collection)
     limit: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
-    checks: list[_FilterCheck] = _filter_checks(collection, keys, severities)
+    checks: list[_FilterCheck] = _build_filter_checks(collection, keys, severities)
     # Dagster rejects an input that no spec depends on, so a Collection with nothing to check reads nothing.
     inputs: dict[str, dg.AssetKey] = keys if checks else {}
 
@@ -173,7 +173,7 @@ def build_collection_checks(
                 columns: list[str] = lazy_frames[check.member].collect_schema().names()
                 details: pl.DataFrame = failure[check.member].details()
                 metadata["dataframely/failed_row_count"] = failed
-                metadata |= sample_metadata(
+                metadata |= build_sample_metadata(
                     "dataframely/failed_examples",
                     sample_rows(
                         details.filter(pl.col(check.filter_name) == "invalid").select(
@@ -189,7 +189,7 @@ def build_collection_checks(
                 severity=dg.AssetCheckSeverity.ERROR
                 if severities[check.filter_name] == "error"
                 else dg.AssetCheckSeverity.WARN,
-                description=failed_rows_description(failed),
+                description=describe_failed_rows(failed),
                 metadata=metadata,
             )
 
@@ -212,6 +212,6 @@ def build_collection_checks(
     return dg.multi_asset_check(
         specs=[check.spec for check in checks],
         ins={member: dg.AssetIn(key=key) for member, key in inputs.items()},
-        name=name or _snake_cased(collection.__name__),
+        name=name or _to_snake_case(collection.__name__),
         can_subset=True,
     )(_results)

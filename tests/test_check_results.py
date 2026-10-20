@@ -12,7 +12,7 @@ import dataframely as dy
 import polars as pl
 import pytest
 
-from dagster_dataframely._rules import described_rules
+from dagster_dataframely._rules import describe_rules
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import ColumnSchemaError, InvalidSettingError
 from dagster_dataframely.wiring import (
@@ -38,8 +38,8 @@ COLUMN_SCHEMA = "dy_schema__columns"
 
 _FAILURE_EXAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
 
-_RULE_ORDER = list(described_rules(Orders).values())
-"""Read with `described_rules`, not `_rule_sets`, which builds both the specs and the results."""
+_RULE_ORDER = list(describe_rules(Orders).values())
+"""Read with `describe_rules`, not `_build_rule_sets`, which builds both the specs and the results."""
 
 _COLUMNS_WITH_RULES = list(
     dict.fromkeys(rule.column for rule in _RULE_ORDER if rule.column is not None)
