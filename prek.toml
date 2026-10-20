@@ -1,5 +1,7 @@
 default_language_version.python = "3.12"
 default_stages = ["pre-commit"]
+# The skill files stay identical to their source repos, so no hook formats or spell-checks them.
+exclude = '^\.claude/skills/'
 
 [[repos]]
 repo = "https://github.com/compilerla/conventional-pre-commit"
