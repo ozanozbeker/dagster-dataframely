@@ -22,7 +22,6 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 | setting | what it sets | default |
 | --- | --- | --- |
 | `check_granularity` | how many checks the package collapses the schema's rules into: `rule` or `column` | `rule` |
-| `schema_rules` | how the package reports the schema-level rules at `column` granularity: `collapsed` or `per_rule` | `collapsed` |
 | `statistics` | whether each materialization has statistics for the rows it wrote | `true` |
 | `max_failure_samples` | how many of the rows that failed a rule appear in that rule's check | `5` |
 | `row_sample` | how many rows of the table and how many error rows appear in the materialization | `5` |
@@ -84,9 +83,8 @@ The reasons there is no project-wide default are in [the out-of-scope record](ht
 A column's check reports for every rule on that column.
 For a `Struct` column, Dataframely generates one `inner_<field>_nullability` rule per field, so a ten-field struct has ten rules and one check.
 
-`schema_rules` sets how the package reports the schema-level rules at `column` granularity, because they belong to no single column.
-`collapsed` puts them all in one check, `dy_schema__rules`, and `per_rule` gives each one its own check.
-The setting has no effect at `rule` granularity.
+A schema-level rule, a `@dy.rule()` or the primary key, belongs to no single column, so it keeps its own `dy_rule__<rule>` check at `column` granularity.
+You wrote it, so it keeps its own history, as a dbt test does in dagster-dbt.
 
 A schema with no rules has only the column-schema check, at every granularity.
 That check is always present and always blocking.

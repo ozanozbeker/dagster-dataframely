@@ -10,16 +10,8 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._naming import (
-    COLUMN_SCHEMA_CHECK,
-    SCHEMA_RULES_CHECK,
-    column_check_name,
-)
-from dagster_dataframely._rendering import (
-    check_description,
-    column_rule_summary,
-    schema_rule_summary,
-)
+from dagster_dataframely._naming import COLUMN_SCHEMA_CHECK, column_check_name
+from dagster_dataframely._rendering import check_description, column_rule_summary
 from dagster_dataframely._rules import (
     DescribedRule,
     described_rules,
@@ -29,9 +21,7 @@ from dagster_dataframely._samples import Row, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
-    SCHEMA_RULES,
     Granularity,
-    SchemaRules,
 )
 from dagster_dataframely.errors import ColumnSchemaError
 
@@ -52,16 +42,14 @@ def _single_rule_set(schema: type[dy.Schema], rule: DescribedRule) -> _RuleSet:
 
 
 def _rule_sets(
-    schema: type[dy.Schema],
-    check_granularity: Granularity | None,
-    schema_rules: SchemaRules | None,
+    schema: type[dy.Schema], check_granularity: Granularity | None
 ) -> list[_RuleSet]:
     """Group the schema's rules under the checks that report for them.
 
     A schema with no rules gets none, because a check for no rules would always pass.
+    At `column`, a schema-level rule keeps its own check, because the user wrote it (`docs/out-of-scope/schema-rules.md`).
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
     rules: list[DescribedRule] = list(described_rules(schema).values())
     if not rules:
         return []
@@ -69,11 +57,10 @@ def _rule_sets(
         return [_single_rule_set(schema, rule) for rule in rules]
 
     columns: dict[str, list[DescribedRule]] = {}
-    unowned: list[DescribedRule] = []
-    alone: list[DescribedRule] = []
+    schema_level: list[DescribedRule] = []
     for rule in rules:
         if rule.column is None:
-            (alone if schema_rule_checks == "per_rule" else unowned).append(rule)
+            schema_level.append(rule)
         else:
             columns.setdefault(rule.column, []).append(rule)
 
@@ -86,27 +73,17 @@ def _rule_sets(
         )
         for column, members in columns.items()
     ]
-    if unowned:
-        rule_sets.append(
-            _RuleSet(
-                SCHEMA_RULES_CHECK,
-                f"Every rule of {schema.__name__} that no single column owns: {schema_rule_summary(schema, unowned)}.",
-                unowned,
-                collapsed=True,
-            )
-        )
-    rule_sets.extend(_single_rule_set(schema, rule) for rule in alone)
+    rule_sets.extend(_single_rule_set(schema, rule) for rule in schema_level)
     return rule_sets
 
 
-def asset_check_specs(  # noqa: PLR0913 - takes the specs' settings
+def asset_check_specs(
     schema: type[dy.Schema],
     *,
     # `dagster` has no alias for this union.
     asset: str | dg.AssetKey,
     partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     filter: bool = False,  # noqa: A002 - the name `dd.asset` uses
 ) -> list[dg.AssetCheckSpec]:
     """Return the asset check specs for the schema's rules, plus the column-schema check.
@@ -119,8 +96,6 @@ def asset_check_specs(  # noqa: PLR0913 - takes the specs' settings
         Pass `True` when the asset writes its error rows instead of failing, as `dd.asset(filter=True)` does. With `False`, a check that reports for an `"error"` rule is blocking. With `True`, no rule's check is blocking, because a blocking check that fails at `ERROR` fails the step after the table is written.
     check_granularity
         How many checks report the schema's rules. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    schema_rules
-        Which checks report the schema-level rules at `column` granularity. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
 
     Returns
     -------
@@ -140,7 +115,7 @@ def asset_check_specs(  # noqa: PLR0913 - takes the specs' settings
         The schema declares a severity this package cannot read.
     """
     validate_namespace(schema)
-    rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity, schema_rules)
+    rule_sets: list[_RuleSet] = _rule_sets(schema, check_granularity)
     # Dagster's guide documents partitioned checks, so this passes `partitions_def` despite its `PreviewWarning`.
     column_schema = dg.AssetCheckSpec(
         COLUMN_SCHEMA_CHECK,
@@ -326,13 +301,12 @@ def _collapsed_metadata(
     return metadata | sample_metadata("dataframely/failed_sample", attributed)
 
 
-def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
+def rule_check_results(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
     *,
     asset_key: dg.AssetKey,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
     """Return one result per rule set from `failure`.
@@ -344,7 +318,7 @@ def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
         schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     )
     results: list[dg.AssetCheckResult] = []
-    for rule_set in _rule_sets(schema, check_granularity, schema_rules):
+    for rule_set in _rule_sets(schema, check_granularity):
         failed: dict[str, int] = {
             rule.name: counts.get(rule.name, 0) for rule in rule_set.rules
         }
@@ -377,13 +351,12 @@ def rule_check_results(  # noqa: PLR0913 - takes the specs' settings
     return results
 
 
-def asset_check_results(  # noqa: PLR0913 - takes the specs' settings
+def asset_check_results(
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     asset_key: dg.AssetKey,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> Iterator[dg.AssetCheckResult]:
     """Yield a result for each check `asset_check_specs` declares, without writing any rows.
@@ -394,8 +367,6 @@ def asset_check_results(  # noqa: PLR0913 - takes the specs' settings
     ----------
     check_granularity
         Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    schema_rules
-        Pass the value `asset_check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
         A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
 
@@ -428,6 +399,5 @@ def asset_check_results(  # noqa: PLR0913 - takes the specs' settings
         failure,
         asset_key=asset_key,
         check_granularity=check_granularity,
-        schema_rules=schema_rules,
         max_failure_samples=max_failure_samples,
     )

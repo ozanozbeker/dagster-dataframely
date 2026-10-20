@@ -34,8 +34,7 @@ FAILING_WARN = pl.DataFrame({"event_id": [1, 2], "amount": [5, 6], "score": [1, 
 
 SETTINGS: list[dict[str, str]] = [
     {"check_granularity": "rule"},
-    {"check_granularity": "column", "schema_rules": "collapsed"},
-    {"check_granularity": "column", "schema_rules": "per_rule"},
+    {"check_granularity": "column"},
 ]
 
 LAKE = dg.AssetSpec(KEY).with_io_manager_key("lake")
@@ -178,7 +177,7 @@ class TestRun:
             "dy_col__event_id",
             "dy_col__amount",
             "dy_col__score",
-            "dy_schema__rules",
+            "dy_rule__primary_key",
         ]
 
     def test_a_failing_error_rule_fails_at_error_and_fails_the_step(

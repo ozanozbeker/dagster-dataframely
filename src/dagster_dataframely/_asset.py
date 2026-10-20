@@ -38,10 +38,8 @@ from dagster_dataframely._settings import (
     ERROR_ROWS_DIR,
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
-    SCHEMA_RULES,
     STATISTICS,
     Granularity,
-    SchemaRules,
 )
 from dagster_dataframely.errors import CollectionNotSupportedError
 
@@ -73,7 +71,6 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
     error_rows_io_manager_key: str | None = None,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
@@ -117,8 +114,6 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity
         How many asset checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    schema_rules
-        Which checks report the schema-level rules at `column` granularity: `collapsed` into one check, `dy_schema__rules`, or `per_rule`, one check each. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
         A rule's check metadata has at most this many rows that failed it, under `dataframely/failed_sample`. **A run writes the rows to the Dagster event log unredacted.** `dy.Config.set_max_failure_examples` does not change this number. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
     statistics
@@ -211,7 +206,6 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     # Resolved once, here, for both the check specs and the run.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
@@ -270,7 +264,6 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                     valid_key=key,
                     error_rows_writer=writer,
                     check_granularity=granularity,
-                    schema_rules=schema_rule_checks,
                     max_failure_samples=failure_samples,
                     statistics=emit_statistics,
                     row_sample=sampled_rows,
@@ -344,7 +337,6 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                 asset=key,
                 partitions_def=partitions_def,
                 check_granularity=granularity,
-                schema_rules=schema_rule_checks,
                 filter=filter,
             ),
             **forwarded,

@@ -134,7 +134,7 @@ _Avoid_: kind (Dagster's `kinds=` is the asset's badges, and `dd.asset` adds `po
 
 **Schema-level rule**: A rule that belongs to no single column: a `@dy.rule()`, and `primary_key`.
 Dataframely uses this phrase, in `_schema_validation_rules()` and in the warning it raises about them.
-A single-column primary key is one of these, which is why the setting is `schema_rules`.
+A single-column primary key is one of these.
 _Avoid_: multi-column rule, which a single-column primary key makes false; table rule
 
 **Severity**: A rule's `"error"` or `"warn"`, which the schema declares and which is `"error"` when it does not.
@@ -163,7 +163,7 @@ _Avoid_: parsed rule, rule info, rule spec, enriched rule
 
 **Rule set**: The rules one asset check reports for.
 A check reports one rule at `rule` granularity, and one column's rules at `column`.
-At `column`, `schema_rules` sets whether the schema-level rules report through one check or one check each.
+A schema-level rule is its own rule set at both.
 _Avoid_: bucket, "member rule" (member is Dataframely's word for a Collection member)
 
 **Granularity**: How many checks the package collapses the rules into, which `check_granularity` sets: one per rule at `rule`, and one per column at `column`.

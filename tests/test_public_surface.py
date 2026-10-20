@@ -17,7 +17,6 @@ _PUBLIC = {
     "wiring",
     # At the root rather than in a namespace, because annotated code uses them often.
     "Granularity",
-    "SchemaRules",
 }
 
 _WIRING = {

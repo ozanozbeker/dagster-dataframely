@@ -579,10 +579,11 @@ class TestCheckSpecs:
     def test_column_granularity_collapses_the_rules_into_one_check_per_column_with_rules(
         self,
     ):
-        assert set(_specs_by_name(by_column)) == {
-            "dy_schema__columns",
-            "dy_schema__rules",
-        } | {f"dy_col__{column}" for column in _COLUMNS_WITH_RULES}
+        assert set(_specs_by_name(by_column)) == (
+            {"dy_schema__columns"}
+            | {f"dy_col__{column}" for column in _COLUMNS_WITH_RULES}
+            | {f"dy_rule__{rule}" for rule in _SCHEMA_LEVEL_RULES}
+        )
 
     def test_a_column_without_rules_has_no_check(self):
         assert not {"dy_col__fulfilled_in", "dy_col__payload"} & set(
@@ -614,46 +615,17 @@ class TestCheckSpecs:
         assert len(struct_checks) == 10
         assert set(_specs_by_name(collapsed)) == {
             "dy_schema__columns",
-            "dy_schema__rules",
+            "dy_rule__primary_key",
             "dy_col__address_id",
             "dy_col__address",
         }
 
-    def test_schema_rules_collapse_into_the_schema_check_by_default(self):
+    def test_column_granularity_keeps_one_check_per_schema_level_rule(self):
+        """A `@dy.rule()` or the primary key is written by the user, so it keeps its own history."""
         specs = _specs_by_name(by_column)
 
-        assert "dy_schema__rules" in specs
-        assert not {f"dy_rule__{rule}" for rule in _SCHEMA_LEVEL_RULES} & set(specs)
-
-    def test_per_rule_gives_each_schema_rule_a_check_of_its_own(self):
-        @dd.asset(
-            Orders,
-            name="per_rule",
-            check_granularity="column",
-            schema_rules="per_rule",
-        )
-        def per_rule() -> pl.DataFrame:
-            return pl.DataFrame()
-
-        specs = _specs_by_name(per_rule)
-
         assert {f"dy_rule__{rule}" for rule in _SCHEMA_LEVEL_RULES} <= set(specs)
-        assert "dy_schema__rules" not in specs
-
-    def test_the_schema_rule_set_cannot_be_collided_with_by_a_user_column(self):
-        class Tables(dy.Schema):
-            table_id = dy.String(primary_key=True)
-            schema = dy.String(nullable=False)
-
-        @dd.asset(Tables, name="tables", check_granularity="column")
-        def tables() -> pl.DataFrame:
-            return pl.DataFrame()
-
-        specs = _specs_by_name(tables)
-
-        assert "dy_col__schema" in specs
-        assert "dy_schema__rules" in specs
-        assert specs["dy_col__schema"] != specs["dy_schema__rules"]
+        assert not any(name.startswith("dy_schema__r") for name in specs)
 
     @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_a_schema_with_no_rules_gets_the_column_schema_check_and_nothing_else(
@@ -682,11 +654,6 @@ class TestCheckSpecs:
         assert specs["dy_col__email"].description == (
             "Every rule on email: not null, "
             f"lowercase `{_expression_text('email|check__lowercase')}`, length <= 254 bytes."
-        )
-        assert specs["dy_schema__rules"].description == (
-            "Every rule of Orders that no single column owns: "
-            f"paid_orders_have_amount `{_expression_text('paid_orders_have_amount')}`, "
-            f"line_numbers_are_dense `{_expression_text('line_numbers_are_dense')}`, primary_key."
         )
 
     def test_the_environment_variable_sets_a_default_granularity_for_the_code_location(
@@ -1167,7 +1134,6 @@ _NO_DG_ASSET_COUNTERPART = {
     "error_rows_key",
     "error_rows_io_manager_key",
     "check_granularity",
-    "schema_rules",
     "max_failure_samples",
     "statistics",
     "row_sample",

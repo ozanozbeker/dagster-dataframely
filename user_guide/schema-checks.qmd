@@ -58,7 +58,7 @@ Dagster runs every check in it in one step, named `<key>__checks` unless you pas
 The default is not the schema's name in snake case, because a step named `events` beside an asset named `events` fails to load.
 
 The checks are the ones an asset built with `dd.asset` has: the column-schema check, then one check per rule.
-`check_granularity`, `schema_rules` and `max_failure_samples` mean what they mean on `dd.asset`, and [Settings](settings.qmd) lists their sources.
+`check_granularity` and `max_failure_samples` mean what they mean on `dd.asset`, and [Settings](settings.qmd) lists their sources.
 `dd.schema_checks` resolves each setting once, where you call it, so the results always name the checks it declares.
 
 The Columns tab reads the asset's own definition metadata, so `dd.schema_checks` cannot fill it.

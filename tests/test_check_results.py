@@ -48,7 +48,7 @@ _COLUMNS_WITH_RULES = list(
 _CHECKS: dict[Granularity, list[str]] = {
     "rule": [rule.check_name for rule in _RULE_ORDER],
     "column": [f"dy_col__{column}" for column in _COLUMNS_WITH_RULES]
-    + ["dy_schema__rules"],
+    + [rule.check_name for rule in _RULE_ORDER if rule.column is None],
 }
 
 
@@ -102,16 +102,6 @@ class TestDirectCall:
 
         assert [spec.name for spec in specs] == expected
         assert [result.check_name for result in results] == expected
-
-    def test_schema_rules_reach_the_results_too(self):
-        """The results match the specs with `schema_rules` set, which only `column` granularity reads."""
-        settings = {"check_granularity": "column", "schema_rules": "per_rule"}
-        specs = asset_check_specs(Orders, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type, open-unpacking]
-        results = _results(mixed_orders(), **settings)
-
-        assert [result.check_name for result in results] == [
-            spec.name for spec in specs
-        ]
 
     def test_an_invalid_environment_setting_raises_in_a_hand_wired_call(
         self,

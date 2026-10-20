@@ -247,7 +247,7 @@ class TestBlockingSpecs:
                 "column",
                 {
                     "dy_schema__columns",
-                    "dy_schema__rules",
+                    "dy_rule__primary_key",
                     "dy_col__shipment_id",
                     "dy_col__weight",
                     "dy_col__email",

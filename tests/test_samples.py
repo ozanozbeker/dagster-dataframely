@@ -310,19 +310,19 @@ class TestFailureSamples:
         assert [row["dy_rule"] for row in sampled] == ["amount|min"]
         assert list(sampled[0]) == ["dy_rule", *Orders.columns()]
 
-    def test_a_collapsed_check_samples_every_rule_something_failed(
+    def test_a_schema_level_rule_keeps_its_own_sample_at_column_granularity(
         self, tmp_path: Path
     ):
-        """The bound is per rule, so a rule one row failed still appears beside a rule many rows failed."""
+        """A `@dy.rule()` has its own check at `column`, so its sample has no `dy_rule` column."""
         result = materialize(tmp_path, _by_column)
         sampled = records(
-            check_evaluations(result)["dy_schema__rules"].metadata[
+            check_evaluations(result)["dy_rule__paid_orders_have_amount"].metadata[
                 "dataframely/failed_sample"
             ]
         )
 
-        assert [row["dy_rule"] for row in sampled] == ["paid_orders_have_amount"]
         assert [row["order_id"] for row in sampled] == ["ORD-6"]
+        assert "dy_rule" not in sampled[0]
 
 
 class TestSampleSettings:

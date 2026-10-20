@@ -182,11 +182,3 @@ def column_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule])
         )
         for rule in rules
     )
-
-
-def schema_rule_summary(schema: type[dy.Schema], rules: Sequence[DescribedRule]) -> str:
-    """Name every schema-level rule, for their collapsed check.
-
-    It shows names because a `@dy.rule()` has no constraint to render, and a rendered `primary_key` has commas.
-    """
-    return ", ".join(_with_expression(schema, rule, rule.name) for rule in rules)

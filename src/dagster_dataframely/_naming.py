@@ -8,9 +8,6 @@ RESERVED_NAMESPACE = "dy_"
 
 COLUMN_SCHEMA_CHECK = "dy_schema__columns"
 
-SCHEMA_RULES_CHECK = "dy_schema__rules"
-"""Not `dy_col__schema`, which a `schema` column also gets."""
-
 
 def asset_check_name(rule_name: str) -> str:
     """Return the asset check name for the Dataframely rule named `rule_name`.

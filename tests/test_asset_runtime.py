@@ -779,7 +779,11 @@ class TestCollapsedChecks:
         evaluations = check_evaluations(materialize(tmp_path, _by_column))
         failed = {name for name, e in evaluations.items() if not e.passed}
 
-        assert failed == {"dy_col__amount", "dy_col__email", "dy_schema__rules"}
+        assert failed == {
+            "dy_col__amount",
+            "dy_col__email",
+            "dy_rule__paid_orders_have_amount",
+        }
         assert all(
             evaluations[name].severity == dg.AssetCheckSeverity.ERROR for name in failed
         )

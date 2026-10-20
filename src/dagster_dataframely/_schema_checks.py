@@ -14,9 +14,7 @@ from dagster_dataframely._checks import asset_check_results, asset_check_specs
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     MAX_FAILURE_SAMPLES,
-    SCHEMA_RULES,
     Granularity,
-    SchemaRules,
 )
 from dagster_dataframely.errors import ColumnSchemaError
 
@@ -29,7 +27,6 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
     name: str | None = None,
     partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
 ) -> dg.AssetChecksDefinition:
     """Return an asset check for each of the schema's rules on `asset`, plus the column-schema check.
@@ -65,14 +62,12 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
     """
     key: dg.AssetKey = dg.AssetKey.from_coercible(asset)
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    schema_rule_checks: SchemaRules = SCHEMA_RULES.resolve(schema_rules)
     failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
     specs: list[dg.AssetCheckSpec] = asset_check_specs(
         schema,
         asset=key,
         partitions_def=partitions_def,
         check_granularity=granularity,
-        schema_rules=schema_rule_checks,
     )
 
     def _results(
@@ -84,7 +79,6 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
             table,
             asset_key=key,
             check_granularity=granularity,
-            schema_rules=schema_rule_checks,
             max_failure_samples=failure_samples,
         )
         try:

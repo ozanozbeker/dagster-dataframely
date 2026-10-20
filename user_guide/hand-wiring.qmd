@@ -63,8 +63,8 @@ For a partitioned asset, also pass its `partitions_def`, so Dagster records each
 Pass `filter=True` when the asset writes error rows, as `dd.asset(filter=True)` does, so that no rule's check is blocking.
 `asset_check_results(schema, frame, asset_key=key)` yields a result for each of those checks and writes nothing.
 Each failing check has its rule's severity, as in `dd.asset`.
-Pass the same `check_granularity` and `schema_rules` to `asset_check_specs` and to the function that yields the results, or to neither.
-Those settings determine the check names.
+Pass the same `check_granularity` to `asset_check_specs` and to the function that yields the results, or to neither.
+The setting determines the check names.
 Dagster matches each result to its spec by name, so different values fail the step.
 
 **Validation and the write.**

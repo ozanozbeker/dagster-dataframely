@@ -1,7 +1,4 @@
-"""Tests for `_Setting.resolve`, which reads each setting from its three sources.
-
-The last two tests call `asset_check_specs`, because no other test file sets `DAGSTER_DATAFRAMELY_SCHEMA_RULES`.
-"""
+"""Tests for `_Setting.resolve`, which reads each setting from its three sources."""
 
 from dataclasses import replace
 from pathlib import Path
@@ -14,15 +11,11 @@ from dagster_dataframely._settings import (
     ERROR_ROWS_DIR,
     MAX_FAILURE_SAMPLES,
     ROW_SAMPLE,
-    SCHEMA_RULES,
     STATISTICS,
 )
 from dagster_dataframely.errors import InvalidSettingError
-from dagster_dataframely.wiring import asset_check_specs
-from tests.scenario import Orders
 
 _GRANULARITY_ENV = "DAGSTER_DATAFRAMELY_CHECK_GRANULARITY"
-_SCHEMA_RULES_ENV = "DAGSTER_DATAFRAMELY_SCHEMA_RULES"
 _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 _ERROR_ROWS_DIR_ENV = "DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR"
@@ -44,7 +37,6 @@ _BROKEN_DIRECTORY = replace(ERROR_ROWS_DIR, name="fake_directory", default="")
 
 def test_a_setting_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
-    assert SCHEMA_RULES.resolve(None) == "collapsed"
     assert STATISTICS.resolve(None) is True
     assert MAX_FAILURE_SAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
@@ -67,7 +59,6 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 
 def test_every_setting_names_its_environment_variable_after_itself():
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
-    assert SCHEMA_RULES.env_var == _SCHEMA_RULES_ENV
     assert STATISTICS.env_var == _STATISTICS_ENV
     assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
@@ -299,36 +290,3 @@ def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     )
     assert f"then the environment variable {_ERROR_ROWS_DIR_ENV}." in message
     assert "There is no `error_rows_dir=` argument." in message
-
-
-def test_the_schema_rules_environment_variable_changes_the_check_specs(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_rule")
-
-    # `schema_rules` has no effect at the other granularities.
-    names = [
-        spec.name
-        for spec in asset_check_specs(
-            Orders, asset="orders", check_granularity="column"
-        )
-    ]
-
-    assert "dy_rule__primary_key" in names
-    assert "dy_schema__rules" not in names
-
-
-def test_a_schema_rules_value_outside_the_allowed_values_raises(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    monkeypatch.setenv(_SCHEMA_RULES_ENV, "per_column")
-
-    with pytest.raises(InvalidSettingError) as raised:
-        asset_check_specs(Orders, asset="orders", check_granularity="column")
-    message = str(raised.value)
-
-    assert (
-        f"Setting `schema_rules` got 'per_column' from the environment variable {_SCHEMA_RULES_ENV}"
-        in message
-    )
-    assert "'collapsed', 'per_rule'" in message

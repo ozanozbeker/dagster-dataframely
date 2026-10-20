@@ -26,7 +26,6 @@ from dagster_dataframely._settings import (
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
-    SchemaRules,
 )
 from dagster_dataframely._statistics import statistics_metadata
 from dagster_dataframely.errors import NoValidRowsError, ValidationAbortError
@@ -156,7 +155,6 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     valid_key: dg.AssetKey,
     error_rows_writer: ErrorRowsWriter | None = None,
     check_granularity: Granularity | None = None,
-    schema_rules: SchemaRules | None = None,
     max_failure_samples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
@@ -174,8 +172,6 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         The writer for the rows that failed an `"error"` rule, called at most once, with the frame `error_rows_frame` returns. It receives every such row, because the error rows are the only copy of the rows that a run with `filter=True` leaves out of the table (`docs/out-of-scope/dbt-test-configs.md#limit`). When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
         Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    schema_rules
-        Pass the value `asset_check_specs` received, as for `check_granularity`. `None` uses `DAGSTER_DATAFRAMELY_SCHEMA_RULES` if set, else `collapsed`.
     max_failure_samples
         A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
     statistics
@@ -226,7 +222,6 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
                 failure,
                 asset_key=valid_key,
                 check_granularity=check_granularity,
-                schema_rules=schema_rules,
                 max_failure_samples=failure_samples,
             ),
         ]

@@ -3,6 +3,18 @@
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
 Each release below carries the migration, not just the list.
 
+## 0.11.0 - unreleased
+
+### Breaking in 0.11
+
+**`schema_rules` is gone, and a schema-level rule keeps its own check at `column` granularity.**
+`column` collapses the rules Dataframely generates on a column into `dy_col__<column>`.
+A `@dy.rule()` or the primary key is written by you, so it now keeps its own `dy_rule__<rule>` check and its own history, as a dbt test does in dagster-dbt.
+This is what `schema_rules="per_rule"` did.
+`dy_schema__rules` is no longer declared, so its history ends with the last run before the upgrade.
+Remove `schema_rules=`, `dd.SchemaRules` and `DAGSTER_DATAFRAMELY_SCHEMA_RULES`; nothing replaces them.
+[`docs/out-of-scope/schema-rules.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-rules.md) has the reasons.
+
 ## 0.10.0 - 2026-10-18
 
 ### Breaking in 0.10
