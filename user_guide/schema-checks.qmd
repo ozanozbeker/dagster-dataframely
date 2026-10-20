@@ -1,0 +1,238 @@
+---
+title: "Schema checks"
+---
+
+```{python}
+#| label: setup-schema-checks
+#| code-fold: true
+#| code-summary: "Setup: the imports every example on this page uses"
+#| output: false
+import tempfile
+
+import dagster as dg
+import dataframely as dy
+import duckdb
+import polars as pl
+from dagster_duckdb_polars import DuckDBPolarsIOManager
+from dagster_polars import PolarsParquetIOManager
+
+import dagster_dataframely as dd
+from dagster_dataframely.errors import ColumnSchemaError
+```
+
+`dd.schema_checks` reports a schema's rules as asset checks on an asset that `dd.asset` did not build.
+The asset can be a plain `@dg.asset`, an asset another integration builds, or a table written outside Dagster.
+The checks read the table and write nothing.
+A row that fails a rule stays in the table, and its check fails.
+
+## Declaring the checks
+
+Pass the schema and the asset key to `dd.schema_checks`:
+
+```{python}
+#| label: schema-checks-1
+class Events(dy.Schema):
+    event_id = dy.Int64(primary_key=True)
+    amount = dy.Int64(nullable=False, min=0)
+    score = dy.Int64(
+        nullable=True,
+        max=10,
+        metadata={"dagster_dataframely": {"severity": {"max": "warn"}}},
+    )
+
+
+events = dg.AssetSpec(
+    "events", metadata=dd.wiring.schema_metadata(Events)
+).with_io_manager_key("warehouse")
+event_checks = dd.schema_checks(Events, asset="events")
+
+{
+    "step": event_checks.node_def.name,
+    "checks": [(spec.name, spec.blocking) for spec in event_checks.check_specs],
+}
+```
+
+`asset` takes a string or a `dg.AssetKey`, as `dd.wiring.asset_check_specs` does.
+`dd.schema_checks` returns one `dg.AssetChecksDefinition`, which goes in `dg.Definitions(asset_checks=[...])`.
+Dagster runs every check in it in one step, named `<key>__checks` unless you pass `name=`.
+The default is not the schema's name in snake case, because a step named `events` beside an asset named `events` fails to load.
+
+The checks are the ones an asset built with `dd.asset` has: the column-schema check, then one check per rule.
+`check_granularity`, `schema_rules` and `max_failure_samples` mean what they mean on `dd.asset`, and [Settings](settings.qmd) lists their sources.
+`dd.schema_checks` resolves each setting once, where you call it, so the results always name the checks it declares.
+
+The Columns tab reads the asset's own definition metadata, so `dd.schema_checks` cannot fill it.
+Pass `dd.wiring.schema_metadata(Events)` as the asset's `metadata`, as `events` does above.
+
+## How the checks read the table
+
+The checks read the table as a Dagster input, through the asset's own IO manager, as a `pl.DataFrame`.
+The input is always a `pl.DataFrame`, because some IO managers load no other type: `DuckDBPolarsIOManager` raises for a `pl.LazyFrame` input.
+
+So the asset needs an IO manager that reads its table.
+`events` sets one with `dg.AssetSpec.with_io_manager_key`.
+An asset with no IO manager key reads through `io_manager`, and the step fails while loading the input if that IO manager does not store the table.
+For an asset another integration builds, such as a dbt model or a dlt resource, set the IO manager key where that integration takes one.
+This page tests only `dg.AssetSpec.with_io_manager_key`.
+[Open an issue](https://github.com/ozanozbeker/dagster-dataframely/issues) for an integration whose assets the checks cannot load.
+
+The run below checks a DuckDB table that SQL wrote, as a dbt model would.
+It selects only the checks, as the "Execute" button does in the UI:
+
+```{python}
+#| label: schema-checks-2
+def warehouse_with(columns: str) -> str:
+    """Create the `analytics.events` table in a new database, and return the database path."""
+    database = f"{tempfile.mkdtemp()}/warehouse.duckdb"
+    with duckdb.connect(database) as connection:
+        connection.sql("create schema analytics")
+        connection.sql(f"create table analytics.events ({columns})")
+        connection.sql("insert into analytics.events values (1, 5, 1), (2, -1, 20)")
+    return database
+
+
+def check_run(database: str) -> dg.ExecuteInProcessResult:
+    return dg.materialize(
+        [events, event_checks],
+        resources={
+            "warehouse": DuckDBPolarsIOManager(database=database, schema="analytics")
+        },
+        selection=dg.AssetSelection.checks(event_checks),
+        raise_on_error=False,
+    )
+
+
+result = check_run(warehouse_with("event_id BIGINT, amount BIGINT, score BIGINT"))
+
+{
+    evaluation.check_name: evaluation.severity.value
+    for evaluation in result.get_asset_check_evaluations()
+    if not evaluation.passed
+}
+```
+
+## What a run reports
+
+Row 2 fails `amount|min`, an `"error"` rule, and `score|max`, a `"warn"` rule.
+
+**A failing `"error"` rule's check stops the assets downstream.**
+Each `"error"` rule's check is blocking, as it is for `dd.asset` with `filter=False`.
+So Dagster fails the check step and does not run the assets downstream of `events`:
+
+```{python}
+#| label: schema-checks-3
+result.success
+```
+
+The table still has row 2, because the checks write nothing.
+`dd.schema_checks` takes no `filter` argument, and it writes no error rows.
+
+**A failing `"warn"` rule's check only reports.**
+Declare a rule `"warn"` to report its failures without stopping anything.
+[Rule severity](rule-severity.qmd) lists the ways to declare it.
+
+The check results have the same descriptions and metadata as the results of an asset built with `dd.asset`.
+[What a run produces](what-a-run-produces.qmd) lists them.
+
+**A run writes the sample rows to the Dagster event log unredacted.**
+
+## A dtype the table stores
+
+A table that SQL wrote often stores another dtype than the schema declares.
+DuckDB's `INTEGER` reads back as `Int32`, so it does not match `dy.Int64`:
+
+```{python}
+#| label: schema-checks-4
+try:
+    dg.materialize(
+        [events, event_checks],
+        resources={
+            "warehouse": DuckDBPolarsIOManager(
+                database=warehouse_with(
+                    "event_id BIGINT, amount INTEGER, score BIGINT"
+                ),
+                schema="analytics",
+            )
+        },
+        selection=dg.AssetSelection.checks(event_checks),
+    )
+except ColumnSchemaError as error:
+    print(error)
+```
+
+The column-schema check fails, and the step fails with `ColumnSchemaError`.
+No rule is evaluated.
+Declare the dtype the table stores, `dy.Int32` here, or change what writes the table.
+This package never casts for you, and `dd.schema_checks` has no function body to cast in.
+
+## Checking an asset you write yourself
+
+`dd.schema_checks` also checks a plain `@dg.asset`.
+Use it when the write must not depend on the check results:
+
+```{python}
+#| label: schema-checks-5
+@dg.asset(metadata=dd.wiring.schema_metadata(Events))
+def staged_events() -> pl.DataFrame:
+    return pl.DataFrame({"event_id": [1, 2], "amount": [5, -1], "score": [1, 2]})
+
+
+staged_checks = dd.schema_checks(Events, asset="staged_events")
+```
+
+![The asset's Checks tab. The checks ran in their own step, against a table the IO manager had already written. The selected check is blocking, because its rule is `"error"`, and the rows that failed it are in that table, not in the error rows.](../assets/images/split-checks.png)
+
+The IO manager writes whatever the asset returns, and the checks run afterwards against the written table.
+Unlike with `dd.asset`, the table can contain rows that failed an `"error"` rule.
+Only a failing check reports them.
+
+## Partitions
+
+Pass the asset's `partitions_def`, and each run checks one partition:
+
+```{python}
+#| label: schema-checks-6
+days = dg.StaticPartitionsDefinition(["2026-10-01", "2026-10-02"])
+
+
+@dg.asset(partitions_def=days, metadata=dd.wiring.schema_metadata(Events))
+def daily_events(context: dg.AssetExecutionContext) -> pl.DataFrame:
+    amount = 5 if context.partition_key == "2026-10-01" else -1
+    return pl.DataFrame({"event_id": [1], "amount": [amount], "score": [1]})
+
+
+daily_checks = dd.schema_checks(Events, asset="daily_events", partitions_def=days)
+```
+
+```{python}
+#| label: schema-checks-7
+#| echo: false
+#| output: false
+# The cell above only declares the checks, so the build runs them here and checks what the page states.
+with tempfile.TemporaryDirectory() as tmp:
+    job = dg.Definitions(
+        assets=[daily_events],
+        asset_checks=[daily_checks],
+        resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
+    ).resolve_implicit_global_asset_job_def()
+    for day in days.get_partition_keys():
+        job.get_subset(
+            asset_selection={daily_events.key}, asset_check_selection=set()
+        ).execute_in_process(partition_key=day)
+    checked = job.get_subset(
+        asset_selection=set(), asset_check_selection=set(daily_checks.check_keys)
+    ).execute_in_process(partition_key="2026-10-01")
+    evaluations = checked.get_asset_check_evaluations()
+    assert all(evaluation.passed for evaluation in evaluations)
+    assert {evaluation.partition for evaluation in evaluations} == {"2026-10-01"}
+```
+
+The check reads only that partition's table, and Dagster records each evaluation under the partition.
+So each partition is validated separately, as an asset built with `dd.asset` validates it.
+Nothing checks that `partitions_def` matches the asset's.
+Without it, the check reads every partition at once: with `dg.FilesystemIOManager`, it receives a `dict` and fails its type check.
+
+## Selecting checks
+
+A run can select any of the checks, and it reports only those.
+Each run still validates the whole table, or the whole partition, so selecting one check takes as long as selecting all of them.

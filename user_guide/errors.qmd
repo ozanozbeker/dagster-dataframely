@@ -31,7 +31,7 @@ Every message names what failed and how to fix it.
 | `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
 | `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
 | `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
-| `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body |
+| `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body; for `dd.schema_checks`, declare the dtype the table stores, or change what writes the table |
 | `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
 | `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
 | `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |

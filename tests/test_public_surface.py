@@ -12,6 +12,7 @@ _PUBLIC = {
     "collection_checks",
     "error_rows_spec",
     "errors",
+    "schema_checks",
     "testing",
     "wiring",
     # At the root rather than in a namespace, because annotated code uses them often.

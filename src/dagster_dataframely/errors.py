@@ -218,23 +218,42 @@ class ColumnSchemaError(DagsterDataframelyError):
     """A frame's columns or dtypes do not match the schema.
 
     This is a bug in the pipeline, not bad data, so the run fails before `Schema.filter` runs, and the asset writes nothing.
+
+    Attributes
+    ----------
+    problems
+        One mapping of `column`, `expected` and `actual` per mismatched column.
     """
 
-    def __init__(self, schema_name: str, problems: Sequence[Mapping[str, str]]) -> None:
+    def __init__(
+        self,
+        schema_name: str,
+        problems: Sequence[Mapping[str, str]],
+        *,
+        stored: bool = False,
+    ) -> None:
         """Name each mismatched column with its expected and actual dtype.
 
         Parameters
         ----------
         problems
             One mapping of `column`, `expected` and `actual` per mismatched column, as `_column_schema_problems` returns.
+        stored
+            Whether the frame is a table read back from storage, as in `dd.schema_checks`, where no asset body exists to cast in.
         """
+        self.problems: Sequence[Mapping[str, str]] = problems
         mismatches: str = ", ".join(
             f"'{problem['column']}' (expected {problem['expected']}, got {problem['actual']})"
             for problem in problems
         )
         plural, verb = ("", "does") if len(problems) == 1 else ("s", "do")
+        fix: str = (
+            f"Declare the dtype the table stores in {schema_name}, or change what writes the table."
+            if stored
+            else f"Fix the function that produced it, or cast with `{schema_name}.cast(frame)` in the asset body."
+        )
         super().__init__(
-            f"Column{plural} {mismatches} {verb} not match {schema_name}. Fix the function that produced it, or cast with `{schema_name}.cast(frame)` in the asset body. This package never casts for you."
+            f"Column{plural} {mismatches} {verb} not match {schema_name}. {fix} This package never casts for you."
         )
 
 

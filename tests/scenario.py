@@ -286,6 +286,7 @@ _, _TAKER_FAILURE = Orders.filter(clean_orders())
 SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
     "asset": dd.asset,  # raises before it returns a decorator (ADR-0008)
     "error_rows_spec": lambda schema: dd.error_rows_spec(schema, _TAKER_KEY),
+    "schema_checks": lambda schema: dd.schema_checks(schema, asset=_TAKER_KEY),
     "wiring.asset_check_results": lambda schema: list(
         dd.wiring.asset_check_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
     ),

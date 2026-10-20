@@ -58,7 +58,8 @@ So settling this before 1.0 does not prevent any later option.
 ## If someone proposes this again
 
 The package gaining settings, or functions that take them, would reopen it.
-[Rule sets fixed at definition time](rule-sets-fixed-at-definition-time.md) names the nearest case: a third grouping setting, or a fourth public function that takes `check_granularity` and `schema_rules`.
+[Rule sets fixed at definition time](rule-sets-fixed-at-definition-time.md) names the nearest case: a third grouping setting, or a fourth public function that a user must pass `check_granularity` and `schema_rules` to by hand.
+`dd.schema_checks` takes both and resolves them itself, as `dd.asset` does, so it is not that case.
 
 Build it as an additive change.
 Add `settings: Settings | None = None` to each `wiring` function that takes settings, keep the separate keyword arguments, and raise when a call passes both.

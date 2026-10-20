@@ -199,48 +199,7 @@ Under direct invocation it does nothing, because there is no asset graph to chec
 
 ## Split the checks off entirely
 
-The example above passes its frame to `validation_results`, which writes the table and yields the check results in one step.
-To separate them, return the frame from an ordinary asset, and put the checks in a `@dg.multi_asset_check` that reads the table back through the IO manager:
-
-```{python}
-#| label: hand-wiring-2
-from collections.abc import Iterator
-
-KEY = dg.AssetKey(["orders"])
-
-
-@dg.asset(metadata=dd.wiring.schema_metadata(Orders))
-def orders() -> pl.LazyFrame:
-    return orders_frame()
-
-
-@dg.multi_asset_check(specs=dd.wiring.asset_check_specs(Orders, asset=KEY))
-def orders_checks(orders: pl.LazyFrame) -> Iterator[dg.AssetCheckResult]:
-    yield from dd.wiring.asset_check_results(Orders, orders, asset_key=KEY)
-```
-
-![The asset's Checks tab. The checks ran in their own `@dg.multi_asset_check`, against a table the IO manager had already written. The selected check is blocking, because its rule is `"error"`, and the rows that failed it are in that table, not in the error rows.](../assets/images/split-checks.png)
-
-Use this when the write must not depend on the check results.
-The IO manager writes whatever the asset returns, lazy or eager, and the checks run afterwards against the written table.
-Unlike with `dd.asset`, the IO manager writes the table before validation, so it can contain rows that failed an `"error"` rule.
-Only a failing check reports them.
-
-`asset_check_results` does what `validation_results` does, without writing anything.
-It yields no materialization, writes no error rows, and never raises `ValidationAbortError` or `NoValidRowsError`.
-
-Two things work differently from `dd.asset`:
-
-- **A failing `"error"` rule's check stops the assets downstream, not the write.**
-  `asset_check_specs` makes each `"error"` rule's check blocking, as it does for `dd.asset` with `filter=False`.
-  So when an `"error"` rule fails, Dagster fails the check step and does not run the assets downstream.
-  The IO manager has already written the table, with the failing rows in it.
-  A `"warn"` rule's check only reports.
-- **Use the same settings as the specs.**
-  Pass `check_granularity` and `schema_rules` to both calls, or to neither.
-
-`asset_check_results` still raises `ColumnSchemaError` when the column schema does not match.
-The column-schema check fails, the step fails on the error, and `asset_check_results` yields no result for any rule, because it evaluated no rule.
+`dd.schema_checks` builds the checks for a table the IO manager has already written, as [Schema checks](schema-checks.qmd) shows.
 
 ## Without the package at all
 

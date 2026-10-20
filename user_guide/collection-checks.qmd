@@ -184,7 +184,7 @@ metadata = evaluation.metadata
 
 The check reads each member's table as the member's asset wrote it.
 It calls `Collection.filter` with `skip_member_validation=True`, so it evaluates only the collection filters.
-Each member asset's own checks report the member's rules, so each table must already have passed its member's schema: declare it with `dd.asset`, or check it with `dd.wiring.asset_check_results`.
+Each member asset's own checks report the member's rules, so each table must already have passed its member's schema: declare it with `dd.asset`, or check it with `dd.schema_checks`.
 
 A failing check's metadata has three keys:
 

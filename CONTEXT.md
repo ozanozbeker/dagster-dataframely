@@ -154,6 +154,10 @@ Each member of the Collection is an asset the user declares, and the checks repo
 It reads every member's whole table and writes nothing.
 _Avoid_: collection asset, collection door
 
+**`dd.schema_checks`**: The function that returns a schema's asset checks on an asset that `dd.asset` did not build, as one `dg.AssetChecksDefinition`.
+The checks read the asset's table and write nothing, so a row that fails a rule stays in the table.
+_Avoid_: schema-on-read checks, source checks, external checks
+
 **`DescribedRule`**: One rule with everything this package derives from it: its check name, its column and rule name, its docstring, and its expression.
 _Avoid_: parsed rule, rule info, rule spec, enriched rule
 

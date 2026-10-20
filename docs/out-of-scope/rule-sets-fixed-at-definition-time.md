@@ -57,7 +57,11 @@ The case below that would reopen this proposal would also reopen #65.
 The current design has one drawback: the two grouping settings are parameters of several functions, which have to change together.
 `asset_check_specs`, `validation_results` and `asset_check_results` take them, `rule_check_results` takes them from the last two, and a fourth public function would have to take them by hand.
 
-A third grouping setting, or a fourth public function that needs the two, would reopen it.
+`dd.schema_checks` takes the two as well, since [#143](https://github.com/ozanozbeker/dagster-dataframely/issues/143).
+It resolves them once and passes the values to `asset_check_specs` and `asset_check_results`, as `dd.asset` does, so a user has nothing to keep in step.
+`test_the_results_answer_exactly_the_specs`, in `tests/test_schema_checks.py`, asserts at every setting that its results name its specs, so it does not reopen this proposal.
+
+A third grouping setting, or a fourth public function that a user must pass the two to by hand, would reopen it.
 Either would add more places that change together than one parametrized test covers, and a single resolved value would then justify its work.
 A change to the hand-wiring policy would also reopen it, for a different reason.
 
