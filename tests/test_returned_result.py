@@ -29,7 +29,7 @@ from tests.scenario import (
     no_valid_orders,
 )
 
-_VALID = dg.AssetKey(["orders"])
+_ORDERS = dg.AssetKey(["orders"])
 _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
@@ -66,7 +66,7 @@ class TestMaterialization:
                 value=clean_orders(), metadata={"source": "stripe"}
             )
 
-        metadata = materializations(materialize(tmp_path, orders))[_VALID].metadata
+        metadata = materializations(materialize(tmp_path, orders))[_ORDERS].metadata
 
         assert metadata["source"].value == "stripe"
         assert metadata["dagster/row_count"].value == 3
@@ -108,7 +108,7 @@ class TestMaterialization:
                 tags={"run/flavour": "backfill"},
             )
 
-        tags = materializations(materialize(tmp_path, orders))[_VALID].tags or {}
+        tags = materializations(materialize(tmp_path, orders))[_ORDERS].tags or {}
 
         assert tags["dagster/data_version"] == "v1"
         assert tags["run/flavour"] == "backfill"
@@ -139,7 +139,7 @@ class TestMaterialization:
             )
 
         recorded = materializations(materialize(tmp_path, orders))
-        event = recorded[_VALID]
+        event = recorded[_ORDERS]
         tags = event.tags or {}
 
         assert event.metadata["source"] == dg.MetadataValue.text("stripe")
@@ -171,11 +171,11 @@ class TestMaterialization:
             return dg.MaterializeResult(value=clean_orders())
 
         from_bare = materializations(materialize(tmp_path / "bare", bare))[
-            _VALID
+            _ORDERS
         ].metadata
         from_result = materializations(
             materialize(tmp_path / "result", returning_a_result)
-        )[_VALID].metadata
+        )[_ORDERS].metadata
 
         assert set(from_bare) == set(from_result)
         assert_frame_equal(
@@ -199,7 +199,7 @@ _REJECTED_RETURNS = [
         id="a value that is not a frame",
     ),
     pytest.param(
-        # Not a skip: a skipped run has no materialization for the metadata (#95).
+        # `value=None` is not a skip, because a skip has no materialization for the metadata (#95).
         lambda: dg.MaterializeResult(value=None, metadata={"delivered": False}),
         MaterializeResultValueError,
         "has no frame",
@@ -239,7 +239,7 @@ _REJECTED_RETURNS = [
 
 
 def _orders_asset(fn: Callable[[], object]) -> dg.AssetsDefinition:
-    """Declare `fn` as the `orders` asset, the name every message above expects."""
+    """Declare `fn` as the `orders` asset, because the `'orders' returned a` messages above contain its name."""
     return dd.asset(OrdersSchema, name="orders")(fn)  # pyrefly: ignore[bad-argument-type]
 
 
@@ -281,7 +281,7 @@ class TestErrors:
             materialize(tmp_path, orders)
 
     def test_an_abort_with_no_error_rows_still_raises_its_own_error(self):
-        """With `filter=False`, failing rows produce no materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
+        """With `filter=False`, `stream_results` raises before it yields a materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
 
         @dd.asset(OrdersSchema, name="orders")
         def orders() -> dg.MaterializeResult[pl.DataFrame]:

@@ -1,6 +1,6 @@
 """Runtime behaviour of `dd.asset`, asserted on a run's events, check evaluations, metadata and written files.
 
-`TestOutcomeSelection` calls `stream_results` directly, to assert each of the six outcomes without a run.
+`TestOutcomeSelection` calls `stream_results` directly, with the scenario frames and with `None`, to assert what it yields, writes and raises without a run.
 """
 
 from collections.abc import Callable, Iterator, Mapping
@@ -84,7 +84,7 @@ class TestCleanFrame:
         assert all(e.passed for e in evaluations.values())
         assert all(e.severity == dg.AssetCheckSeverity.WARN for e in rules.values())
 
-    def test_a_check_carries_its_rule_and_the_live_expression(self, tmp_path: Path):
+    def test_a_check_has_its_rule_and_the_live_expression(self, tmp_path: Path):
         evaluation = check_evaluations(materialize(tmp_path, _raw_orders, orders))[
             "dy_rule__amount__min"
         ]
@@ -108,7 +108,7 @@ class TestReturnAnnotation:
             pytest.param(False, pl.LazyFrame, id="eager under a lazy annotation"),
         ],
     )
-    def test_an_annotation_that_disagrees_with_the_return_changes_nothing(
+    def test_an_annotation_that_differs_from_the_return_changes_nothing(
         self, tmp_path: Path, lazy: bool, annotation: type
     ):
         def fn():
@@ -122,10 +122,10 @@ class TestReturnAnnotation:
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
 
-# No package code handles this: `functools.wraps` exposes the decorated function's signature to Dagster.
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
 
 
+# Without `filter=True`, `functools.wraps` exposes the decorated function's signature to Dagster, so Dagster passes `context` itself.
 class TestContextParameter:
     """A run of a decorated function that takes the context."""
 
@@ -187,7 +187,7 @@ class TestSharedName:
     def test_two_assets_sharing_a_name_under_different_prefixes_both_write(
         self, tmp_path: Path
     ):
-        """Their op names differ, because the op name is the step key (#70)."""
+        """The two steps have different keys, because each op takes its name from the whole asset key and the op name is the step key (#70)."""
 
         def shipments(prefix: str) -> dg.AssetsDefinition:
             @dd.asset(OrdersSchema, key_prefix=prefix, name="shipments")
@@ -266,7 +266,7 @@ class TestColumnSchemaMismatch:
         assert column_schema.severity == dg.AssetCheckSeverity.ERROR
         assert not list(tmp_path.rglob("*.parquet"))
 
-    def test_the_column_schema_check_tabulates_every_offending_column(
+    def test_the_column_schema_check_tabulates_every_failing_column(
         self, tmp_path: Path
     ):
         result = materialize(tmp_path, _wrong_dtype, raise_on_error=False)
@@ -292,7 +292,7 @@ class TestErrorRowsWithoutFilter:
             materialize(tmp_path, _mixed)
 
         assert "3 rows failed an 'error' rule of OrdersSchema" in str(raised.value)
-        assert "1 by 'amount|min'" in str(raised.value)
+        assert "1 row failed 'amount|min'" in str(raised.value)
         assert "never drops rows for you" in str(raised.value)
         assert "filter=True" in str(raised.value)
 
@@ -331,7 +331,7 @@ class TestErrorRowsWithoutFilter:
             materialize(tmp_path, all_invalid)
 
         assert (
-            "2 rows failed an 'error' rule of OrdersSchema, 2 by 'amount|min'"
+            "2 rows failed an 'error' rule of OrdersSchema. Per rule, 2 rows failed 'amount|min'"
             in str(raised.value)
         )
         assert not list(tmp_path.rglob("*.parquet"))
@@ -350,7 +350,7 @@ class TestErrorRowsWithoutFilter:
         assert all(e.severity == dg.AssetCheckSeverity.ERROR for e in failed)
 
 
-_GOOD_KEY = dg.AssetKey(["orders"])
+_ORDERS_KEY = dg.AssetKey(["orders"])
 _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
@@ -367,14 +367,14 @@ class TestFilterWithValidRows:
         result = materialize(tmp_path, _filtered)
 
         assert result.success
-        assert set(materializations(result)) == {_GOOD_KEY, _ERROR_ROWS_KEY}
+        assert set(materializations(result)) == {_ORDERS_KEY, _ERROR_ROWS_KEY}
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
         assert pl.read_parquet(tmp_path / "orders__error_rows.parquet").height == 3
 
-    def test_the_materialization_says_where_the_rest_went(self, tmp_path: Path):
+    def test_the_materialization_reports_the_error_rows_address(self, tmp_path: Path):
         """The package computes the error-rows address, because the IO manager's metadata for the error rows appears only in their own materialization."""
         metadata = materializations(materialize(tmp_path, _filtered))[
-            _GOOD_KEY
+            _ORDERS_KEY
         ].metadata
 
         assert metadata["dataframely/error_rows_address"] == dg.MetadataValue.text(
@@ -397,7 +397,7 @@ class TestFilterWithValidRows:
         assert result.success
         assert set(materializations(result)) == {
             dg.AssetKey(["raw_orders"]),
-            _GOOD_KEY,
+            _ORDERS_KEY,
             _ERROR_ROWS_KEY,
         }
         assert len(result.get_step_success_events()) == 2
@@ -418,7 +418,7 @@ class TestFilterWithValidRows:
             e.severity == dg.AssetCheckSeverity.ERROR for e in rules if not e.passed
         )
 
-    def test_every_rule_check_carries_its_rule_and_expression_whichever_way_it_went(
+    def test_the_check_of_every_rule_has_its_rule_and_expression_whether_it_passed_or_failed(
         self,
         tmp_path: Path,
     ):
@@ -436,7 +436,7 @@ class TestFilterWithValidRows:
         self, tmp_path: Path
     ):
         evaluations = check_evaluations(materialize(tmp_path, _filtered))
-        direct = evaluate_checks(OrdersSchema, mixed_orders(), asset_key=_GOOD_KEY)
+        direct = evaluate_checks(OrdersSchema, mixed_orders(), asset_key=_ORDERS_KEY)
 
         assert {name: e.description for name, e in evaluations.items()} == {
             result.check_name: result.description for result in direct
@@ -485,7 +485,7 @@ class TestFilterWithValidRows:
 
         assert all(error_rows.schema[name] == pl.String for name in get_rule_columns)
 
-    def test_a_rule_column_says_which_rule_each_row_failed(self, tmp_path: Path):
+    def test_a_rule_column_shows_which_rows_failed_its_rule(self, tmp_path: Path):
         materialize(tmp_path, _filtered)
         error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet").sort(
             "order_id"
@@ -507,7 +507,7 @@ class TestFilterWithValidRows:
             return cooccurring_orders()
 
         metadata = materializations(materialize(tmp_path, cooccurring))[
-            _GOOD_KEY
+            _ORDERS_KEY
         ].metadata
         cooccurrence = metadata["dataframely/error_rows_by_rules"]
 
@@ -522,11 +522,11 @@ class TestFilterWithValidRows:
             }
         ]
 
-    def test_the_invalid_by_rules_table_leads_with_the_set_that_broke_the_most_rows(
+    def test_the_error_rows_by_rules_table_lists_the_set_most_rows_failed_first(
         self,
         tmp_path: Path,
     ):
-        """Rows sort by count, then by rule names, because `cooccurrence_counts()` returns them in arbitrary order."""
+        """Rows sort by count, then by rule names."""
         duplicate_break = (
             mixed_orders()
             .filter(pl.col("order_id") == "ORD-4")  # amount|min alone
@@ -540,7 +540,9 @@ class TestFilterWithValidRows:
         def repeated() -> pl.DataFrame:
             return pl.concat([mixed_orders(), duplicate_break])
 
-        metadata = materializations(materialize(tmp_path, repeated))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, repeated))[
+            _ORDERS_KEY
+        ].metadata
         cooccurrence = metadata["dataframely/error_rows_by_rules"]
 
         assert isinstance(cooccurrence, dg.TableMetadataValue)
@@ -586,8 +588,8 @@ class TestFilterWithNoValidRows:
         with pytest.raises(NoValidRowsError) as raised:
             materialize(tmp_path, _no_valid_rows)
 
-        assert "All 2 rows failed an 'error' rule of OrdersSchema" in str(raised.value)
-        assert "2 by 'amount|min'" in str(raised.value)
+        assert "2 of 2 rows failed an 'error' rule of OrdersSchema" in str(raised.value)
+        assert "2 rows failed 'amount|min'" in str(raised.value)
         assert "orders__error_rows" in str(raised.value)
 
     def test_no_valid_rows_fails_every_failing_rule_check_at_error(
@@ -644,7 +646,7 @@ class TestSkip:
         assert all(e.target_materialization_data is None for e in evaluations.values())
 
     @pytest.mark.parametrize("granularity", ["rule", "column"])
-    def test_a_skip_answers_whatever_check_list_the_asset_declared(
+    def test_a_skip_yields_a_result_for_every_check_the_asset_declares(
         self, tmp_path: Path, granularity: Granularity
     ):
         """A skip yields a result for every check the asset declares, at every granularity."""
@@ -658,11 +660,11 @@ class TestSkip:
         assert set(evaluations) == {spec.name for spec in skipping.check_specs}
         assert all(e.passed for e in evaluations.values())
 
-    def test_a_hand_wired_plain_asset_reaches_the_skip_through_output_required(
+    def test_a_hand_wired_asset_with_output_required_false_skips(
         self,
         tmp_path: Path,
     ):
-        """A hand-wired asset skips when it sets `output_required=False`."""
+        """A hand-wired asset with `output_required=False` skips when it passes `None` to `stream_results`."""
 
         @dg.asset(
             name="orders",
@@ -680,16 +682,6 @@ class TestSkip:
         assert result.success
         assert materializations(result) == {}
         assert len(check_evaluations(result)) == len(list(orders_by_hand.check_specs))
-
-
-# (frame, filtering) for each outcome that has a frame.
-_OUTCOMES = [
-    pytest.param(clean_orders, False, id="all valid"),
-    pytest.param(mixed_orders, False, id="no filtering"),
-    pytest.param(mixed_orders, True, id="some valid"),
-    pytest.param(no_valid_orders, True, id="no valid rows"),
-    pytest.param(wrong_dtype_orders, False, id="column_schema"),
-]
 
 
 def _both_ways(
@@ -722,7 +714,7 @@ def _pluralize(frame: pl.DataFrame) -> tuple[pl.LazyFrame, list[int]]:
 class TestLazyReturn:
     """A run whose decorated function returns a `LazyFrame`."""
 
-    # No test compares the two returns per outcome, because `stream_results` calls `frame.lazy()` on both.
+    # No test compares an eager and a lazy return for each scenario frame, because `stream_results` calls `frame.lazy()` on both.
 
     @pytest.mark.parametrize("lazily", [False, True], ids=["eager", "lazy"])
     def test_the_filter_runs_on_the_streaming_engine(
@@ -771,7 +763,9 @@ def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-def _members(evaluation: dg.AssetCheckEvaluation) -> dict[object, object]:
+def _failure_counts_by_rule(
+    evaluation: dg.AssetCheckEvaluation,
+) -> dict[object, object]:
     """Return the failure count of each rule in a collapsed check."""
     table = dict(evaluation.metadata)["dataframely/rules"]
     assert isinstance(table, dg.TableMetadataValue)
@@ -796,24 +790,24 @@ class TestCollapsedChecks:
             evaluations[name].severity == dg.AssetCheckSeverity.ERROR for name in failed
         )
 
-    def test_a_collapsed_check_reports_the_failure_count_of_every_member_rule(
+    def test_a_collapsed_check_reports_the_failure_count_of_every_rule(
         self,
         tmp_path: Path,
     ):
         """The counts are per rule, because one row can fail several rules."""
         evaluations = check_evaluations(materialize(tmp_path, _by_column))
 
-        assert _members(evaluations["dy_col__email"]) == {
+        assert _failure_counts_by_rule(evaluations["dy_col__email"]) == {
             "email|nullability": 0,
             "email|check__lowercase": 1,
             "email|max_length": 0,
         }
-        assert _members(evaluations["dy_col__amount"]) == {
+        assert _failure_counts_by_rule(evaluations["dy_col__amount"]) == {
             "amount|nullability": 0,
             "amount|min": 1,
         }
 
-    def test_a_collapsed_check_carries_the_live_expression_of_every_member(
+    def test_a_collapsed_check_has_the_live_expression_of_every_rule(
         self, tmp_path: Path
     ):
         evaluation = check_evaluations(materialize(tmp_path, _by_column))[
@@ -837,7 +831,9 @@ class TestCollapsedChecks:
         evaluations = check_evaluations(materialize(tmp_path, spotless))
 
         assert all(e.passed for e in evaluations.values())
-        assert set(_members(evaluations["dy_col__email"]).values()) == {0}
+        assert set(_failure_counts_by_rule(evaluations["dy_col__email"]).values()) == {
+            0
+        }
 
     def test_collapsing_the_checks_does_not_collapse_the_error_rows(
         self, tmp_path: Path
@@ -869,7 +865,7 @@ class TestMetadataKeys:
 
 def _column_schema(result: dg.ExecuteInProcessResult) -> object:
     """Return the column schema on the table's materialization."""
-    return materializations(result)[_GOOD_KEY].metadata["dagster/column_schema"].value
+    return materializations(result)[_ORDERS_KEY].metadata["dagster/column_schema"].value
 
 
 class TestColumnSchema:
@@ -914,7 +910,7 @@ def _drained(
 ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
     """Return what `stream_results` yielded and wrote, and the error it raised, if any.
 
-    Three outcomes raise after yielding, so `list()` alone would lose the results.
+    `stream_results` raises `ColumnSchemaError`, `ValidationAbortError` or `NoValidRowsError` after it yields check results, so `list()` alone would raise before it returns them.
     """
     written: list[pl.DataFrame] = []
 
@@ -927,7 +923,7 @@ def _drained(
     results = stream_results(
         OrdersSchema,
         frame,
-        asset_key=_GOOD_KEY,
+        asset_key=_ORDERS_KEY,
         error_rows_writer=writer if filtering else None,
     )
     try:
@@ -951,25 +947,25 @@ def _checks(yielded: Yielded) -> list[dg.AssetCheckResult]:
 
 
 def _rules(yielded: Yielded) -> list[dg.AssetCheckResult]:
-    """Return the check results except the column-schema check's, whose severity the outcome does not set."""
+    """Return the check results except the column-schema check's, which reports no rule."""
     return [c for c in _checks(yielded) if c.check_name != "dy_schema__columns"]
 
 
 class TestOutcomeSelection:
-    """The six outcomes, asserted on what `stream_results` yields, writes and raises, with no run."""
+    """What `stream_results` yields, writes and raises for the scenario frames and for `None`, with no run."""
 
     def test_a_clean_frame_writes_an_empty_error_rows_with_every_column(self):
         yielded, written, error = _drained(clean_orders(), filtering=True)
         _, dirty, _ = _drained(mixed_orders(), filtering=True)
 
         assert error is None
-        assert list(results(yielded)) == [_GOOD_KEY]
+        assert list(results(yielded)) == [_ORDERS_KEY]
         (empty,) = written
         assert empty.is_empty()
         assert empty.schema == dirty[0].schema
 
-    def test_a_clean_frame_says_nothing_about_invalid_rows(self):
-        """A clean run omits the four invalid-row keys instead of setting them to zero."""
+    def test_a_clean_frame_omits_the_error_rows_keys(self):
+        """A clean run omits the four `dataframely/error_rows_*` keys instead of writing empty values."""
         clean, _, _ = _drained(clean_orders(), filtering=True)
         partial, _, _ = _drained(mixed_orders(), filtering=True)
 
@@ -1002,7 +998,7 @@ class TestOutcomeSelection:
         (invalid,) = written
 
         assert error is None
-        assert list(results(yielded)) == [_GOOD_KEY]
+        assert list(results(yielded)) == [_ORDERS_KEY]
         assert len(invalid) == 3
         assert "dy_rule__amount__min" in invalid.columns
 
@@ -1019,7 +1015,7 @@ class TestOutcomeSelection:
             metadata["dataframely/error_rows_sample"], dg.TableMetadataValue
         )
 
-    def test_the_invalid_sample_is_bounded_by_the_row_sample_setting(self):
+    def test_the_error_rows_sample_is_bounded_by_the_row_sample_setting(self):
         yielded, _, _ = _drained(mixed_orders(), filtering=True)
         sample = _metadata(yielded)["dataframely/error_rows_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
@@ -1027,7 +1023,7 @@ class TestOutcomeSelection:
         bounded = stream_results(
             OrdersSchema,
             mixed_orders(),
-            asset_key=_GOOD_KEY,
+            asset_key=_ORDERS_KEY,
             error_rows_writer=lambda _: _ADDRESS,
             row_sample=1,
         )
@@ -1082,7 +1078,7 @@ class TestOutcomeSelection:
         ]
         assert _checks(yielded)
 
-    def test_severity_follows_the_rule_rather_than_the_runs_outcome(self):
+    def test_severity_follows_the_rule_with_and_without_filter(self):
         """The same failing checks are `ERROR` with and without `filter`, because every rule of `OrdersSchema` is `"error"`."""
         check_and_filter, _, _ = _drained(mixed_orders(), filtering=True)
         aborted, _, _ = _drained(mixed_orders(), filtering=False)
@@ -1096,7 +1092,6 @@ class TestOutcomeSelection:
             == {dg.AssetCheckSeverity.ERROR}
         )
 
-    # The sixth outcome: the decorated function returned `None`.
     @pytest.mark.parametrize(
         "filtering", [False, True], ids=["bare", "check_and_filter"]
     )
@@ -1107,7 +1102,7 @@ class TestOutcomeSelection:
         assert list(results(yielded)) == []
         assert written == []
 
-    def test_a_skip_still_answers_every_check(self):
+    def test_a_skip_still_yields_a_result_for_every_check(self):
         """A skip yields a result for every check, because each check spec is a non-optional op output."""
         skipped, _, _ = _drained(None, filtering=False)
         clean, _, _ = _drained(clean_orders(), filtering=False)

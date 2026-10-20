@@ -1,4 +1,4 @@
-"""The code locations a test launches a run from, because only such a run has a `repository_def` (ADR-0007)."""
+"""A test launches a run from these code locations, because only such a run has a `repository_def` (ADR-0007)."""
 
 import dagster as dg
 import polars as pl

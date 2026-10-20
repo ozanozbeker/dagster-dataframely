@@ -1,6 +1,6 @@
-"""The row samples, asserted in the metadata a run records.
+"""These tests read the row samples and the failure examples from the metadata a run records.
 
-The materialization has samples of the valid and invalid rows, and a failing check has a sample of the rows that failed it.
+The materialization has a row sample of the table and one of the error rows, and a failing check has failure examples.
 """
 
 import datetime as dt
@@ -27,10 +27,10 @@ from tests.scenario import (
 _FAILURE_EXAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 
-_GOOD_KEY = dg.AssetKey(["orders"])
+_ORDERS_KEY = dg.AssetKey(["orders"])
 
 _DEFAULT = 5
-"""Both sample settings default to this."""
+"""`row_sample` and `max_failure_examples` both default to this."""
 
 
 def _many_orders(rows: int) -> pl.DataFrame:
@@ -58,10 +58,10 @@ def _clean() -> pl.DataFrame:
 
 
 class TestMaterializationSamples:
-    """The samples of the valid and the invalid rows in a materialization's metadata."""
+    """The row samples of the table and of the error rows in a materialization's metadata."""
 
     def test_a_materialization_has_a_sample_of_the_rows_it_wrote(self, tmp_path: Path):
-        metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, _clean))[_ORDERS_KEY].metadata
         sampled = records(metadata["dataframely/table_sample"])
 
         assert [row["order_id"] for row in sampled] == ["ORD-1", "ORD-2", "ORD-3"]
@@ -72,26 +72,26 @@ class TestMaterializationSamples:
         def wide() -> pl.DataFrame:
             return _many_orders(_DEFAULT * 2)
 
-        metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, wide))[_ORDERS_KEY].metadata
 
         assert len(records(metadata["dataframely/table_sample"])) == _DEFAULT
 
-    def test_the_row_sample_is_the_head_rather_than_any_other_draw(
+    def test_the_row_sample_is_the_first_rows_rather_than_a_random_draw(
         self, tmp_path: Path
     ):
-        """The head is the only sample a re-read of the same data reproduces."""
+        """The first rows are the only sample that a second read of the same frame reproduces."""
 
         @dd.asset(OrdersSchema, name="orders")
         def wide() -> pl.DataFrame:
             return _many_orders(_DEFAULT * 2)
 
-        metadata = materializations(materialize(tmp_path, wide))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, wide))[_ORDERS_KEY].metadata
         sampled = records(metadata["dataframely/table_sample"])
 
         assert [row["line_no"] for row in sampled] == list(range(1, _DEFAULT + 1))
 
     def test_the_row_sample_shows_every_column_the_row_holds(self, tmp_path: Path):
-        metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, _clean))[_ORDERS_KEY].metadata
 
         assert [
             list(record) for record in records(metadata["dataframely/table_sample"])
@@ -107,7 +107,7 @@ class TestMaterializationSamples:
             return clean_orders()
 
         metadata = materializations(materialize(tmp_path, unsampled))[
-            _GOOD_KEY
+            _ORDERS_KEY
         ].metadata
 
         assert "dataframely/table_sample" not in metadata
@@ -120,7 +120,7 @@ class TestMaterializationSamples:
             return clean_orders().head(0)
 
         result = materialize(tmp_path, nothing_today)
-        metadata = materializations(result)[_GOOD_KEY].metadata
+        metadata = materializations(result)[_ORDERS_KEY].metadata
 
         assert result.success
         assert "dataframely/table_sample" not in metadata
@@ -134,7 +134,7 @@ class TestMaterializationSamples:
         def orders() -> pl.DataFrame:
             return clean_orders()
 
-        metadata = materializations(materialize(tmp_path, orders))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, orders))[_ORDERS_KEY].metadata
 
         assert len(records(metadata["dataframely/table_sample"])) == 1
 
@@ -142,7 +142,7 @@ class TestMaterializationSamples:
         self, tmp_path: Path
     ):
         """A `Decimal` becomes its string, not a float, so `10.00` stays `10.00`."""
-        metadata = materializations(materialize(tmp_path, _clean))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, _clean))[_ORDERS_KEY].metadata
         first = records(metadata["dataframely/table_sample"])[0]
 
         assert first["amount"] == "10.00"
@@ -161,7 +161,7 @@ class TestMaterializationSamples:
             return mixed_orders()
 
         metadata = materializations(materialize(tmp_path, with_error_rows))[
-            _GOOD_KEY
+            _ORDERS_KEY
         ].metadata
 
         assert len(records(metadata["dataframely/table_sample"])) == 3
@@ -172,7 +172,9 @@ class TestMaterializationSamples:
         def bounded() -> pl.DataFrame:
             return mixed_orders()
 
-        metadata = materializations(materialize(tmp_path, bounded))[_GOOD_KEY].metadata
+        metadata = materializations(materialize(tmp_path, bounded))[
+            _ORDERS_KEY
+        ].metadata
 
         assert len(records(metadata["dataframely/table_sample"])) == 1
         assert len(records(metadata["dataframely/error_rows_sample"])) == 1
@@ -183,7 +185,7 @@ class TestMaterializationSamples:
             return mixed_orders()
 
         metadata = materializations(materialize(tmp_path, with_error_rows))[
-            _GOOD_KEY
+            _ORDERS_KEY
         ].metadata
         (first, *_) = records(metadata["dataframely/error_rows_sample"])
 
@@ -203,8 +205,8 @@ def _by_column() -> pl.DataFrame:
     return mixed_orders()
 
 
-class TestFailureSamples:
-    """The sample of failing rows in a check's metadata."""
+class TestFailureExamples:
+    """The failure examples in a check's metadata."""
 
     def test_a_failing_check_has_the_rows_that_failed_it(self, tmp_path: Path):
         result = materialize(tmp_path, _with_error_rows)
@@ -235,7 +237,7 @@ class TestFailureSamples:
         assert "dataframely/failed_examples" not in metadata
         assert {"dataframely/rule", "dataframely/rule_expr"} <= set(metadata)
 
-    def test_the_failure_sample_is_bounded(self, tmp_path: Path):
+    def test_the_failure_examples_are_bounded(self, tmp_path: Path):
         @dd.asset(OrdersSchema, name="orders", filter=True)
         def many_invalid() -> pl.DataFrame:
             return _invalid_orders(_DEFAULT * 2)
@@ -246,7 +248,7 @@ class TestFailureSamples:
         assert metadata["dataframely/failed_row_count"].value == _DEFAULT * 2
         assert len(records(metadata["dataframely/failed_examples"])) == _DEFAULT
 
-    def test_a_failure_sample_of_zero_leaves_the_key_absent_rather_than_empty(
+    def test_zero_failure_examples_leave_the_key_absent_rather_than_empty(
         self,
         tmp_path: Path,
     ):
@@ -265,7 +267,7 @@ class TestFailureSamples:
         assert "dataframely/failed_examples" not in metadata
         assert metadata["dataframely/failed_row_count"].value == 1
 
-    def test_the_environment_variable_sets_the_failure_sample(
+    def test_the_environment_variable_sets_the_failure_examples(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         monkeypatch.setenv(_FAILURE_EXAMPLES_ENV, "0")
@@ -282,7 +284,7 @@ class TestFailureSamples:
         )
 
     def test_an_aborting_run_still_samples_what_failed(self, tmp_path: Path):
-        """The run writes nothing, so the check's sample is the only record of the invalid rows."""
+        """The run writes nothing, so the check's failure examples are the only record of the invalid rows."""
 
         @dd.asset(OrdersSchema, name="orders")
         def aborting() -> pl.DataFrame:
@@ -315,7 +317,7 @@ class TestFailureSamples:
     def test_a_schema_level_rule_keeps_its_own_sample_at_column_granularity(
         self, tmp_path: Path
     ):
-        """A `@dy.rule()` has its own check at `column`, so its sample has no `dy_rule` column."""
+        """A `@dy.rule()` has its own check at `column`, so its failure examples have no `dy_rule` column."""
         result = materialize(tmp_path, _by_column)
         sampled = records(
             check_evaluations(result)["dy_rule__paid_orders_have_amount"].metadata[
@@ -328,7 +330,7 @@ class TestFailureSamples:
 
 
 class TestSampleSettings:
-    """The two sample settings, read separately from `statistics`."""
+    """The `row_sample` and `max_failure_examples` settings, which are independent of `statistics`."""
 
     def test_turning_the_statistics_off_leaves_both_samples_on(self, tmp_path: Path):
         @dd.asset(OrdersSchema, name="orders", filter=True, statistics=False)
@@ -336,7 +338,7 @@ class TestSampleSettings:
             return mixed_orders()
 
         result = materialize(tmp_path, without_statistics)
-        metadata = materializations(result)[_GOOD_KEY].metadata
+        metadata = materializations(result)[_ORDERS_KEY].metadata
 
         assert not [
             key for key in metadata if key.startswith("dataframely/table_statistics/")
@@ -359,7 +361,7 @@ class TestSampleSettings:
             return mixed_orders()
 
         result = materialize(tmp_path, unsampled)
-        metadata = materializations(result)[_GOOD_KEY].metadata
+        metadata = materializations(result)[_ORDERS_KEY].metadata
 
         assert "dataframely/table_statistics/numeric" in metadata
         assert "dataframely/table_sample" not in metadata

@@ -1,7 +1,7 @@
-"""`dd.build_rule_checks`, which reports a schema's rules as asset checks on a table that something other than `dd.asset` wrote.
+"""`dd.build_rule_checks` returns a schema's asset checks on an asset that `dd.asset` did not build.
 
 It builds one `@dg.multi_asset_check` from `build_asset_check_specs` and `evaluate_checks`, as `_collection.py` does for a Collection's collection filters.
-It resolves each setting once and passes the value to both, so the results always name the checks the specs declare.
+It resolves `check_granularity` once and passes the value to both, so the results always name the checks the specs declare.
 """
 
 from collections.abc import Iterator
@@ -40,11 +40,11 @@ def build_rule_checks(  # noqa: PLR0913 - takes the specs' settings
     asset
         The key of the asset whose table the checks read, which `dd.asset` did not build.
     name
-        The name of the step that runs the checks. `None` uses the asset key's Python identifier followed by `__checks`, because the schema's name in snake case is often the asset's own op name.
+        The name of the step that runs the checks. `None` uses the asset key's Python identifier followed by `__checks`, because a name built from the schema would repeat for two assets that share it, and Dagster raises on two steps with one name.
     partitions_def
         The asset's partitions, so each run checks one partition. Dagster does not check that it matches the asset's.
     check_granularity
-        How many checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+        How many checks report the schema's rules: one per rule at `rule`, and at `column` one per column with rules plus one per schema-level rule. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     max_failure_examples
         A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
 
@@ -88,6 +88,7 @@ def build_rule_checks(  # noqa: PLR0913 - takes the specs' settings
         check_granularity=granularity,
     )
 
+    # `pl.DataFrame`, because `DuckDBPolarsIOManager` raises on a `pl.LazyFrame` input.
     def _results(
         context: dg.AssetCheckExecutionContext, table: pl.DataFrame
     ) -> Iterator[dg.AssetCheckResult]:

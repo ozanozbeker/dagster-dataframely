@@ -1,4 +1,4 @@
-"""The error-rows key, path, writers and asset spec.
+"""The functions in this module return the error-rows key, the error rows' file path, the writers and the error rows' spec.
 
 `dd.asset` records where its writer writes in the definition metadata, and `build_error_rows_spec` reads it back.
 `get_error_rows_path` escapes partition keys as `FilesystemIOManager` does, not as `UPathIOManager` does, so the path for `../../etc/x` is still under `error_rows_dir`.
@@ -65,7 +65,7 @@ def build_writer_metadata(
     error_rows_key: dg.AssetKey | str | Sequence[str] | None,
     error_rows_io_manager_key: str | None,
 ) -> dict[str, dg.DagsterAssetMetadataValue | dg.TextMetadataValue]:
-    """Return the definition metadata that records where a run writes the error rows, which `build_error_rows_spec` reads."""
+    """Return the definition metadata that records where a run writes the error rows."""
     return {
         _KEY_ENTRY: dg.MetadataValue.asset(
             _resolve_error_rows_key(key, error_rows_key)
@@ -77,7 +77,7 @@ def build_writer_metadata(
 
 
 def _get_executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.AssetKey]:
-    """Return every asset key the run can materialize (ADR-0007)."""
+    """Return every executable asset key in the code location, or in the job when the run has no code location (ADR-0007)."""
     try:
         return context.repository_def.asset_graph.executable_asset_keys
     except CheckError:
@@ -291,11 +291,11 @@ def build_io_manager_writer(
     key = _resolve_error_rows_key(context.asset_key, error_rows_key)
     # A run of one partition has a key and no range, and a single-run backfill the reverse.
     partitioned = context.has_partition_key or context.has_partition_key_range
-    # Dagster logs the table once per partition in a range, so the error rows match it.
+    # Dagster logs one materialization per partition in a range, so the writer does too.
     partitions = list(context.partition_keys) if partitioned else [None]
     # Dagster defines `dagster/row_count` as the whole table's count.
     count_key = "dagster/partition_row_count" if partitioned else "dagster/row_count"
-    # Only a code location shows that no spec exists, and a run of `dg.materialize` has none.
+    # A `dg.materialize` run has no code location to read the spec from, so the writer always logs the materialization.
     try:
         logs_event = key in context.repository_def.asset_graph.unexecutable_asset_keys
     except CheckError:
@@ -385,7 +385,7 @@ def build_error_rows_writer(
 ) -> ErrorRowsWriter:
     """Return a writer that calls `build_io_manager_writer` in a run and `build_file_writer` otherwise.
 
-    Without a step it skips a zero-row frame, so a clean call needs no `error_rows_dir`.
+    Without a step it writes nothing for a zero-row frame, so a direct invocation with no error rows needs no `error_rows_dir`.
     """
 
     def write(frame: pl.DataFrame) -> str:
@@ -485,7 +485,7 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
     io_manager_key: str | None = None
     if isinstance(asset, dg.AssetsDefinition):
         if partitions_def is not None:
-            both = f"`build_error_rows_spec` was given both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The definition already states its partitions, so drop the argument. Pass a `partitions_def` only with a key, where there is no definition to read one off."
+            both = f"`dd.build_error_rows_spec` received both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The spec uses the definition's partitions, so remove the `partitions_def` argument. Pass a `partitions_def` only with an asset key."
             raise dg.DagsterInvariantViolationError(both)
         parent, partitions_def = asset.key, asset.partitions_def
         definition_spec = asset.get_asset_spec()
@@ -527,7 +527,7 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
         group_name=group_name,
         owners=owners,
         tags=tags,
-        # Not the asset's kinds, which can name storage that `error_rows_io_manager_key` does not write to.
+        # Not the asset's kinds, which can name storage that the error rows' IO manager does not write to.
         kinds={"polars"},
     )
     return spec if io_manager_key is None else spec.with_io_manager_key(io_manager_key)

@@ -116,7 +116,15 @@ def _ids(frame: pl.DataFrame | None) -> set[str]:
     return set(frame["shipment_id"])
 
 
+class WarnOnTheClassSchema(dy.Schema):
+    shipment_id = dy.String(primary_key=True)
+
+    __dagster_dataframely__: ClassVar = {"severity": {"primary_key": "warn"}}
+
+
 class TestWithoutFilter:
+    """`stream_results` with no writer, as an asset with `filter=False` calls it."""
+
     def test_a_warn_failure_writes_every_row_and_warns(self):
         yielded, _, error = _drained(_warn_only(), filtering=False)
 
@@ -156,8 +164,18 @@ class TestWithoutFilter:
         assert "email|max_length" not in message
         assert "`filter=True`" in message
 
+    def test_a_duplicate_key_declared_warn_is_written(self):
+        frame = pl.DataFrame({"shipment_id": ["A", "A"]})
+        yielded = list(stream_results(WarnOnTheClassSchema, frame, asset_key=_KEY))
+
+        assert _ids(_table(yielded)) == {"A"}
+        assert len(_table(yielded)) == 2  # pyrefly: ignore[bad-argument-type]
+        assert _failed(yielded) == {"dy_rule__primary_key": dg.AssetCheckSeverity.WARN}
+
 
 class TestWithFilter:
+    """`stream_results` with a writer, as an asset with `filter=True` calls it."""
+
     def test_the_error_rows_hold_exactly_the_rows_that_failed_an_error_rule(self):
         yielded, (error_rows,), error = _drained(_mixed(), filtering=True)
 
@@ -228,6 +246,8 @@ def _blocking(specs: list[dg.AssetCheckSpec]) -> set[str]:
 
 
 class TestBlockingSpecs:
+    """The `blocking` flag on each check spec that `build_asset_check_specs` returns."""
+
     @pytest.mark.parametrize(
         ("granularity", "blocking"),
         [
@@ -288,6 +308,8 @@ class TestBlockingSpecs:
 
 
 class TestCollapsedCheck:
+    """The severity of a collapsed check at `column` granularity."""
+
     def test_a_collapsed_check_warns_when_only_its_warn_rule_failed(
         self, tmp_path: Path
     ):
@@ -314,6 +336,8 @@ class TestCollapsedCheck:
 
 
 class TestCheckResults:
+    """The check results that `evaluate_checks` yields."""
+
     def test_each_result_has_its_rules_severity(self):
         yielded = list(evaluate_checks(ShipmentsSchema, _mixed(), asset_key=_KEY))
 
@@ -321,18 +345,3 @@ class TestCheckResults:
             "dy_rule__weight__min": dg.AssetCheckSeverity.ERROR,
             "dy_rule__email__max_length": dg.AssetCheckSeverity.WARN,
         }
-
-
-class WarnOnTheClassSchema(dy.Schema):
-    shipment_id = dy.String(primary_key=True)
-
-    __dagster_dataframely__: ClassVar = {"severity": {"primary_key": "warn"}}
-
-
-def test_a_duplicate_key_declared_warn_is_written():
-    frame = pl.DataFrame({"shipment_id": ["A", "A"]})
-    yielded = list(stream_results(WarnOnTheClassSchema, frame, asset_key=_KEY))
-
-    assert _ids(_table(yielded)) == {"A"}
-    assert len(_table(yielded)) == 2  # pyrefly: ignore[bad-argument-type]
-    assert _failed(yielded) == {"dy_rule__primary_key": dg.AssetCheckSeverity.WARN}

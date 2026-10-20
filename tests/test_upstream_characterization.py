@@ -1,4 +1,4 @@
-"""Characterization tests for the upstream behaviour this package depends on.
+"""These characterization tests check the upstream behaviour that this package depends on.
 
 Each docstring names the upstream behaviour and the code here that uses it, so a failure shows what upstream changed.
 """
@@ -45,7 +45,7 @@ class OrdersSchema(dy.Schema):
 
     @dy.rule()
     def paid_orders_have_amount(cls) -> pl.Expr:
-        """Paid orders must carry a positive amount."""
+        """Require a positive amount on a paid order."""
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 
 
@@ -95,7 +95,7 @@ class TestDataframely:
             if "|" in name
         )
 
-    def test_rule_values_are_rule_instances_carrying_a_polars_expr(self):
+    def test_rule_values_are_rule_instances_with_a_polars_expr(self):
         """Each `_validation_rules` value is a `Rule` with a `pl.Expr` on `expr`, which `_rules.DescribedRule` stores and `_checks` writes to check metadata."""
         rules = OrdersSchema._validation_rules(with_cast=False)
 
@@ -108,7 +108,8 @@ class TestDataframely:
 
         assert isinstance(factory, RuleFactory)
         assert (
-            factory.validation_fn.__doc__ == "Paid orders must carry a positive amount."
+            factory.validation_fn.__doc__
+            == "Require a positive amount on a paid order."
         )
 
     def test_a_column_rule_is_not_reachable_by_name(self):
@@ -204,7 +205,7 @@ class TestDataframely:
             dy.Float64(allow_inf=True, allow_nan=True).validation_rules(pl.col("a"))
         )
 
-    def test_validate_dtype_still_decides_on_the_dtype_alone_down_to_the_time_unit(
+    def test_validate_dtype_still_compares_the_dtype_alone_down_to_the_time_unit(
         self,
     ):
         """The undocumented `dy.Column.validate_dtype` rejects another `Datetime` time unit or time zone, and `_checks._find_column_schema_problems` calls it."""
@@ -297,7 +298,7 @@ class TestDataframely:
         )
 
     def test_a_collection_member_records_how_it_takes_part_in_the_filters(self):
-        """`Collection.members()` gives each member `is_lazy`, `is_optional`, `ignored_in_filters` and `propagate_row_failures`, which `_collection` reads."""
+        """`_collection` reads `is_lazy`, `ignored_in_filters` and `propagate_row_failures` from each member in `Collection.members()`, and the required members from `Collection.required_members()`."""
         members = OrderBook.members()
 
         assert members["orders"].is_lazy
@@ -386,7 +387,6 @@ class TestDagster:
             warnings.simplefilter("ignore", PreviewWarning)
             spec = dg.AssetCheckSpec("row_count", asset=key, partitions_def=elsewhere)
 
-        # Unannotated: with `build_asset_check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
         @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
         def orders():
             return dg.MaterializeResult(
@@ -491,7 +491,7 @@ class TestDagster:
             dg.AssetCheckResult,
         ]
 
-    def test_a_plain_asset_still_fails_the_run_when_its_return_annotation_disagrees(
+    def test_a_plain_asset_still_fails_the_run_when_its_return_differs_from_its_annotation(
         self,
         tmp_path: Path,
     ):
@@ -721,7 +721,7 @@ class TestDagster:
     def test_a_materialization_logged_for_another_key_is_recorded_before_a_raise(
         self,
     ):
-        """`log_event` records a materialization for another asset's key before a later raise, which `_error_rows.build_io_manager_writer` needs on the `NoValidRowsError` outcome."""
+        """`log_event` records a materialization for another asset's key before a later raise, which `_error_rows.build_io_manager_writer` needs when a run raises `NoValidRowsError`."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(
@@ -801,14 +801,14 @@ class TestDagster:
 
 
 class TestPrivateDagsterApis:
-    """The private Dagster APIs that the writers, `build_error_rows_spec` and `dd.asset` read."""
+    """The private Dagster APIs that `build_io_manager_writer`, `build_error_rows_writer`, `build_error_rows_spec` and `dd.asset` read."""
 
     def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use(
         self,
         tmp_path: Path,
     ):
         """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_error_rows.build_io_manager_writer` uses."""
-        borrowed: dict[str, Any] = {}
+        copied: dict[str, Any] = {}
 
         @dg.asset(
             name="orders", io_manager_key="warehouse", metadata={"owner": "finance"}
@@ -822,9 +822,9 @@ class TestPrivateDagsterApis:
             ]
             handle = StepOutputHandle(step.step.key, output_name)
             original = step.get_output_context(handle)
-            borrowed["metadata"] = dict(original.definition_metadata or {})
-            borrowed["resource_config"] = original.resource_config
-            borrowed["manager"] = type(step.get_io_manager(handle)).__name__
+            copied["metadata"] = dict(original.definition_metadata or {})
+            copied["resource_config"] = original.resource_config
+            copied["manager"] = type(step.get_io_manager(handle)).__name__
             return pl.DataFrame({"order_id": ["ORD-1"]})
 
         result = dg.materialize(
@@ -833,9 +833,9 @@ class TestPrivateDagsterApis:
         )
 
         assert result.success
-        assert borrowed["metadata"]["owner"] == "finance"
-        assert borrowed["resource_config"] is not None
-        assert borrowed["manager"] == "PolarsParquetIOManager"
+        assert copied["metadata"]["owner"] == "finance"
+        assert copied["resource_config"] is not None
+        assert copied["manager"] == "PolarsParquetIOManager"
 
     def test_a_steps_run_config_still_holds_each_resources_config(self, tmp_path: Path):
         """A step's `resolved_run_config.resources` holds the config of each resource its op requires, which `_error_rows.build_io_manager_writer` reads for `error_rows_io_manager_key`."""
@@ -877,7 +877,7 @@ class TestPrivateDagsterApis:
         assert refunds.get_io_manager_key_for_asset_key(refunds.key) == "io_manager"
 
     def test_a_directly_invoked_asset_still_has_no_step(self):
-        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.error_rows_writer` catches to use `build_file_writer`."""
+        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.build_error_rows_writer` catches to use `build_file_writer`."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -973,11 +973,11 @@ class TestExecutableKeys:
             return "ran"
 
         @dg.asset(name="orders__error_rows")
-        def sibling() -> str:
+        def orders_error_rows() -> str:
             return "ran"
 
-        whole = dg.materialize([orders, sibling])
-        subset = dg.materialize([orders, sibling], selection=[orders])
+        whole = dg.materialize([orders, orders_error_rows])
+        subset = dg.materialize([orders, orders_error_rows], selection=[orders])
 
         assert seen[whole.run_id] == {"orders", "orders__error_rows"}
         assert seen[subset.run_id] == {"orders"}

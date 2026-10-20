@@ -1,7 +1,7 @@
-"""What a decorated function may return, and how a returned `dg.MaterializeResult` changes the materialization.
+"""`unpack_return` takes the frame out of what a decorated function returns, and `with_returned_fields` copies a returned `dg.MaterializeResult`'s fields onto the materialization.
 
-Both functions wrap `stream_results`, which takes only a frame.
-Returning `dg.MaterializeResult(value=None)` raises instead of skipping, because a skipped run writes no materialization to copy the result's fields onto.
+`stream_results` takes only a frame, so `dd.asset` calls `unpack_return` before it and `with_returned_fields` on its results.
+Returning `dg.MaterializeResult(value=None)` raises instead of skipping, because a skip has no materialization to copy the result's fields onto.
 """
 
 from collections.abc import Iterator

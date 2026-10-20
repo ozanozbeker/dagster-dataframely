@@ -1,4 +1,4 @@
-"""The metadata that fills the Columns tab."""
+"""`get_table_schema` and `get_column_schema_metadata` build the metadata that fills the Columns tab."""
 
 import dagster as dg
 import dataframely as dy
@@ -17,7 +17,7 @@ _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 
 
 def _build_tags(column: dy.Column) -> dict[str, str] | None:
-    """Render a column's metadata as string tags, the only kind Dagster accepts, without the severity declaration the checks already show."""
+    """Render a column's metadata as string tags, because Dagster accepts only strings."""
     tags: dict[str, str] = {
         key: str(value)
         for key, value in (column.metadata or {}).items()

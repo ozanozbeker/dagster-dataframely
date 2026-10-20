@@ -123,6 +123,10 @@ class TestDeclaredSeverity:
     def test_a_subclass_has_its_parents_declarations(self):
         assert _resolve_severities(Inheriting) == _resolve_severities(DeclaredSchema)
 
+
+class TestColumnTags:
+    """The tags of each column in the table schema `dd.wiring.get_table_schema` returns for `DeclaredSchema`."""
+
     def test_the_columns_tab_omits_the_declaration_and_keeps_other_tags(self):
         columns = {
             column.name: column
@@ -264,8 +268,6 @@ def test_a_declaration_the_package_cannot_read_raises(
 
 
 def test_an_explicit_error_repeats_the_default():
-    """An explicit `"error"` repeats the default, so it is valid."""
-
     class ExplicitSchema(dy.Schema):
         amount = dy.Int64(
             min=1, metadata={"dagster_dataframely": {"severity": "error"}}

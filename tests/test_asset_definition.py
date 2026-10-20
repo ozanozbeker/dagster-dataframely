@@ -140,7 +140,7 @@ class TestForwardedParameters:
     """The `dg.asset` parameters that `dd.asset` forwards to the definition."""
 
     def test_every_forwarded_dg_asset_parameter_appears_in_the_definition(self):
-        """The decorator forwards all twelve at once, so a parameter it forwards only on its own still fails."""
+        """The test passes all thirteen parameters in one call, so it fails if `dd.asset` drops one when others are set."""
         partitions = dg.StaticPartitionsDefinition(["a", "b"])
         retry = dg.RetryPolicy(max_retries=2)
         backfill = dg.BackfillPolicy.single_run()
@@ -156,6 +156,7 @@ class TestForwardedParameters:
             hooks={_notify},
             backfill_policy=backfill,
             op_tags={"team": "data"},
+            pool="limited",
             resource_defs={"warehouse": _Warehouse(dsn="postgres://")},
             retry_policy=retry,
             code_version="v1",
@@ -180,17 +181,10 @@ class TestForwardedParameters:
         assert {hook.name for hook in forwarded.hook_defs} == {"_notify"}
         assert forwarded.backfill_policy == backfill
         assert forwarded.op.tags["team"] == "data"
+        assert forwarded.op.pool == "limited"
         assert sorted(forwarded.resource_defs) == ["warehouse"]
         assert forwarded.op.retry_policy == retry
         assert spec.code_version == "v1"
-
-    def test_pool_is_passed_to_the_underlying_op(self):
-        # Separate, because one op cannot have both a pool and a `backfill_policy`.
-        @dd.asset(OrdersSchema, pool="limited")
-        def pooled() -> pl.DataFrame:
-            return pl.DataFrame()
-
-        assert pooled.op.pool == "limited"
 
     def test_the_parameters_that_describe_the_table_appear_in_the_definition(self):
         condition = dg.AutomationCondition.eager()
@@ -480,7 +474,7 @@ class TestCheckSpecs:
 
         assert (
             specs["dy_rule__paid_orders_have_amount"].description
-            == "Paid orders must carry a positive amount."
+            == "Require a positive amount on a paid order."
         )
 
     def test_a_check_without_a_docstring_describes_the_constraint_itself(self):
@@ -758,7 +752,7 @@ def ledger() -> pl.DataFrame:
 
 
 class TestColumnConstraints:
-    """The constraints the Columns tab states for each column and for the table."""
+    """The constraints the Columns tab shows for each column and for the table."""
 
     def test_a_bound_reads_as_an_operator_rather_than_as_a_check_name(self):
         assert _columns()["line_no"].constraints.other == [">= 1"]
@@ -804,7 +798,7 @@ class TestColumnConstraints:
         ]
 
     def test_a_constraint_dagster_models_first_class_is_not_repeated(self):
-        """`nullable` and `unique` have their own fields on `dg.TableColumnConstraints`, so `other` leaves them out."""
+        """`nullable` and `unique` have their own fields on `dg.TableColumnConstraints`, so the package leaves them out of `other`."""
         assert _columns()["quantity"].constraints.other == [">= 1"]
         assert _columns()["tracking_id"].constraints.other == []
 
@@ -915,7 +909,7 @@ class TestErrorRows:
         error_rows_key: list[str],
         error_rows_io_manager_key: str,
     ):
-        """`build_error_rows_spec` reads both entries, so the spec loads the rows from where the writer wrote them."""
+        """`build_error_rows_spec` reads both entries, so a downstream asset loads the error rows from where the writer wrote them."""
 
         @dd.asset(OrdersSchema, filter=True, **overrides)
         def kept() -> pl.DataFrame:
@@ -937,7 +931,7 @@ class TestErrorRows:
         )
 
     def test_the_error_rows_io_manager_is_a_required_resource(self):
-        """A step's resources hold only the keys its op requires, so the writer finds the IO manager there."""
+        """The op requires the error-rows IO manager's key, because the writer reads the IO manager from the step's resources, which hold only the keys the op requires."""
 
         @dd.asset(
             OrdersSchema,
@@ -1097,7 +1091,7 @@ class TestUnderlyingOp:
     def test_two_assets_sharing_a_name_under_different_prefixes_coexist(
         self, filtering: bool
     ):
-        """Dagster allows a repeated op name only for equal definitions, and these differ because each check output name contains the asset key."""
+        """Each op takes its name from the whole asset key, so the two ops have different names in one job."""
         definitions = dg.Definitions(
             assets=[
                 _shipments("alpha", filtering=filtering),
@@ -1149,7 +1143,7 @@ _NOT_ON_THE_DECORATOR = {
     "check_specs",  # derived from the schema
     "key",  # set by `key_prefix` and `name`
     "output_required",  # always `False`, so the step can end without the output
-    "dagster_type",  # ruled out (#3): runs before the IO manager and has no severity
+    "dagster_type",  # declined (#3): a Dagster type check runs before the IO manager and has no severity
     "is_virtual",  # a virtual asset has no function to decorate
     "io_manager_def",  # `resource_defs` covers it
 }

@@ -1,7 +1,7 @@
-"""`dd.build_collection_checks`, which reports a Dataframely Collection's collection filters as asset checks on the member assets the user declares.
+"""`dd.build_collection_checks` reports a Dataframely Collection's collection filters as asset checks on the member assets the user declares.
 
 The checks read the tables those assets wrote, and they evaluate only the collection filters.
-They never change a table: `docs/out-of-scope/collection-assets.md` records why a Collection produces no assets.
+They never change a table: `docs/out-of-scope/collection-assets.md` records why this package builds no asset from a Collection.
 """
 
 import inspect
@@ -142,15 +142,17 @@ def build_collection_checks(
     Raises
     ------
     InvalidMembersError
-        `members` does not map every member of `collection` to an unpartitioned asset.
+        `members` leaves out a required member of `collection`, names something that is not a member, or maps a member to a partitioned asset or a definition of several assets.
     FailurePropagationError
-        A member sets `propagate_row_failures=True`.
+        A member in `members` sets `propagate_row_failures=True` without `ignored_in_filters=True`.
+    InvalidSeverityError
+        The Collection declares a severity this package cannot read.
     InvalidSettingError
         A setting's argument or environment variable has a value the setting does not allow.
 
     Examples
     --------
-    A foreign key is one collection filter. The table it references takes `ignored_in_filters=True`, so the check reports on `orders` alone:
+    `order_has_customer` keeps each order whose `email` is a customer's. `customers` sets `ignored_in_filters=True`, so the check reports on `orders` alone:
 
     ```python
     from typing import Annotated
@@ -227,7 +229,7 @@ def build_collection_checks(
                 "dataframely/filter": check.filter_name
             }
             if failed:
-                # The member's own columns, without the rule columns `details()` adds.
+                # `details()` adds the rule columns, so select only the member's own columns.
                 columns: list[str] = lazy_frames[check.member].collect_schema().names()
                 details: pl.DataFrame = failure[check.member].details()
                 metadata["dataframely/failed_row_count"] = failed
@@ -251,7 +253,7 @@ def build_collection_checks(
                 metadata=metadata,
             )
 
-    # Dagster reads each input's name and type off the signature, and the members set both.
+    # Dagster reads each input's name and type from the signature, so build one from the members.
     _results.__signature__ = inspect.Signature([  # pyrefly: ignore[missing-attribute]
         inspect.Parameter(
             "context",

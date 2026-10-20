@@ -1,7 +1,7 @@
 """`describe_rules` builds a record per rule with its declared severity, and `get_filter_severities` reads the same declaration on a Collection.
 
 `validate_namespace` checks a schema's names and declarations.
-Only this module splits a rule name at `|`, and `describe_rules` builds its records on every call (ADR-0008).
+Only this module splits a column rule's key at `|`, and `describe_rules` builds its records on every call (ADR-0008).
 """
 
 import inspect
@@ -37,7 +37,6 @@ _CLASS_DECLARATION = "__dagster_dataframely__"
 
 _SEVERITIES: tuple[Severity, ...] = ("error", "warn")
 
-# The arguments whose rule Dataframely names differently.
 _RULE_NAMES = {"nullable": "nullability", "allow_inf": "inf", "allow_nan": "nan"}
 
 
@@ -65,10 +64,7 @@ class DescribedRule:
     def from_rule(
         cls, schema: type[dy.Schema], name: str, rule: Rule, severity: Severity
     ) -> Self:
-        """Describe one rule.
-
-        `getattr` finds a `@dy.rule()`'s `RuleFactory` by name, and a column rule's `|` makes it miss.
-        """
+        """Describe one rule."""
         column, delimiter, rule_name = name.partition("|")
         factory = getattr(schema, name, None)
         return cls(
@@ -109,7 +105,7 @@ def _parse_severity(value: object, place: str) -> Severity:
 def _resolve_named_rules(
     written: str, rules: list[str], place: str, owner: str, term: str
 ) -> list[str]:
-    """Return the rules a written name stands for: itself, the rule its argument generates, or every `check__*` rule."""
+    """Return the rules a written name refers to: that rule, the rule of the argument it names, or every `check__*` rule."""
     if written in rules:
         return [written]
     if _RULE_NAMES.get(written) in rules:
@@ -142,7 +138,7 @@ def _read_declared_severities(
     if unknown:
         raise InvalidSeverityError(
             place,
-            f"has the key {quote(unknown)}, and the only key it reads is 'severity'.",
+            f"has the key {quote(unknown)}, and this package reads only the key 'severity'.",
         )
     if "severity" not in entry:
         return {}
@@ -179,7 +175,7 @@ def _reject_column_rules(entry: object, place: str, columns: Iterable[str]) -> N
 def _resolve_severities(
     schema: type[dy.Schema], names: Iterable[str]
 ) -> dict[str, Severity]:
-    """Return every rule's severity, keyed by rule name: `"error"` unless the schema declares `"warn"`."""
+    """Return the severity of each rule in `names`: `"error"` unless the schema declares `"warn"`."""
     by_column: dict[str, list[str]] = {column: [] for column in schema.columns()}
     schema_level: list[str] = []
     for name in names:
@@ -207,7 +203,7 @@ def _resolve_severities(
 
 
 def describe_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
-    """Return the schema's validation rules, keyed by rule name.
+    """Return a `DescribedRule` for each of the schema's validation rules, keyed by its `name`.
 
     `with_cast=False` drops the `<column>|dtype` rules, which repeat the column-schema check.
     """
@@ -243,7 +239,7 @@ def validate_namespace(schema: type[dy.Schema]) -> None:
     if reserved:
         raise ReservedColumnError(schema.__name__, reserved)
 
-    # This runs before the rule walk, which a `|` in a column name breaks (ADR-0008).
+    # This runs before `describe_rules`, which reads part of a column name that has a `|` as a rule name (ADR-0008).
     invalid_names: list[str] = [
         column for column in schema.columns() if not DAGSTER_NAME.fullmatch(column)
     ]

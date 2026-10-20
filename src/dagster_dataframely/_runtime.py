@@ -1,7 +1,7 @@
-"""What an asset built with `dd.asset` runs after its decorated function.
+"""An asset built with `dd.asset` runs `stream_results` after its decorated function.
 
-Whether the run writes the table depends on both the valid and the invalid rows, so it collects both (`docs/pre-1.0.md`).
-`Schema.filter` removes every invalid row, so the rows that failed only `"warn"` rules are read back from `FailureInfo` and appended to the valid rows, not to the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-warn`).
+Whether the run writes the table depends on both the valid and the invalid rows, so `check_and_filter` collects both (`docs/pre-1.0.md#validation-collects-both-sets-of-rows-so-nothing-streams-to-the-destination`).
+`Schema.filter` removes every invalid row, so `stream_results` reads the rows that failed only `"warn"` rules back from `FailureInfo` and appends them to the valid rows, not to the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-warn`).
 """
 
 from collections.abc import Iterator, Mapping
@@ -47,11 +47,11 @@ type ErrorRowsMetadata = Mapping[str, str | int | dg.TableMetadataValue]
 def _require_frame(frame: object, asset: str) -> None:
     """Raise unless `frame` is a Polars frame or `None`.
 
-    The error is Dagster's, because a wrong type is a wiring mistake, not bad data.
+    The error is Dagster's, because a wrong type is a bug in the code, not bad data.
     """
     if frame is None or isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. An asset built with `dd.asset` must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. It can also return a `dg.MaterializeResult` whose `value` is the frame, to add metadata, tags or a data version, or `None` to skip the asset when a partition has no source data. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.get_column_schema_metadata` to fill its Columns tab."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. The decorated function of an asset built with `dd.asset` returns a Polars DataFrame or LazyFrame, a `dg.MaterializeResult` whose `value` is the frame, or `None` to skip. The column-schema check reads the frame's columns and dtypes before the asset writes anything. An asset that writes its own storage has no frame to validate, so write it as a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` to fill its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
@@ -265,7 +265,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     """
     validate_namespace(schema)
     _require_frame(frame, asset_key.to_user_string())
-    # Resolved before anything is written, so a mistyped environment variable fails every run.
+    # Resolved before anything is written, so a malformed environment variable fails every run.
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
@@ -284,7 +284,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         ]
 
     if frame is None:
-        # A check spec is a non-optional op output, so the rules report over an empty frame.
+        # A check spec is a non-optional op output, so this evaluates every check on an empty frame.
         _, nothing = schema.filter(schema.create_empty(), cast=False)
         yield from evaluate_checks_for(nothing)
         return

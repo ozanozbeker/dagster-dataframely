@@ -1,4 +1,4 @@
-"""The parts `dd.asset` assembles, for a `@dg.asset` you wire yourself.
+"""`dd.wiring` exports the functions for a `@dg.asset` you wire yourself, and `dd.asset` calls most of them too.
 
 Most users need only `dd.asset`, so this module holds these names instead of the root namespace.
 """

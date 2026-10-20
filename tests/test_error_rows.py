@@ -1,6 +1,6 @@
 """The error rows' path, spec and key, and the two writers.
 
-The delegation tests run on a `UPathIOManager` and a `DbIOManager`, because one IO manager cannot show that `build_io_manager_writer` works with any IO manager (ADR-0006).
+The `build_io_manager_writer` tests run on a `UPathIOManager` and a `DbIOManager`, because one IO manager cannot show that the writer works with any IO manager (ADR-0006).
 `test_upstream_characterization.py` checks the multi-partition path format against `UPathIOManager`'s own.
 """
 
@@ -61,7 +61,7 @@ _GRID = dg.MultiPartitionsDefinition({
 })
 
 
-def _invalid_rows() -> pl.DataFrame:
+def _mixed_error_rows() -> pl.DataFrame:
     """Return the error rows for `mixed_orders`."""
     _, failure = OrdersSchema.filter(mixed_orders())
     return get_error_rows(OrdersSchema, failure)
@@ -70,7 +70,7 @@ def _invalid_rows() -> pl.DataFrame:
 class TestPath:
     """The path `get_error_rows_path` returns."""
 
-    def test_the_leaf_carries_the_suffix_so_a_shared_root_cannot_overwrite(
+    def test_the_file_name_has_the_suffix_so_a_shared_error_rows_dir_cannot_overwrite(
         self, tmp_path: Path
     ):
         """`UPathIOManager` can write the asset's own `orders.parquet` to the same directory."""
@@ -78,7 +78,7 @@ class TestPath:
 
         assert path == UPath(tmp_path) / "orders__error_rows.parquet"
 
-    def test_a_path_is_a_upath_whatever_the_root_arrived_as(self, tmp_path: Path):
+    def test_a_path_is_a_upath_whatever_type_error_rows_dir_is(self, tmp_path: Path):
         paths = [
             get_error_rows_path(_ORDERS, error_rows_dir)
             for error_rows_dir in (tmp_path, str(tmp_path), UPath(tmp_path))
@@ -94,7 +94,7 @@ class TestPath:
 
         assert path == UPath(tmp_path) / "sales" / "orders__error_rows.parquet"
 
-    def test_an_asset_name_carrying_a_dot_keeps_it(self, tmp_path: Path):
+    def test_an_asset_name_with_a_dot_keeps_it(self, tmp_path: Path):
         """`Path.with_suffix` would turn `orders.v2` into `orders.parquet`, which another asset writes."""
         path = get_error_rows_path(dg.AssetKey(["orders.v2"]), tmp_path)
 
@@ -128,8 +128,10 @@ class TestPath:
         ],
         ids=["unpartitioned", "partitioned", "multi_partitioned"],
     )
-    def test_a_cloud_root_is_the_same_rule(self, partition_key: str | None, tail: str):
-        """Each partition form, because a `/` in the tail is where an `s3://` path could differ."""
+    def test_a_cloud_error_rows_dir_has_the_same_path_format(
+        self, partition_key: str | None, tail: str
+    ):
+        """An `s3://` path could differ from a local one at a `/` in the tail, so the test covers each partition form."""
         path = get_error_rows_path(
             dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse", partition_key
         )
@@ -145,7 +147,7 @@ class TestPath:
         ],
         ids=["absolute", "traversal"],
     )
-    def test_a_partition_key_cannot_climb_out_of_the_root(
+    def test_a_partition_key_cannot_resolve_outside_error_rows_dir(
         self, tmp_path: Path, partition_key: str, tail: str
     ):
         """A partition key can come from data."""
@@ -203,12 +205,12 @@ class TestSpec:
         spec = build_error_rows_spec(OrdersSchema, orders)
 
         assert spec.key == dg.AssetKey(["sales", "orders__error_rows"])
-        # Each against the literal, because `_add_error_rows_suffix` builds both and comparing them would pass for any `_LEAF_SUFFIX`.
+        # Both assert against the literal, because `_add_error_rows_suffix` builds both names, so comparing them would pass for any `_LEAF_SUFFIX`.
         assert (
             get_error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
         )
 
-    def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from(self):
+    def test_the_spec_depends_on_the_asset_the_error_rows_came_from(self):
         (dep,) = build_error_rows_spec(OrdersSchema, orders).deps
 
         assert dep.asset_key == dg.AssetKey(["sales", "orders"])
@@ -318,7 +320,7 @@ class TestSpec:
             for column in table.columns
         )
 
-    def test_the_columns_tab_carries_a_column_for_every_rule(self):
+    def test_the_columns_tab_has_a_column_for_every_rule(self):
         table = build_error_rows_spec(OrdersSchema, orders).metadata[_COLUMN_SCHEMA_KEY]
         names = [column.name for column in table.columns]
 
@@ -329,7 +331,7 @@ class TestSpec:
     def test_the_rule_columns_are_written_in_the_order_the_columns_tab_declares(self):
         """The written rule columns match the Columns tab and the check specs in order."""
         written = [
-            name for name in _invalid_rows().columns if name.startswith("dy_rule__")
+            name for name in _mixed_error_rows().columns if name.startswith("dy_rule__")
         ]
         table = build_error_rows_spec(OrdersSchema, orders).metadata[_COLUMN_SCHEMA_KEY]
         assert isinstance(table, dg.TableSchema)
@@ -372,7 +374,7 @@ class TestSpec:
         [dg.AssetKey(["orders"]), ["orders"], "orders"],
         ids=["asset_key", "sequence", "string"],
     )
-    def test_a_key_form_is_unpartitioned_unless_told_otherwise(
+    def test_a_key_form_is_unpartitioned_without_a_partitions_def(
         self,
         form: dg.AssetKey | Sequence[str],
     ):
@@ -468,11 +470,11 @@ def _loaded(
     partition_key: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Write an error-rows file at `get_error_rows_path`, then return what a downstream asset loads from it and the rows it holds."""
-    invalid = _invalid_rows()
+    error_rows = _mixed_error_rows()
     path = get_error_rows_path(_ORDERS, tmp_path, partition_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as file:
-        invalid.write_parquet(file)
+        error_rows.write_parquet(file)
     loaded: dict[str, pl.DataFrame] = {}
 
     @dg.asset(partitions_def=partitions_def)
@@ -491,7 +493,7 @@ def _loaded(
     )
 
     assert result.success
-    return loaded["rows"], invalid
+    return loaded["rows"], error_rows
 
 
 class TestDownstreamAsset:
@@ -505,7 +507,7 @@ class TestDownstreamAsset:
 
         assert_frame_equal(loaded, written)
 
-    def test_a_partitioned_downstream_asset_loads_the_partition_it_asked_for(
+    def test_a_partitioned_downstream_asset_loads_its_own_partition(
         self,
         tmp_path: Path,
     ):
@@ -515,7 +517,7 @@ class TestDownstreamAsset:
 
         assert_frame_equal(loaded, written)
 
-    def test_a_multi_partitioned_file_lands_where_the_manager_looks(
+    def test_a_multi_partitioned_file_is_written_where_the_io_manager_reads(
         self, tmp_path: Path
     ):
         loaded, written = _loaded(
@@ -533,21 +535,21 @@ _ONE_DAY = dg.StaticPartitionsDefinition([_DAY])
 _PARTITION_EXPR = {"partition_expr": "ordered_at"}
 """The metadata `DbIOManager` needs to rewrite a partition."""
 
-_WITH_INVALID_ROWS = [
+_WITH_ERROR_ROWS = [
     pytest.param(mixed_orders, 3, False, id="partial"),
     pytest.param(no_valid_orders, 2, True, id="no valid rows"),
 ]
-"""The two outcomes that write invalid rows."""
+"""Each param holds a frame whose run writes error rows, that run's error-row count, and whether the run fails."""
 
 
-def _delegating(
+def _orders_with_filter(
     frame: Callable[[], pl.DataFrame],
     *,
     partitioned: bool,
     partition_expr: bool = True,
     **overrides: Any,
 ) -> dg.AssetsDefinition:
-    """Declare the asset the delegation tests run, with `overrides` passed to `dd.asset`."""
+    """Declare `orders` with `filter=True` and the `WAREHOUSE_SCHEMA` key prefix, passing `overrides` to `dd.asset`."""
 
     @dd.asset(
         OrdersSchema,
@@ -582,21 +584,21 @@ def _run(
     assert result.success is not aborts
 
 
-class TestDelegatingWriter:
+class TestIoManagerWriter:
     """The writer `build_io_manager_writer` returns, which writes through the asset's IO manager."""
 
-    @pytest.mark.parametrize(("frame", "invalid", "aborts"), _WITH_INVALID_ROWS)
+    @pytest.mark.parametrize(("frame", "error_row_count", "aborts"), _WITH_ERROR_ROWS)
     @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
     def test_a_filesystem_manager_puts_the_error_rows_beside_the_table(
         self,
         tmp_path: Path,
         frame: Callable[[], pl.DataFrame],
-        invalid: int,
+        error_row_count: int,
         aborts: bool,
         partitioned: bool,
     ):
         _run(
-            _delegating(frame, partitioned=partitioned),
+            _orders_with_filter(frame, partitioned=partitioned),
             storage(tmp_path),
             partitioned=partitioned,
             aborts=aborts,
@@ -607,21 +609,24 @@ class TestDelegatingWriter:
             else "orders__error_rows.parquet"
         )
 
-        assert pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height == invalid
+        assert (
+            pl.read_parquet(tmp_path / WAREHOUSE_SCHEMA / leaf).height
+            == error_row_count
+        )
 
-    @pytest.mark.parametrize(("frame", "invalid", "aborts"), _WITH_INVALID_ROWS)
+    @pytest.mark.parametrize(("frame", "error_row_count", "aborts"), _WITH_ERROR_ROWS)
     @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
     def test_a_database_manager_puts_the_error_rows_in_a_table_beside_it(
         self,
         tmp_path: Path,
         frame: Callable[[], pl.DataFrame],
-        invalid: int,
+        error_row_count: int,
         aborts: bool,
         partitioned: bool,
     ):
         """The partitioned runs also check that `DbIOManager` receives `partition_expr` from the definition metadata."""
         _run(
-            _delegating(frame, partitioned=partitioned),
+            _orders_with_filter(frame, partitioned=partitioned),
             warehouse(tmp_path),
             partitioned=partitioned,
             aborts=aborts,
@@ -629,13 +634,13 @@ class TestDelegatingWriter:
         written = tables(tmp_path)
 
         assert "orders__error_rows" in written
-        assert written["orders__error_rows"].height == invalid
+        assert written["orders__error_rows"].height == error_row_count
         assert "dy_rule__amount__min" in written["orders__error_rows"].columns
 
     def test_a_clean_rerun_empties_the_error_rows_file(self, tmp_path: Path):
         path = tmp_path / WAREHOUSE_SCHEMA / "orders__error_rows.parquet"
         _run(
-            _delegating(mixed_orders, partitioned=False),
+            _orders_with_filter(mixed_orders, partitioned=False),
             storage(tmp_path),
             partitioned=False,
             aborts=False,
@@ -643,7 +648,7 @@ class TestDelegatingWriter:
         dirty = pl.read_parquet(path)
 
         _run(
-            _delegating(clean_orders, partitioned=False),
+            _orders_with_filter(clean_orders, partitioned=False),
             storage(tmp_path),
             partitioned=False,
             aborts=False,
@@ -655,7 +660,7 @@ class TestDelegatingWriter:
 
     def test_a_clean_rerun_empties_the_error_rows_table(self, tmp_path: Path):
         _run(
-            _delegating(mixed_orders, partitioned=False),
+            _orders_with_filter(mixed_orders, partitioned=False),
             warehouse(tmp_path),
             partitioned=False,
             aborts=False,
@@ -663,7 +668,7 @@ class TestDelegatingWriter:
         dirty = tables(tmp_path)["orders__error_rows"]
 
         _run(
-            _delegating(clean_orders, partitioned=False),
+            _orders_with_filter(clean_orders, partitioned=False),
             warehouse(tmp_path),
             partitioned=False,
             aborts=False,
@@ -673,14 +678,14 @@ class TestDelegatingWriter:
         assert clean.height == 0
         assert (clean.columns, clean.types) == (dirty.columns, dirty.types)
 
-    def test_a_run_delegates_without_reading_the_error_rows_dir(
+    def test_a_run_writes_through_the_io_manager_without_reading_the_error_rows_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         unread = tmp_path / "unread"
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR", str(unread))
 
         _run(
-            _delegating(mixed_orders, partitioned=False),
+            _orders_with_filter(mixed_orders, partitioned=False),
             storage(tmp_path),
             partitioned=False,
             aborts=False,
@@ -703,7 +708,7 @@ class TestDelegatingWriter:
         monkeypatch.setattr(_error_rows, "build_io_manager_writer", raises)
 
         result = dg.materialize(
-            [_delegating(mixed_orders, partitioned=False)],
+            [_orders_with_filter(mixed_orders, partitioned=False)],
             resources=storage(tmp_path),
             raise_on_error=False,
         )
@@ -711,10 +716,10 @@ class TestDelegatingWriter:
         assert not result.success
         assert not error_rows_dir.exists()
 
-    def test_the_error_rows_lands_even_though_the_run_dies(self, tmp_path: Path):
+    def test_the_error_rows_are_written_even_though_the_run_fails(self, tmp_path: Path):
         with pytest.raises(NoValidRowsError):
             dg.materialize(
-                [_delegating(no_valid_orders, partitioned=False)],
+                [_orders_with_filter(no_valid_orders, partitioned=False)],
                 resources=storage(tmp_path),
             )
 
@@ -724,7 +729,7 @@ class TestDelegatingWriter:
         self, tmp_path: Path
     ):
         result = dg.materialize(
-            [_delegating(mixed_orders, partitioned=True, partition_expr=False)],
+            [_orders_with_filter(mixed_orders, partitioned=True, partition_expr=False)],
             resources=warehouse(tmp_path),
             partition_key=_DAY,
             raise_on_error=False,
@@ -735,9 +740,10 @@ class TestDelegatingWriter:
         assert "partition_expr" in str(failure.step_failure_data.error)
 
     def test_the_address_is_the_key_the_manager_resolved(self, tmp_path: Path):
-        """The address is the error rows' asset key, not the IO manager's path (ADR-0006)."""
+        """The address is the error-rows key, not the IO manager's path (ADR-0006)."""
         result = dg.materialize(
-            [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
+            [_orders_with_filter(mixed_orders, partitioned=False)],
+            resources=storage(tmp_path),
         )
         metadata = materializations(result)[_TABLE_KEY].metadata
 
@@ -745,12 +751,12 @@ class TestDelegatingWriter:
             f"{WAREHOUSE_SCHEMA}/orders__error_rows"
         )
 
-    def test_the_managers_own_metadata_does_not_reach_the_materialization(
+    def test_the_io_managers_own_metadata_does_not_appear_in_the_materialization(
         self, tmp_path: Path
     ):
         """`cooccurring_orders` has 3 valid rows and 1 invalid, so a row count of 1 would mean the error rows' metadata replaced the asset's."""
         result = dg.materialize(
-            [_delegating(cooccurring_orders, partitioned=False)],
+            [_orders_with_filter(cooccurring_orders, partitioned=False)],
             resources=storage(tmp_path),
         )
         metadata = materializations(result)[_TABLE_KEY].metadata
@@ -788,7 +794,11 @@ class TestOverrides:
         self, tmp_path: Path
     ):
         result = dg.materialize(
-            [_delegating(mixed_orders, partitioned=False, error_rows_key=_AUDIT_KEY)],
+            [
+                _orders_with_filter(
+                    mixed_orders, partitioned=False, error_rows_key=_AUDIT_KEY
+                )
+            ],
             resources=storage(tmp_path),
         )
 
@@ -807,7 +817,7 @@ class TestOverrides:
         resources = _parquet_with_database_audit(tmp_path)
 
         _run(
-            _delegating(
+            _orders_with_filter(
                 mixed_orders, partitioned=partitioned, error_rows_io_manager_key="audit"
             ),
             resources,
@@ -825,7 +835,7 @@ class TestOverrides:
             ({}, {"schema": "configured"}, "configured"),
             ({"schema": "sales"}, {"schema": "configured"}, "sales"),
         ],
-        ids=["key_prefix", "manager_config", "get_column_schema_metadata"],
+        ids=["key_prefix", "manager_config", "definition_metadata"],
     )
     def test_a_database_reads_the_schema_from_metadata_then_config_then_key_prefix(
         self,
@@ -859,8 +869,8 @@ class TestOverrides:
         assert written == [(schema,)]
 
 
-_EVERY_WRITE = [pytest.param(clean_orders, 0, False, id="clean"), *_WITH_INVALID_ROWS]
-"""Every outcome that writes the error rows, including the empty write of a clean run."""
+_EVERY_WRITE = [pytest.param(clean_orders, 0, False, id="clean"), *_WITH_ERROR_ROWS]
+"""Every run on these frames writes the error rows, and the run on `clean_orders` writes zero rows."""
 
 
 _IN_PROCESS_EXECUTOR: dict[str, Any] = {"execution": {"config": {"in_process": {}}}}
@@ -880,15 +890,15 @@ def _error_rows_materializations(
 class TestMaterialization:
     """The materialization a run records for the error rows."""
 
-    @pytest.mark.parametrize(("frame", "invalid", "aborts"), _EVERY_WRITE)
+    @pytest.mark.parametrize(("frame", "error_row_count", "aborts"), _EVERY_WRITE)
     def test_every_write_records_the_error_rows_row_count(
         self,
         tmp_path: Path,
         frame: Callable[[], pl.DataFrame],
-        invalid: int,
+        error_row_count: int,
         aborts: bool,
     ):
-        asset = _delegating(frame, partitioned=False)
+        asset = _orders_with_filter(frame, partitioned=False)
 
         result = dg.materialize(
             [asset, build_error_rows_spec(OrdersSchema, asset)],
@@ -901,13 +911,13 @@ class TestMaterialization:
 
         assert result.success is not aborts
         assert materialization.metadata["dagster/row_count"] == dg.MetadataValue.int(
-            invalid
+            error_row_count
         )
 
     def test_a_partitioned_write_records_its_partition_and_the_partitions_row_count(
         self, tmp_path: Path
     ):
-        asset = _delegating(mixed_orders, partitioned=True)
+        asset = _orders_with_filter(mixed_orders, partitioned=True)
 
         result = dg.materialize(
             [asset, build_error_rows_spec(OrdersSchema, asset)],
@@ -944,7 +954,7 @@ class TestMaterialization:
         resources: Callable[[Path], dict[str, Any]],
         entry: str,
     ):
-        asset = _delegating(mixed_orders, partitioned=False, **overrides)
+        asset = _orders_with_filter(mixed_orders, partitioned=False, **overrides)
 
         result = dg.materialize(
             [asset, build_error_rows_spec(OrdersSchema, asset)],
@@ -959,7 +969,7 @@ class TestMaterialization:
     def test_an_eager_asset_downstream_of_the_spec_is_requested_after_a_write(
         self, tmp_path: Path
     ):
-        asset = _delegating(mixed_orders, partitioned=False)
+        asset = _orders_with_filter(mixed_orders, partitioned=False)
         spec = build_error_rows_spec(OrdersSchema, asset)
 
         @dg.asset(deps=[spec], automation_condition=dg.AutomationCondition.eager())
@@ -1003,7 +1013,8 @@ class TestMaterialization:
         self, tmp_path: Path
     ):
         result = dg.materialize(
-            [_delegating(mixed_orders, partitioned=False)], resources=storage(tmp_path)
+            [_orders_with_filter(mixed_orders, partitioned=False)],
+            resources=storage(tmp_path),
         )
 
         assert (
@@ -1021,7 +1032,7 @@ class _LedgerSchema(dy.Schema):
 
 
 def _ledger() -> pl.DataFrame:
-    """One valid row and two that fail `amount|min`."""
+    """Return one valid row and two rows that fail `amount|min`."""
     return pl.DataFrame({
         "order_id": ["ORD-1", "ORD-2", "ORD-3"],
         "amount": [10.0, -1.0, -2.0],
@@ -1041,10 +1052,10 @@ _LOADS = [
         {"metadata": {"schema": "sales"}},
         warehouse,
         None,
-        id="get_column_schema_metadata",
+        id="definition_metadata",
     ),
     pytest.param(
-        # A cast, so the partition's date matches the rows' 12:00 timestamps.
+        # The cast makes the partition's date match the rows' 12:00 timestamps.
         {
             "metadata": {"partition_expr": "CAST(ordered_at AS DATE)"},
             "partitions_def": _ONE_DAY,
@@ -1105,7 +1116,7 @@ class TestLoadedErrorRows:
 class TestFileWriter:
     """The writer `build_file_writer` returns."""
 
-    def test_the_file_writer_writes_where_the_path_rule_says(self, tmp_path: Path):
+    def test_the_file_writer_writes_at_get_error_rows_path(self, tmp_path: Path):
         events = list(
             stream_results(
                 OrdersSchema,
@@ -1120,27 +1131,27 @@ class TestFileWriter:
         assert (materialization.metadata or {})[
             "dataframely/error_rows_address"
         ] == str(path)
-        assert_frame_equal(pl.read_parquet(path), _invalid_rows())
+        assert_frame_equal(pl.read_parquet(path), _mixed_error_rows())
 
     def test_the_file_writer_creates_the_directories_it_needs(self, tmp_path: Path):
         key = dg.AssetKey(["sales", "eu", "orders"])
 
-        build_file_writer(key, tmp_path)(_invalid_rows())
+        build_file_writer(key, tmp_path)(_mixed_error_rows())
 
         assert (tmp_path / "sales" / "eu" / "orders__error_rows.parquet").exists()
 
     def test_the_file_writer_puts_a_partition_under_the_leaf(self, tmp_path: Path):
-        build_file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
+        build_file_writer(_ORDERS, tmp_path, "2026-01-02")(_mixed_error_rows())
 
         assert (tmp_path / "orders__error_rows" / "2026-01-02.parquet").exists()
 
     def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
         address = build_file_writer(
             _ORDERS, tmp_path, error_rows_key=["audit", "orders"]
-        )(_invalid_rows())
+        )(_mixed_error_rows())
 
         assert address == str(tmp_path / "audit" / "orders.parquet")
-        assert_frame_equal(pl.read_parquet(address), _invalid_rows())
+        assert_frame_equal(pl.read_parquet(address), _mixed_error_rows())
 
     def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(
         self, tmp_path: Path
@@ -1175,7 +1186,7 @@ class TestReservedKey:
     ):
         with pytest.raises(ErrorRowsKeyCollisionError) as raised:
             dg.materialize(
-                [_delegating(mixed_orders, partitioned=False), _collider()],
+                [_orders_with_filter(mixed_orders, partitioned=False), _collider()],
                 resources=storage(tmp_path),
             )
         message = str(raised.value)
@@ -1229,7 +1240,7 @@ class TestReservedKey:
 
     def test_an_error_rows_key_equal_to_the_assets_own_key_raises(self, tmp_path: Path):
         """Otherwise the error rows and the table would replace each other."""
-        own = _delegating(
+        own = _orders_with_filter(
             mixed_orders, partitioned=False, error_rows_key=[WAREHOUSE_SCHEMA, "orders"]
         )
 
@@ -1239,13 +1250,13 @@ class TestReservedKey:
     def test_a_run_with_no_invalid_rows_fails_on_the_key_too(self, tmp_path: Path):
         with pytest.raises(ErrorRowsKeyCollisionError):
             dg.materialize(
-                [_delegating(clean_orders, partitioned=False), _collider()],
+                [_orders_with_filter(clean_orders, partitioned=False), _collider()],
                 resources=storage(tmp_path),
             )
 
     def test_the_whole_code_location_is_read_when_the_run_has_one(self):
         """A run launched from a code location checks every key in it, not only its job's."""
-        asset = _delegating(mixed_orders, partitioned=False)
+        asset = _orders_with_filter(mixed_orders, partitioned=False)
         defs = dg.Definitions(assets=[asset, _collider()])
 
         with pytest.raises(ErrorRowsKeyCollisionError):
@@ -1255,7 +1266,7 @@ class TestReservedKey:
 
     def test_the_error_rows_key_is_the_key_checked(self):
         """`_collider` owns the default key, so only the key passed collides."""
-        asset = _delegating(mixed_orders, partitioned=False)
+        asset = _orders_with_filter(mixed_orders, partitioned=False)
         defs = dg.Definitions(assets=[asset, _collider()])
         location = _Location(asset.key, defs.get_repository_def())
 
@@ -1269,9 +1280,9 @@ class TestReservedKey:
                 error_rows_key=[WAREHOUSE_SCHEMA, "orders__error_rows"],
             )
 
-    def test_a_error_rows_spec_stands_for_the_error_rows_rather_than_competing(self):
-        """`build_error_rows_spec` has the error rows' key but is not executable, so it does not collide."""
-        asset = _delegating(mixed_orders, partitioned=False)
+    def test_an_error_rows_spec_does_not_collide(self):
+        """The spec `build_error_rows_spec` returns has the error-rows key but is not executable, so it does not collide."""
+        asset = _orders_with_filter(mixed_orders, partitioned=False)
         defs = dg.Definitions(
             assets=[asset, build_error_rows_spec(OrdersSchema, asset)]
         )

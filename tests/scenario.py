@@ -77,7 +77,7 @@ def events(asset: dg.AssetsDefinition, *args: object) -> Yielded:
 
 
 def results(yielded: Yielded) -> dict[dg.AssetKey, dg.MaterializeResult[pl.DataFrame]]:
-    """Index the materialization each output yielded by asset key."""
+    """Index each `dg.MaterializeResult` in `yielded` by asset key."""
     return {
         event.asset_key: event
         for event in yielded
@@ -132,7 +132,7 @@ class OrdersSchema(dy.Schema):
     Each column or rule covers a case:
 
     - `amount` is a `Decimal`, which `TableRecord` raises on unless coerced.
-    - `fulfilled_in` is a `Duration`, which has no readable string form.
+    - `fulfilled_in` is a `Duration`, which Polars cannot cast to `String`.
     - `payload` is a `Binary`, the one dtype in the `string` dtype group with no string form.
     - The composite primary key is not unique per column, and `tracking_id` is.
     - `line_numbers_are_dense` has no docstring.
@@ -176,7 +176,7 @@ class OrdersSchema(dy.Schema):
 
     @dy.rule()
     def paid_orders_have_amount(cls) -> pl.Expr:
-        """Paid orders must carry a positive amount."""
+        """Require a positive amount on a paid order."""
         return (cls.status.col != "paid") | (cls.amount.col > 0)
 
     @dy.rule()
@@ -236,7 +236,7 @@ def _frame(rows: list[dict[str, object]]) -> pl.DataFrame:
 
 
 def clean_orders() -> pl.DataFrame:
-    """Every row valid."""
+    """Return three rows that are all valid."""
     return _frame([
         _row("ORD-1", "a@example.com", "10.00", 1, "new"),
         _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
@@ -245,7 +245,7 @@ def clean_orders() -> pl.DataFrame:
 
 
 def mixed_orders() -> pl.DataFrame:
-    """Three valid rows and three invalid, one per rule a row can fail alone."""
+    """Return three valid rows and three invalid rows that each fail a different single rule."""
     return _frame([
         _row("ORD-1", "a@example.com", "10.00", 1, "new"),
         _row("ORD-2", "b@example.com", "25.50", 2, "paid"),
@@ -257,7 +257,7 @@ def mixed_orders() -> pl.DataFrame:
 
 
 def cooccurring_orders() -> pl.DataFrame:
-    """Three valid rows and one that fails three rules, the only frame with more failures than invalid rows."""
+    """Return three valid rows and one row that fails three rules, the only frame with more failures than invalid rows."""
     return _frame([
         _row("ORD-1", "a@example.com", "10.00", 1, "new"),
         _row("ORD-2", "b@example.com", "25.50", 2, "paid"),

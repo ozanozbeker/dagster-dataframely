@@ -1,4 +1,4 @@
-"""Tests for partitioned assets, covering every claim in `docs/pre-1.0.md`.
+"""These tests cover partitioned assets and most claims in the "Partitioned assets" section of `docs/pre-1.0.md`.
 
 Some tests pin Dagster's own behaviour, so a Dagster release that changes it fails a test instead of leaving the document wrong.
 Most tests use static partitions, whose keys name the frame the asset returns for each partition.
@@ -30,9 +30,9 @@ from tests.scenario import (
 _PARTITIONS = dg.StaticPartitionsDefinition(["clean", "mixed", "wrong"])
 _FRAMES = {"clean": clean_orders, "mixed": mixed_orders, "wrong": wrong_dtype_orders}
 
-_GOOD_KEY = dg.AssetKey(["orders"])
+_ORDERS_KEY = dg.AssetKey(["orders"])
 _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
-_AMOUNT_MIN = dg.AssetCheckKey(_GOOD_KEY, "dy_rule__amount__min")
+_AMOUNT_MIN = dg.AssetCheckKey(_ORDERS_KEY, "dy_rule__amount__min")
 
 
 @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_PARTITIONS)
@@ -80,10 +80,10 @@ def _daily(context: dg.AssetExecutionContext) -> pl.DataFrame:
 class TestPartitionsDef:
     """The `partitions_def` on the asset spec and every check spec."""
 
-    def test_the_asset_carries_its_partitioning(self):
+    def test_the_asset_has_its_partitions_def(self):
         """The only spec is the asset's, so the error rows have no partitioning of their own."""
         assert {spec.key: spec.partitions_def for spec in _orders.specs} == {
-            _GOOD_KEY: _PARTITIONS
+            _ORDERS_KEY: _PARTITIONS
         }
 
     def test_every_check_has_the_assets_partitioning(self):
@@ -106,7 +106,7 @@ class TestPartitionRuns:
         self, tmp_path: Path
     ):
         result = materialize(tmp_path, _orders, partition_key="clean")
-        metadata = materializations(result)[_GOOD_KEY].metadata
+        metadata = materializations(result)[_ORDERS_KEY].metadata
 
         assert metadata["dagster/column_schema"].value == get_table_schema(OrdersSchema)
 
@@ -115,7 +115,7 @@ class TestPartitionRuns:
     ):
         result = materialize(tmp_path, _orders, partition_key="mixed")
 
-        assert _partitions(result) == {_GOOD_KEY: "mixed", _ERROR_ROWS_KEY: "mixed"}
+        assert _partitions(result) == {_ORDERS_KEY: "mixed", _ERROR_ROWS_KEY: "mixed"}
         assert (
             pl.read_parquet(tmp_path / "orders__error_rows" / "mixed.parquet").height
             == 3
@@ -139,7 +139,7 @@ class TestPartitionRuns:
         filtering = tmp_path / "orders__error_rows"
 
         assert _partitions(result) == {
-            _GOOD_KEY: "2026-01-03",
+            _ORDERS_KEY: "2026-01-03",
             _ERROR_ROWS_KEY: "2026-01-03",
         }
         assert pl.read_parquet(filtering / "2026-01-02.parquet").height == 3
@@ -313,7 +313,7 @@ def _pluralize() -> pl.DataFrame:
     return clean_orders()
 
 
-# Each test calls the asset instead of running it, because in a run `dagster-polars` writes the same key.
+# No test here runs the asset, because in a run `dagster-polars` writes the same row-count key.
 class TestRowCount:
     """The key the materialization files the row count under."""
 
@@ -354,7 +354,7 @@ class TestRowCount:
             for r in stream_results(
                 OrdersSchema,
                 clean_orders(),
-                asset_key=_GOOD_KEY,
+                asset_key=_ORDERS_KEY,
                 partitioned=partitioned,
             )
             if isinstance(r, dg.MaterializeResult)

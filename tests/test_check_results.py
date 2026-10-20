@@ -91,7 +91,7 @@ class TestDirectCall:
     """The results `evaluate_checks` yields when called directly, with no run."""
 
     @pytest.mark.parametrize("granularity", ["rule", "column"])
-    def test_the_results_answer_exactly_the_specs_at_every_granularity(
+    def test_the_results_match_the_specs_exactly_at_every_granularity(
         self,
         granularity: Granularity,
     ):
@@ -248,7 +248,7 @@ def _orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
 
 
 class TestHandWiringExample:
-    """A run of the multi-asset check from the hand-wiring guide."""
+    """A run of a hand-wired `@dg.multi_asset_check` that yields from `evaluate_checks`."""
 
     def test_a_multi_asset_check_yields_a_result_for_every_spec(self, tmp_path: Path):
         result = dg.materialize(

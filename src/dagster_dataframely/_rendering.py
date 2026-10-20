@@ -1,4 +1,4 @@
-"""The text this module renders a schema's rules as: column constraints and check descriptions.
+"""The functions in this module render a schema's rules as text: column constraints and check descriptions.
 
 `_metadata` puts the column constraints in the Columns tab, and `_checks` puts the descriptions on the asset checks.
 Both follow the fallback orders in the user guide's *Naming* page.
@@ -33,7 +33,7 @@ _PHRASES = {
 }
 
 _FIRST_CLASS = frozenset({"nullability", "unique"})
-"""These two rules become `TableColumnConstraints.nullable` and `.unique`."""
+"""Dagster has its own fields for these two rules: `TableColumnConstraints.nullable` and `.unique`."""
 
 _DEFAULTED = frozenset({"inf", "nan"})
 """Rules every float column has, because `allow_inf` and `allow_nan` default to `False`."""
@@ -47,7 +47,7 @@ _CHECK_RULE_NAME = re.compile(r"(?:inner_)*check(?:__.+)?")
 def _get_value(column: dy.Column, rule_name: str) -> Any:  # noqa: ANN401 - the type varies by constraint
     """Read the value of the constraint that generated a rule.
 
-    Dataframely stores the value under the rule's name on a private mixin, as a characterization test pins (#16).
+    Dataframely stores the value in the column attribute named `rule_name`; `tests/test_upstream_characterization.py` asserts it.
     """
     return getattr(column, rule_name)
 
@@ -55,7 +55,7 @@ def _get_value(column: dy.Column, rule_name: str) -> Any:  # noqa: ANN401 - the 
 def _get_length_unit(column: dy.Column) -> str:
     """Name what a length bound counts.
 
-    Only `String` (bytes) and `List` (elements) take length bounds, as a characterization test pins (#16).
+    Only `String` (bytes) and `List` (elements) take length bounds; `tests/test_upstream_characterization.py` asserts it.
     """
     return "elements" if isinstance(column, dy.List) else "bytes"
 
@@ -63,12 +63,12 @@ def _get_length_unit(column: dy.Column) -> str:
 def _render_named_check(rule_name: str) -> str:
     """Render a `check=` rule by its dict key."""
     key: str = rule_name.removeprefix("check__")
-    # Dataframely numbers the lambdas on one column: `check__0`, `check__1`.
+    # Dataframely numbers a list of lambdas: `check__0`, `check__1`.
     return _ANONYMOUS_CHECK if key.isdigit() else key
 
 
 def _render_column_constraint(column: dy.Column, rule_name: str) -> str | None:  # noqa: PLR0911 - one return per kind of constraint
-    """Render one column rule, or `None` for a kind of rule this package does not render."""
+    """Render one column rule, or `None` for a rule name this package does not render."""
     if rule_name in _PHRASES:
         return _PHRASES[rule_name]
     match rule_name:
@@ -105,13 +105,13 @@ def _render_column_constraint(column: dy.Column, rule_name: str) -> str | None: 
 def _render_rule_text(schema: type[dy.Schema], rule: DescribedRule) -> str | None:
     """Render a rule's constraint or `check=` key, or `None` when it has neither.
 
-    Every function here gets a rule's text from this one, so a check description repeats the text the Columns tab shows for the rule.
+    The four public functions call this one, so a column constraint has the same text in the Columns tab and in its check's description.
     """
     if rule.name == "primary_key":
         # With no key columns, a rule named `primary_key` is a `@dy.rule()`.
         keys: list[str] = schema.primary_key()
         return f"PK: {', '.join(keys)}" if keys else None
-    # Both or neither: the delimiter that sets one sets the other.
+    # `DescribedRule.from_rule` sets both or neither, and the type checker needs each narrowed.
     if rule.column is None or rule.rule_name is None:
         return None
     return _render_column_constraint(schema.columns()[rule.column], rule.rule_name)
@@ -152,9 +152,9 @@ def _render_code_span(expr: pl.Expr) -> str:
 def _with_expression(schema: type[dy.Schema], rule: DescribedRule, text: str) -> str:
     """Return `text`, followed by the rule's expression unless the rule renders as a constraint.
 
-    A `check=` key renders as text, and it does not show what the rule tests.
+    A rendered `check=` key does not show what the rule tests, so the expression follows it too.
     """
-    # Reading an expression calls a `@dy.rule()`'s function, so only these rules read it: "The cost of DescribedRule records" in `docs/pre-1.0.md`.
+    # Reading `rule.expr` calls a `@dy.rule()`'s function, so `_with_expression` reads it only for a description that shows it: "The cost of DescribedRule records" in `docs/pre-1.0.md`.
     if _render_rule_text(schema, rule) is not None and not _CHECK_RULE_NAME.fullmatch(
         rule.rule_name or ""
     ):

@@ -1,7 +1,4 @@
-"""Every public function that takes a schema rejects one whose column or rule names this package cannot use.
-
-The other arguments are placeholders, so a `TypeError` means the check runs too late (ADR-0008).
-"""
+"""Every public function that takes a schema rejects one whose column or rule names this package cannot use."""
 
 from collections.abc import Callable
 
@@ -23,7 +20,7 @@ class ReservedSchema(dy.Schema):
 
 
 class CollidingSchema(dy.Schema):
-    """Two rules that rewrite to `dy_rule__order_id__nullability`."""
+    """Two rules whose check names are both `dy_rule__order_id__nullability`."""
 
     order_id = dy.String(nullable=False)
 
@@ -55,7 +52,7 @@ def test_a_public_function_rejects_a_reserved_column(
 
 
 @pytest.mark.parametrize("taker", list(SCHEMA_TAKERS.values()), ids=list(SCHEMA_TAKERS))
-def test_a_public_function_rejects_two_rules_that_rewrite_to_one_check_name(
+def test_a_public_function_rejects_two_rules_with_one_check_name(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
     with pytest.raises(CheckNameCollisionError) as raised:
@@ -89,6 +86,6 @@ def test_a_public_function_rejects_a_column_dagster_cannot_name(
 def test_a_public_function_rejects_a_column_name_with_the_rule_delimiter(
     taker: Callable[[type[dy.Schema]], object],
 ) -> None:
-    """`|` is Dataframely's rule delimiter, so `describe_rules` would read `a|b|min` as column `a` and rule `b|min`."""
+    """`|` is Dataframely's rule delimiter, so `describe_rules` would read `a|b|min` as column `a` and rule name `b|min`."""
     with pytest.raises(InvalidColumnNameError):
         taker(DelimitedSchema)

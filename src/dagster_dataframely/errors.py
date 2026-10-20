@@ -1,4 +1,4 @@
-"""The errors this package raises, all subclasses of `DagsterDataframelyError`.
+"""The module defines the errors this package raises, and each one subclasses `DagsterDataframelyError`.
 
 They are in their own public module, so the root namespace holds only the names most users call.
 Each message names what failed and how to fix it, with no colon in its first sentence, because Python already prints `ErrorName: ` before it.
@@ -27,7 +27,7 @@ __all__ = [
 
 
 class DagsterDataframelyError(Exception):
-    """Base class for every error this package raises."""
+    """Base class for every error this package defines."""
 
 
 class InvalidSettingError(DagsterDataframelyError):
@@ -63,9 +63,9 @@ class InvalidSettingError(DagsterDataframelyError):
             else ", ".join(f"'{allowed_value}'" for allowed_value in allowed)
         )
         sources: str = (
-            f"It is read from three sources, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
+            f"The package reads it from three sources, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
             if takes_argument
-            else f"It is read from two sources, each overriding the one before: the package default, then the environment variable {env_var}. There is no `{setting}=` argument."
+            else f"The package reads it from two sources, each overriding the one before: the package default, then the environment variable {env_var}. There is no `{setting}=` argument."
         )
         super().__init__(
             f"Setting `{setting}` got '{value}' from {source}. Allowed values are {rendered}. {sources}"
@@ -134,7 +134,7 @@ class CheckNameCollisionError(DagsterDataframelyError):
     def __init__(self, schema_name: str, first: str, second: str, name: str) -> None:
         """Name both rules and the check name they share."""
         super().__init__(
-            f"Rules '{first}' and '{second}' of {schema_name} both become asset check name '{name}' after '|' is replaced with '__'. Rename one of them."
+            f"Rules '{first}' and '{second}' of {schema_name} both have the asset check name '{name}', because this package replaces '|' with '__' in a check name. Rename one of them."
         )
 
 
@@ -197,7 +197,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
     def __init__(self, asset: str) -> None:
         """Name the asset and the three ways to fix the return."""
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.get_column_schema_metadata` to fill its Columns tab."
+            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame, declare a `context` parameter and call `context.add_asset_metadata({{...}})`. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` to fill its Columns tab."
         )
 
 
@@ -210,7 +210,7 @@ class MaterializeResultFieldError(DagsterDataframelyError):
     def __init__(self, asset: str, field: str) -> None:
         """Name the field and the fields a returned result may set."""
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`, which the decorator sets itself: the asset key comes from the declaration, and the check results come from the schema's rules. Remove it. A returned result may set `value`, `metadata`, `data_version` and `tags`."
+            f"The `dg.MaterializeResult` returned by '{asset}' sets `{field}`, which `dd.asset` sets itself. The asset key comes from the declaration, and the check results come from the schema's rules. Remove `{field}`. A returned result may set `value`, `metadata`, `data_version` and `tags`."
         )
 
 
@@ -250,7 +250,7 @@ class ColumnSchemaError(DagsterDataframelyError):
         fix: str = (
             f"Declare the dtype the table stores in {schema_name}, or change what writes the table."
             if stored
-            else f"Fix the function that produced it, or cast with `{schema_name}.cast(frame)` in the asset body."
+            else f"Fix the function that produced the frame. For a wrong dtype, you can also cast with `{schema_name}.cast(frame)` in the asset body."
         )
         super().__init__(
             f"Column{plural} {mismatches} {verb} not match {schema_name}. {fix} This package never casts for you."
@@ -259,13 +259,16 @@ class ColumnSchemaError(DagsterDataframelyError):
 
 def _failure_counts(counts: Mapping[str, int]) -> str:
     """Render `FailureInfo.counts()` as text for the two errors that report failures."""
-    return ", ".join(f"{count} by '{rule}'" for rule, count in counts.items())
+    return ", ".join(
+        f"{count} row{'' if count == 1 else 's'} failed '{rule}'"
+        for rule, count in counts.items()
+    )
 
 
 class ValidationAbortError(DagsterDataframelyError):
     """A row failed an `"error"` rule and the asset has `filter=False`, so it writes nothing.
 
-    With `filter=False`, every row has to pass every `"error"` rule. No setting drops those rows and writes the rest: to drop rows, filter them in the asset body.
+    With `filter=False`, every row has to pass every `"error"` rule. No setting drops the failing rows: `filter=True` writes them as error rows, and only the asset body can drop them.
     """
 
     def __init__(
@@ -280,7 +283,7 @@ class ValidationAbortError(DagsterDataframelyError):
         """
         plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"{error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. Nothing was written, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
+            f"{error_count} row{plural} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The asset wrote nothing, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
         )
 
 
@@ -306,7 +309,7 @@ class NoValidRowsError(DagsterDataframelyError):
         """
         plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"All {error_count} row{plural} failed an 'error' rule of {schema_name}, {_failure_counts(counts)}. The rows are in {address}, with one column per rule showing which rules each row failed. The table was not written, so the last-known-good table is unchanged."
+            f"{error_count} of {error_count} row{plural} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The error rows are in {address}, with one rule column per rule. The asset wrote nothing to its table, so the last-known-good table is unchanged. Fix the rows upstream, or declare the rule 'warn' in the schema."
         )
 
 

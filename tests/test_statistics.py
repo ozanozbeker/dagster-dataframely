@@ -1,4 +1,4 @@
-"""Tests for the statistics tables in a materialization's metadata.
+"""These tests read the statistics tables from a materialization's metadata.
 
 The tests run an asset instead of calling `_statistics`, because a user reads the tables only on a materialization.
 """
@@ -27,7 +27,7 @@ _STATISTICS_ENV = "DAGSTER_DATAFRAMELY_STATISTICS"
 
 
 class ShipmentSchema(dy.Schema):
-    """The dtypes `OrdersSchema` lacks, so the two schemas together have every dtype a statistics table covers, plus both nested dtypes.
+    """The dtypes the statistics tests need beside `OrdersSchema`, so the two schemas together cover every dtype group, a `List` and a `Struct`.
 
     Every column is nullable, so a row or a whole column can be null.
     """
@@ -101,7 +101,7 @@ def _metadata(
 def _table(
     metadata: Mapping[str, dg.MetadataValue[Any]], group: str
 ) -> dict[str, dict[str, Any]]:
-    """Return one group's table as rows keyed by column name."""
+    """Return one dtype group's table as rows keyed by column name."""
     value = metadata[f"dataframely/table_statistics/{group}"]
     return {str(row["column"]): row for row in records(value)}
 
@@ -121,7 +121,7 @@ def _statistics_columns(metadata: Mapping[str, dg.MetadataValue[Any]]) -> set[st
     }
 
 
-def test_a_materialization_carries_one_table_per_group_present(tmp_path: Path):
+def test_a_materialization_has_one_table_per_dtype_group_present(tmp_path: Path):
     metadata = _metadata(tmp_path, _shipment, key="shipment")
 
     assert _groups(metadata) == {
@@ -145,7 +145,7 @@ def test_a_group_the_frame_has_no_column_of_is_not_emitted(tmp_path: Path):
     assert _groups(metadata) == {"dataframely/table_statistics/numeric"}
 
 
-def test_a_nested_column_reaches_no_table_and_gets_none_of_its_own(tmp_path: Path):
+def test_a_nested_column_appears_in_no_table_and_gets_none_of_its_own(tmp_path: Path):
     shipped = _metadata(tmp_path, _shipment, key="shipment")
     ordered = _metadata(tmp_path, _orders)
 
@@ -264,7 +264,7 @@ def test_an_all_null_duration_column_states_nothing_rather_than_zero(tmp_path: P
 
 
 def test_the_string_group_shows_no_values_from_the_data(tmp_path: Path):
-    """The string table has only counts and lengths, because a `min` would show a real address in the event log."""
+    """The string table has only counts and lengths, because a `min` would show a real email address in the event log."""
     string = _table(_metadata(tmp_path, _orders), "string")
 
     assert string["email"] == {
@@ -315,9 +315,7 @@ def test_the_boolean_group_reports_both_counts_and_the_rate(tmp_path: Path):
     }
 
 
-def test_a_materialization_carries_statistics_unless_someone_says_otherwise(
-    tmp_path: Path,
-):
+def test_a_materialization_has_statistics_by_default(tmp_path: Path):
     assert _groups(_metadata(tmp_path, _orders))
 
 
@@ -348,8 +346,8 @@ def test_the_setting_off_in_the_environment_suppresses_the_pass(
     assert not _groups(_metadata(tmp_path, statistics_off_by_environment))
 
 
-def test_the_error_rows_carries_no_statistics(tmp_path: Path):
-    """Statistics cover only the table, because nothing downstream reads the error rows (ADR-0004)."""
+def test_the_error_rows_have_no_statistics(tmp_path: Path):
+    """The statistics summarize only the asset's table, not the error rows."""
 
     @dd.asset(OrdersSchema, name="orders", filter=True)
     def check_and_filter() -> pl.DataFrame:
@@ -359,7 +357,7 @@ def test_the_error_rows_carries_no_statistics(tmp_path: Path):
 
     assert _groups(metadata)
     assert "dataframely/error_rows_count" in metadata
-    # Rule columns are strings, so statistics over the invalid rows would add them to the string table.
+    # Rule columns are strings, so statistics over the error rows would add them to the string table.
     assert not [
         column for column in _statistics_columns(metadata) if column.startswith("dy_")
     ]

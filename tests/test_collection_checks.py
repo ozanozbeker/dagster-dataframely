@@ -28,7 +28,7 @@ class OrdersSchema(dy.Schema):
 
 
 class Shop(dy.Collection):
-    """A foreign key: `orders.customer_id` references `customers.customer_id`."""
+    """Orders and customers, where every `orders.customer_id` must exist in `customers`."""
 
     orders: dy.LazyFrame[OrdersSchema]
     customers: Annotated[
@@ -51,7 +51,7 @@ class InvoiceLinesSchema(dy.Schema):
 
 
 class InvoiceBook(dy.Collection):
-    """A parent and its children, which share the primary key `invoice_id`."""
+    """Invoices and their lines, which share the common primary key `invoice_id`."""
 
     # Unannotated, because Dataframely raises for a Collection annotation that is not a frame.
     __dagster_dataframely__ = {"severity": {"invoice_has_lines": "warn"}}  # noqa: RUF012
@@ -131,7 +131,7 @@ ORDERS_CHECK = dg.AssetCheckKey(
 class TestDefinition:
     """The definition `dd.build_collection_checks` returns."""
 
-    def test_a_foreign_key_has_one_check_on_the_referencing_member(self):
+    def test_a_collection_filter_has_no_check_on_a_member_ignored_in_filters(self):
         checks = dd.build_collection_checks(
             Shop, members={"orders": ORDERS, "customers": CUSTOMERS}
         )

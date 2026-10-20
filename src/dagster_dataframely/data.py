@@ -1,4 +1,4 @@
-"""The example schema and frames that the guide, the reference pages and the demo share.
+"""The module ships the example schema and frames that the guide, the reference pages and the demo share.
 
 A docstring example imports from here, so it runs for any user who has the package installed, as dplyr's examples use `starwars`.
 The rows are hard-coded, not generated, so every run and screenshot shows the same values.
@@ -16,9 +16,8 @@ __all__ = ["OrdersSchema", "marketplace_orders", "storefront_orders"]
 _NOTE_MAX_CHARS = 100
 
 
-# One column per column constraint Dataframely offers, plus one per statistics dtype group, so no
-# screenshot or guide sentence loses its example. The docstring is also the demo assets' description
-# in Dagster, so it stays at one line and carries no example.
+# The columns cover every statistics dtype group and most column constraints, for the screenshots and the guide.
+# The docstring is also the demo assets' description, so it stays one line and has no example.
 class OrdersSchema(dy.Schema):  # numpydoc ignore=EX01
     """A customer order line: one row per product on one order."""
 
@@ -92,7 +91,7 @@ class OrdersSchema(dy.Schema):  # numpydoc ignore=EX01
         )
 
 
-# The source systems export these dtypes, which match the schema's.
+# Without these dtypes, Polars infers `Int64`, `String` and `Decimal(38, 2)`, which differ from the schema's.
 _SOURCE_SCHEMA: dict[str, pl.DataType] = {
     "order_id": pl.String(),
     "line_no": pl.Int32(),

@@ -1,7 +1,7 @@
-"""The statistics tables of a materialization, one per dtype group.
+"""`build_statistics_metadata` builds one statistics table per dtype group for a materialization.
 
 `_metadata` holds what an asset declares before it runs, and this module summarizes the rows a run writes to the table.
-Nothing here uses Polars' `describe()`, because it formats values per source dtype, and nothing can cast them back.
+Nothing here uses Polars' `describe()`, because it returns a date column's count and bounds as strings.
 """
 
 from collections.abc import Callable, Mapping
@@ -26,13 +26,13 @@ _STRING_GROUP = (pl.String, pl.Categorical, pl.Enum, pl.Binary)
 def _render_cell(value: object) -> Cell:
     """Render one aggregate as a table cell.
 
-    A `Decimal` becomes a float, because `TableRecord` rejects it.
+    A `Decimal` becomes a float, so `min` and `max` stay numbers where `render_cell` would return a string.
     """
     return render_cell(float(value) if isinstance(value, Decimal) else value)
 
 
 def _round(value: object) -> Cell:
-    """Render a derived statistic, rounding what `_render_cell` returns."""
+    """Render and round a derived statistic."""
     rendered = _render_cell(value)
     return round(rendered, _PLACES) if isinstance(rendered, float) else rendered
 
@@ -80,7 +80,7 @@ def _aggregate_temporal(name: str, dtype: pl.DataType) -> pl.Expr:
 
 
 def _aggregate_string(name: str, dtype: pl.DataType) -> pl.Expr:
-    """Aggregate one column of the string group.
+    """Aggregate one column of the `string` dtype group.
 
     Lengths are bytes, the unit of Dataframely's `max_length`, so this table matches the column constraints.
     """
@@ -139,7 +139,7 @@ def _build_group_table(
     columns: Mapping[str, pl.DataType],
     aggregate: Callable[[str, pl.DataType], pl.Expr],
 ) -> dg.TableMetadataValue:
-    """Render one group's table."""
+    """Render one dtype group's table."""
     row: dict[str, Any] = frame.select(
         aggregate(name, dtype) for name, dtype in columns.items()
     ).row(0, named=True)

@@ -1,4 +1,4 @@
-"""The fields of `DescribedRule`, tested directly because a wrong field can render the same as a correct one."""
+"""These tests check each field of `DescribedRule` directly, because a wrong field can render the same as a correct one."""
 
 import dataframely as dy
 import polars as pl
@@ -37,13 +37,13 @@ def test_a_description_appears_only_where_a_rule_wrote_one():
     rules = describe_rules(OrdersSchema)
 
     assert rules["paid_orders_have_amount"].description == (
-        "Paid orders must carry a positive amount."
+        "Require a positive amount on a paid order."
     )
     assert rules["line_numbers_are_dense"].description is None
     assert rules["amount|min"].description is None
 
 
-def test_the_check_name_is_the_rewrite():
+def test_the_check_name_puts_the_rule_name_in_the_dy_rule_namespace():
     """The check and the error rows' rule column share this name."""
     rules = describe_rules(OrdersSchema)
 
@@ -52,7 +52,7 @@ def test_the_check_name_is_the_rewrite():
 
 
 def test_the_expression_is_not_resolved_where_the_record_is_built():
-    """Only a run reads the expression, because reading it at definition time is slow (`docs/pre-1.0.md`)."""
+    """`describe_rules` does not read a rule's expression, because reading every expression makes the records slow to build (`docs/pre-1.0.md`)."""
 
     class ExplodingSchema(dy.Schema):
         amount = dy.Int64()

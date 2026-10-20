@@ -116,7 +116,7 @@ class TestDefinition:
         assert checks.node_def.name == "audit"
 
     def test_the_default_name_loads_beside_the_asset_op(self):
-        """A step named like the asset's op would fail to load, as the snake-cased schema name `events` does."""
+        """Definitions with two ops named `events` fail to load, so the default name must differ from the asset's op name."""
 
         @dg.asset(key=KEY)
         def events() -> None: ...
@@ -128,7 +128,7 @@ class TestDefinition:
             )
         )
 
-    def test_only_an_error_rule_check_is_blocking(self):
+    def test_only_an_error_rules_check_is_blocking(self):
         checks = dd.build_rule_checks(EventsSchema, asset=KEY)
 
         assert {spec.name: spec.blocking for spec in checks.check_specs} == {
@@ -152,7 +152,7 @@ class TestRun:
     """A run of the checks over a table that Dagster did not write."""
 
     @pytest.mark.parametrize("settings", SETTINGS, ids=str)
-    def test_the_results_answer_exactly_the_specs(
+    def test_the_run_yields_a_result_for_exactly_the_specs(
         self, tmp_path: Path, settings: dict[str, str]
     ):
         checks = dd.build_rule_checks(EventsSchema, asset=KEY, **settings)  # pyrefly: ignore[bad-argument-type]
@@ -166,7 +166,7 @@ class TestRun:
     def test_the_settings_resolve_once_where_the_checks_are_declared(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """A run in an environment with another granularity still answers the declared specs."""
+        """A run in an environment with another granularity still yields a result for each declared spec."""
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "column")
         checks = dd.build_rule_checks(EventsSchema, asset=KEY)
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_CHECK_GRANULARITY", "rule")

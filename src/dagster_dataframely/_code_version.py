@@ -1,4 +1,4 @@
-"""`get_code_version` derives the code version `dd.asset` sets from a schema, as dagster-dbt's `default_code_version_fn` derives one from a model's SQL.
+"""`get_code_version` derives an asset's code version from its schema, as dagster-dbt's `default_code_version_fn` derives one from a model's SQL.
 
 It hashes each rule's `meta.serialize` output, not its repr, because `str(pl.Expr)` truncates a long literal.
 A column's repr also differs between processes, because it prints a function's memory address.

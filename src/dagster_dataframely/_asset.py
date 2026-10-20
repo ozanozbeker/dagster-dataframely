@@ -1,6 +1,5 @@
-"""The `dd.asset` decorator (ADR-0005).
+"""`dd.asset` calls `dg.asset` directly instead of stacking on it (ADR-0005).
 
-It has no `from __future__ import annotations`, because Dagster reads the annotations at run time.
 With `filter=True` it still builds one `dg.asset`, not a `dg.multi_asset` with an output for the error rows (`docs/out-of-scope/error-rows-asset-output.md`).
 """
 
@@ -116,7 +115,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
     error_rows_io_manager_key
         The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity
-        How many asset checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+        How many asset checks report the schema's rules: one per rule at `rule`, and at `column` one per column with rules plus one per schema-level rule. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
     max_failure_examples
         A rule's check metadata has at most this many rows that failed it, under `dataframely/failed_examples`. **A run writes the rows to the Dagster event log unredacted.** `dy.Config.set_max_failure_examples` does not change this number. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
     statistics
@@ -198,7 +197,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
         unfiltered = f"Only an asset with `filter=True` writes error rows. Pass `filter=True`, or remove {' and '.join(overrides)}."
         raise dg.DagsterInvalidDefinitionError(unfiltered)
 
-    # Resolved once, here, for both the check specs and the run.
+    # Resolved here, so a malformed value raises at definition time and the run uses the check specs' granularity.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
     failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     emit_statistics: bool = STATISTICS.resolve(statistics)

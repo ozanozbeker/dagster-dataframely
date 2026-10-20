@@ -1,7 +1,7 @@
-"""The record a test reads after it calls an asset built with `dd.asset`.
+"""`DirectInvocationResult` holds what a test reads after it calls an asset built with `dd.asset`.
 
-A test imports these names, and a definition does not.
-So they are in their own public module, like `pl.testing` and `dy.testing`.
+A test imports `DirectInvocationResult`, and a definition does not.
+So it is in its own public module, like `pl.testing` and `dy.testing`.
 """
 
 from collections.abc import Iterable

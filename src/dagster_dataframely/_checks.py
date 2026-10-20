@@ -1,6 +1,6 @@
-"""Asset check specs derived from a schema, and the results `_runtime` and `evaluate_checks` yield for them.
+"""The functions in this module build a schema's asset check specs and the results that `_runtime` and `evaluate_checks` yield for them.
 
-Specs and results both group the rules with `_build_rule_sets`, so they name the same checks only when given the same settings.
+`build_asset_check_specs` and `evaluate_rule_checks` both call `_build_rule_sets`, so they name the same checks only when both receive the same `check_granularity`.
 """
 
 from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -48,9 +48,8 @@ class _RuleSet:
 def _build_rule_sets(
     schema: type[dy.Schema], check_granularity: Granularity | None
 ) -> list[_RuleSet]:
-    """Group the schema's rules under the checks that report for them.
+    """Return a rule set for each check that reports the schema's rules.
 
-    A schema with no rules gets none, because a check for no rules would always pass.
     At `column`, a schema-level rule keeps its own check, because the user wrote it (`docs/out-of-scope/schema-rules.md`).
     """
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
@@ -84,7 +83,6 @@ def _build_rule_sets(
 def build_asset_check_specs(
     schema: type[dy.Schema],
     *,
-    # `dagster` has no alias for this union.
     asset: str | dg.AssetKey,
     partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
@@ -164,7 +162,7 @@ def _find_column_schema_problems(
 ) -> list[dict[str, str]]:
     """Return one mapping per schema column the frame lacks or has with another dtype.
 
-    `check_and_filter` calls it first, because `Schema.filter` fails only at `collect_all`, on the first mismatched column.
+    `check_and_filter` calls it first, because `Schema.filter` raises only at `collect_all` and its error omits the columns with another dtype when a column is missing.
     """
     actual: pl.Schema = frame.collect_schema()
     return [
@@ -188,7 +186,7 @@ def build_column_schema_result(
 ) -> dg.AssetCheckResult:
     """Return the column-schema check's result.
 
-    Its failure is always `ERROR`, the only severity at which a blocking check stops downstream assets (ADR-0004).
+    Its failure is always `ERROR`, the only severity at which a blocking check stops downstream assets.
     """
     if not problems:
         return dg.AssetCheckResult(
@@ -227,11 +225,10 @@ def check_and_filter(
     if problems:
         yield build_column_schema_result(problems, asset_key=asset_key)
         raise ColumnSchemaError(schema.__name__, problems)
-    # `docs/pre-1.0.md` has why; `tests/test_upstream_characterization.py` pins the engine forward.
+    # `docs/pre-1.0.md` has why; `tests/test_upstream_characterization.py` checks that Dataframely forwards `engine` to Polars.
     result, failure = schema.filter(frame.lazy(), cast=False).collect_all(
         engine="streaming"
     )
-    # `dy.DataFrame[Schema]` exists only for type checkers.
     valid: pl.DataFrame = result
     return valid, failure
 
@@ -251,12 +248,12 @@ def _read_failure_examples(
     counts: dict[str, int],
     limit: int,
 ) -> dict[str, list[Row]]:
-    """Return up to `limit` rows that failed each rule, keyed by rule name."""
+    """Return up to `limit` rows that failed each rule in `counts`, under the same key."""
     if not limit or not counts:
         return {}
     # `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
-    # Dropped: the check already shows the rule.
+    # The examples omit the rule columns, because the check already shows the rule.
     columns: list[str] = get_rule_columns(schema, details)
     return {
         rule: sample_rows(details.filter(pl.col(rule) == _INVALID).drop(columns), limit)
@@ -332,7 +329,7 @@ def evaluate_rule_checks(
 ) -> list[dg.AssetCheckResult]:
     """Return one result per rule set from `failure`.
 
-    A result is `ERROR` when an `"error"` rule in its set failed, so a collapsed check that only warns never stops a step.
+    A result is `ERROR` when an `"error"` rule in its set failed, so a collapsed check whose failing rules are all `"warn"` never fails the step.
     """
     counts: dict[str, int] = failure.counts()
     sampled: dict[str, list[Row]] = _read_failure_examples(

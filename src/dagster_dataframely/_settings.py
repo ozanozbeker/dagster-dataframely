@@ -1,6 +1,6 @@
-"""The settings, each resolved from three sources: the package default, then `DAGSTER_DATAFRAMELY_*`, then the argument.
+"""Each setting is a `_Setting`, whose `resolve` returns the argument, else `DAGSTER_DATAFRAMELY_*`, else the package default.
 
-`_asset.py` resolves every setting where you declare the asset, and the `wiring` functions resolve the ones they use.
+Each public function resolves the settings it uses when called, and the writer that `build_error_rows_writer` returns resolves `error_rows_dir` again when it writes (#115).
 There is no `set_default_*()` function, because Dagster loads code locations lazily and the default would depend on import order (`docs/out-of-scope/dbt-test-configs.md#severity-store_failures-and-schema-in-dbt_projectyml`).
 """
 
@@ -12,12 +12,12 @@ from typing import Literal, cast
 from dagster_dataframely.errors import InvalidSettingError
 
 type Granularity = Literal["rule", "column"]
-"""How many asset checks report a schema's rules: one per rule at `rule`, and one per column with rules at `column`."""
+"""How many asset checks report a schema's rules: one per rule at `rule`, and at `column` one per column with rules plus one per schema-level rule."""
 
 
 @dataclass(frozen=True)
 class _Setting[T]:
-    """One setting and the three sources it reads, in order."""
+    """One setting and its sources."""
 
     name: str
     default: T
@@ -82,7 +82,7 @@ def _is_non_negative(value: object) -> bool:
 def _is_path(value: object) -> bool:
     """Accept a non-blank path, or `None` for no directory.
 
-    It rejects a blank value instead of reading it as unset, because `${SCRATCH}` expands to one when nothing sets `SCRATCH`.
+    It rejects a blank value instead of reading it as unset, because `${SCRATCH}` expands to an empty string when nothing sets `SCRATCH`.
     """
     return value is None or (isinstance(value, str) and bool(value.strip()))
 
@@ -121,8 +121,8 @@ ROW_SAMPLE = _Setting[int](
 ERROR_ROWS_DIR = _Setting[str | None](
     name="error_rows_dir",
     default=None,
-    allowed="filesystem paths",
+    allowed="non-blank filesystem paths",
     accepts=_is_path,
     takes_argument=False,
 )
-"""`dd.asset` takes no argument for it, because a warehouse stores tables, not files (ADR-0006)."""
+"""`dd.asset` takes no argument for it, because the package writes under it only in a direct invocation (`docs/out-of-scope/error-rows-dir-argument.md`)."""

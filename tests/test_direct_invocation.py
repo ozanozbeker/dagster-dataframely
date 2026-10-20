@@ -1,7 +1,7 @@
 """Direct invocation of an asset built with `dd.asset`.
 
-Each test runs an outcome twice, once by a call and once by `dg.materialize`, because a call must yield the same keys, row counts and check results as a run.
-A call has no IO manager, so an asset with `filter=True` writes its error rows with `build_file_writer` under `error_rows_dir` (ADR-0006).
+A call must yield the same keys, row counts and check results as a run, so some tests compare the two.
+A call has no step, so an asset with `filter=True` writes its error rows with `build_file_writer` under `error_rows_dir` (ADR-0006).
 """
 
 from collections.abc import Callable
@@ -46,8 +46,8 @@ def _called(asset: dg.AssetsDefinition, *, filtering: bool) -> DirectInvocationR
     )
 
 
-# The two failure policies; `cooccurring_orders` has 3 valid rows and 1 invalid, so a row count shows which rows a call returned.
-_SHAPES = [
+# `cooccurring_orders` has 3 valid rows and 1 invalid, so a row count shows which rows a call returned.
+_FILTER_SETTINGS = [
     pytest.param(clean_orders, False, id="no filtering"),
     pytest.param(cooccurring_orders, True, id="filtering"),
 ]
@@ -78,7 +78,7 @@ def _checks(result: DirectInvocationResult) -> dict[dg.AssetCheckKey, bool]:
     }
 
 
-@pytest.mark.parametrize(("frame", "filtering"), _SHAPES)
+@pytest.mark.parametrize(("frame", "filtering"), _FILTER_SETTINGS)
 def test_calling_the_asset_returns_its_frame(
     error_rows_dir: Path, frame: Callable[[], pl.DataFrame], filtering: bool
 ):
@@ -89,7 +89,7 @@ def test_calling_the_asset_returns_its_frame(
     assert_frame_equal(materialization.value, clean_orders())
 
 
-@pytest.mark.parametrize(("frame", "filtering"), _SHAPES)
+@pytest.mark.parametrize(("frame", "filtering"), _FILTER_SETTINGS)
 def test_calling_the_asset_reports_every_check_it_declares(
     error_rows_dir: Path, frame: Callable[[], pl.DataFrame], filtering: bool
 ):
@@ -100,7 +100,7 @@ def test_calling_the_asset_reports_every_check_it_declares(
     assert set(checks) == {spec.key for spec in asset.check_specs}
 
 
-@pytest.mark.parametrize(("frame", "filtering"), _SHAPES)
+@pytest.mark.parametrize(("frame", "filtering"), _FILTER_SETTINGS)
 def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
     tmp_path: Path,
     error_rows_dir: Path,
@@ -122,7 +122,7 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
     }
 
 
-@pytest.mark.parametrize(("frame", "filtering"), _SHAPES)
+@pytest.mark.parametrize(("frame", "filtering"), _FILTER_SETTINGS)
 def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
     tmp_path: Path,
     error_rows_dir: Path,
@@ -147,7 +147,7 @@ def test_a_column_schema_drift_raises_out_of_the_call():
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
 
-def test_a_called_error_rows_writes_a_real_file_under_the_configured_root(
+def test_a_call_writes_the_error_rows_to_a_file_under_error_rows_dir(
     error_rows_dir: Path,
 ):
     asset = _orders(mixed_orders, filter=True)
@@ -183,7 +183,7 @@ def test_a_call_writes_the_error_rows_under_the_error_rows_key_it_set(
     ] == str(path)
 
 
-def test_a_called_error_rows_with_no_root_says_so_rather_than_choosing_one():
+def test_a_call_with_error_rows_and_no_error_rows_dir_raises():
     asset = _orders(mixed_orders, filter=True)
 
     with pytest.raises(ErrorRowsDirError) as raised:
@@ -193,7 +193,7 @@ def test_a_called_error_rows_with_no_root_says_so_rather_than_choosing_one():
     assert "orders" in str(raised.value)
 
 
-def test_a_call_with_every_row_valid_needs_no_root_at_all():
+def test_a_call_with_every_row_valid_needs_no_error_rows_dir():
     asset = _orders(clean_orders, filter=True)
 
     materialization = _materialization(_called(asset, filtering=True))
@@ -211,7 +211,7 @@ def test_a_call_with_every_row_valid_writes_nothing_under_error_rows_dir(
     assert not error_rows_dir.exists()
 
 
-def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
+def test_an_error_rows_dir_set_after_the_asset_is_declared_is_the_one_written_to(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     asset = _orders(mixed_orders, filter=True)
@@ -223,7 +223,7 @@ def test_a_root_set_after_the_asset_is_declared_is_the_one_the_rows_go_to(
     assert pl.read_parquet(directory / "orders__error_rows.parquet").height == 3
 
 
-def test_a_called_partitioned_error_rows_lands_under_its_partition(
+def test_a_call_writes_partitioned_error_rows_under_their_partition(
     error_rows_dir: Path,
 ):
     @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_DAYS)

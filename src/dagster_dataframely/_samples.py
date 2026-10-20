@@ -1,6 +1,6 @@
-"""The sample rows that `_checks` and `_runtime` write to metadata.
+"""`sample_rows` and `build_sample_metadata` render a frame's first rows as table metadata, for the row samples in `_runtime` and the failure examples in `_checks` and `_collection`.
 
-Sample rows go into the Dagster event log, which nothing redacts, so `sample_rows` always takes a row limit.
+Dagster stores metadata in its event log without redaction, so `sample_rows` always takes a row limit.
 """
 
 import dagster as dg
@@ -36,7 +36,7 @@ def sample_rows(frame: pl.DataFrame, limit: int) -> list[Row]:
 def build_sample_metadata(
     key: str, rows: list[Row]
 ) -> dict[str, dg.TableMetadataValue]:
-    """Return the metadata entry for a sample, or nothing when there are no rows.
+    """Return the table metadata entry for `rows`, or an empty dict when there are none.
 
     Dagster raises on a table value with no records and no schema.
     """

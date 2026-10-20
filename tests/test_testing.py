@@ -1,4 +1,7 @@
-"""These tests call real assets built with `dd.asset` and pass the result to `dd.testing.DirectInvocationResult.from_invocation`."""
+"""These tests call an asset built with `dd.asset` and pass what it returns to `dd.testing.DirectInvocationResult.from_invocation`.
+
+`TestNotACall` passes other arguments, and `from_invocation` raises `TypeError` on each.
+"""
 
 from pathlib import Path
 from typing import Any
@@ -47,10 +50,10 @@ def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _orders(frame: pl.DataFrame, **settings: Any) -> dg.AssetsDefinition:
-    """Declare the `orders` asset with the given `dd.asset` settings."""
+def _orders(frame: pl.DataFrame, **kwargs: Any) -> dg.AssetsDefinition:
+    """Return the `orders` asset that `dd.asset` builds with the given keyword arguments."""
 
-    @dd.asset(OrdersSchema, name="orders", **settings)
+    @dd.asset(OrdersSchema, name="orders", **kwargs)
     def orders() -> pl.DataFrame:
         return frame
 
@@ -109,7 +112,7 @@ class TestDirectInvocationResult:
         assert all(check.passed for check in result.checks.values())
 
     def test_an_abort_raises_out_of_the_helper(self):
-        """`ValidationAbortError` raises from the helper, not from the call."""
+        """`from_invocation` raises `ValidationAbortError` while it reads the events, and calling the asset does not raise."""
         asset = _orders(mixed_orders())
 
         with pytest.raises(dd.errors.ValidationAbortError):
@@ -126,7 +129,7 @@ class TestNotACall:
             dd.testing.DirectInvocationResult.from_invocation(_orders(clean_orders()))
 
     def test_a_plain_asset_returning_a_frame_raises(self):
-        """A plain asset's frame raises instead of reading as a skip."""
+        """`from_invocation` raises on a plain asset's frame instead of reading it as a skip."""
 
         @dg.asset
         def plain() -> pl.DataFrame:

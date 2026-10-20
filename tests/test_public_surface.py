@@ -16,7 +16,7 @@ _PUBLIC = {
     "build_rule_checks",
     "testing",
     "wiring",
-    # At the root rather than in a namespace, because annotated code uses them often.
+    # `Granularity` is at the root rather than in a namespace, because annotated code uses it often.
     "Granularity",
 }
 
@@ -40,13 +40,13 @@ _TESTING = {"DirectInvocationResult"}
 
 _DATA = {"OrdersSchema", "marketplace_orders", "storefront_orders"}
 
-# Imported by `dd.data` to build its frames, and listed so a new import fails a test.
+# `dd.data` imports these to build its schema and frames; the set lists them so a new import fails a test.
 _DATA_IMPORTS = {"dt", "dy", "pl", "Decimal"}
 
-# Imported by `dd.testing`, and listed so a new import fails a test.
+# `dd.testing` imports these; the set lists them so a new import fails a test.
 _TESTING_IMPORTS = {"Iterable", "Self", "dataclass", "dg", "pl"}
 
-# Imported by `dd.errors` for its annotations, and listed so a third import fails a test.
+# `dd.errors` imports these for its annotations; the set lists them so a third import fails a test.
 _ERROR_IMPORTS = {"Mapping", "Sequence"}
 
 _ERRORS = {

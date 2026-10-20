@@ -1,4 +1,4 @@
-"""Tests for `_Setting.resolve`, which reads each setting from its three sources."""
+"""These tests call `_Setting.resolve`, which reads each setting from its sources in order."""
 
 from dataclasses import replace
 from pathlib import Path
@@ -43,7 +43,7 @@ def test_a_setting_nobody_touched_is_the_package_default():
     assert ERROR_ROWS_DIR.resolve(None) is None
 
 
-def test_the_environment_variable_beats_the_package_default(
+def test_the_environment_variable_overrides_the_package_default(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
@@ -51,7 +51,9 @@ def test_the_environment_variable_beats_the_package_default(
     assert CHECK_GRANULARITY.resolve(None) == "column"
 
 
-def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyPatch):
+def test_the_argument_overrides_the_environment_variable(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setenv(_GRANULARITY_ENV, "column")
 
     assert CHECK_GRANULARITY.resolve("rule") == "rule"
@@ -181,7 +183,7 @@ def test_a_count_rejects_a_bool():
     assert "'True'" in str(raised.value)
 
 
-def test_a_directory_reads_the_environment_source_as_the_path_it_spells(
+def test_a_directory_reads_the_environment_source_as_the_path_it_contains(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv(_ERROR_ROWS_DIR_ENV, "/scratch/error_rows")
@@ -204,11 +206,11 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
 
 
 def test_a_directory_rejects_something_that_is_not_a_path():
-    """The setting rejects a `Path` object, because it holds a string, like its environment variable."""
+    """`resolve` raises on a `Path` object, because the setting holds a string as its environment variable does."""
     with pytest.raises(InvalidSettingError) as raised:
         ERROR_ROWS_DIR.resolve(_PATH_OBJECT)
 
-    # This test does not assert the source: it names a `error_rows_dir=` argument, which `dd.asset` does not take.
+    # This test does not assert the source: the message names an `error_rows_dir=` argument, which `dd.asset` does not take.
     assert "Setting `error_rows_dir` got '/scratch'" in str(raised.value)
 
 
@@ -226,7 +228,7 @@ def test_a_value_outside_the_allowed_values_raises_from_the_environment(
 
 
 def test_schema_is_not_a_granularity(monkeypatch: pytest.MonkeyPatch):
-    """`schema` raises from the argument and from the environment variable."""
+    """`resolve` raises on `schema` from the argument and from the environment variable."""
     with pytest.raises(InvalidSettingError):
         CHECK_GRANULARITY.resolve(_SCHEMA)
 
@@ -268,7 +270,7 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
     )
     assert "Allowed values are 'rule', 'column'." in message
     assert (
-        "It is read from three sources, each overriding the one before: the package default,"
+        "The package reads it from three sources, each overriding the one before: the package default,"
         in message
     )
     assert f"then the environment variable {_GRANULARITY_ENV}," in message
@@ -285,7 +287,7 @@ def test_the_one_setting_with_no_argument_names_two_sources_and_no_argument(
     message = str(raised.value)
 
     assert (
-        "It is read from two sources, each overriding the one before: the package default,"
+        "The package reads it from two sources, each overriding the one before: the package default,"
         in message
     )
     assert f"then the environment variable {_ERROR_ROWS_DIR_ENV}." in message
