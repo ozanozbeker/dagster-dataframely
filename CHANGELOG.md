@@ -3,17 +3,9 @@
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
 Each release below carries the migration, not just the list.
 
-## 0.11.0 - unreleased
+## 0.11.0 - 2026-10-20
 
 ### Breaking in 0.11
-
-**`schema_rules` is gone, and a schema-level rule keeps its own check at `column` granularity.**
-`column` collapses the rules Dataframely generates on a column into `dy_col__<column>`.
-A `@dy.rule()` or the primary key is written by you, so it now keeps its own `dy_rule__<rule>` check and its own history, as a dbt test does in dagster-dbt.
-This is what `schema_rules="per_rule"` did.
-`dy_schema__rules` is no longer declared, so its history ends with the last run before the upgrade.
-Remove `schema_rules=`, `dd.SchemaRules` and `DAGSTER_DATAFRAMELY_SCHEMA_RULES`; nothing replaces them.
-[`docs/out-of-scope/schema-rules.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-rules.md) has the reasons.
 
 **Every function that returns something is named with a verb.**
 A function is `build_*` when it returns a Dagster object, `get_*` when it derives a value from a schema, as dagster-dbt's `DagsterDbtTranslator` does, and `evaluate_*` when it reads data and reports pass or fail.
@@ -23,7 +15,6 @@ Nothing behaves differently, and no check name or check history moves.
 | 0.10 | 0.11 |
 | --- | --- |
 | `dd.collection_checks` | `dd.build_collection_checks` |
-| `dd.schema_checks` | `dd.build_rule_checks` |
 | `dd.error_rows_spec` | `dd.build_error_rows_spec` |
 | `dd.testing.direct_invocation_result(called)` | `dd.testing.DirectInvocationResult.from_invocation(called)` |
 | `dd.wiring.validation_results(schema, frame, valid_key=...)` | `dd.wiring.stream_results(schema, frame, asset_key=...)` |
@@ -39,12 +30,84 @@ Nothing behaves differently, and no check name or check history moves.
 | `dd.wiring.delegating_writer` | `dd.wiring.build_io_manager_writer` |
 | `dd.wiring.file_writer` | `dd.wiring.build_file_writer` |
 
+**The `schema` check granularity is gone.**
+`check_granularity="schema"`, from the argument or from `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY`, raises `InvalidSettingError`.
+Remove the argument or pass `column`, and the asset starts a new check history.
+One check for every rule kept no per-rule history, blocked nothing the other two do not, and mixed `"warn"` and `"error"` rules in one result.
+[`docs/out-of-scope/schema-granularity.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-granularity.md) has the reasons and the counts that keep `column`.
+
+**`schema_rules` is gone, and a schema-level rule keeps its own check at `column` granularity.**
+`column` collapses the rules Dataframely generates on a column into `dy_col__<column>`.
+A `@dy.rule()` or the primary key is written by you, so it now keeps its own `dy_rule__<rule>` check and its own history, as a dbt test does in dagster-dbt.
+This is what `schema_rules="per_rule"` did.
+`dy_schema__rules` is no longer declared, so its history ends with the last run before the upgrade.
+Remove `schema_rules=`, `dd.SchemaRules` and `DAGSTER_DATAFRAMELY_SCHEMA_RULES`; nothing replaces them.
+[`docs/out-of-scope/schema-rules.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-rules.md) has the reasons.
+
+**Every check-result metadata key is under `dataframely/`.**
+`dy_` now covers only check names, rule columns and the `dy_rule` column in a collapsed check's failure examples.
+`failed_row_count` follows dagster-dbt's `dagster_dbt/failed_row_count`.
+
+| 0.10 | 0.11 |
+| --- | --- |
+| `dy_rule` | `dataframely/rule` |
+| `dy_rule__expr` | `dataframely/rule_expr` |
+| `dy_failed_count` | `dataframely/failed_row_count` |
+| `dy_failed_sample` | `dataframely/failed_examples` |
+| `dy_rules` | `dataframely/rules` |
+| `dy_schema__errors` | `dataframely/column_schema_errors` |
+| `dy_filter` | `dataframely/filter` |
+
 **The failure rows a check shows are failure examples, Dataframely's word.**
-`max_failure_samples=` is `max_failure_examples=`, the variable is `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`, and the metadata key `dataframely/failed_sample` is `dataframely/failed_examples`.
+`max_failure_samples=` is `max_failure_examples=`, and the variable is `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`.
 `row_sample` keeps its name, because Polars' word for the first rows of a table is a sample.
 
-**Two guide pages have new titles.**
+**A partitioned asset's row count is under `dagster/partition_row_count`.**
+Dagster defines `dagster/row_count` as the whole table's count, so a partitioned materialization no longer writes it.
+`stream_results` takes `partitioned=True` for a hand-wired partitioned asset, and `dd.asset` passes it when it has a `partitions_def`.
+Dagster's Overview tab reads only `dagster/row_count`, so its row-count stat is empty for a partitioned asset unless you or the IO manager write that key.
+
+**A run with `filter=True` logs a materialization for the error rows after each write.**
+The spec from `build_error_rows_spec` then has a history and a partition status, and an asset downstream of it can automate on it.
+A run launched from a code location without the spec logs nothing.
+A run of `dg.materialize` or `execute_in_process` has no code location to read, so it logs the materialization with or without the spec, and code that expected one materialization from such a run now receives two.
+
+**Every asset has a code version derived from its schema.**
+With `code_version=None`, `dd.asset` sets the sha1 hexdigest of each column's name and dtype, then each rule's name, severity and serialized expression.
+Every existing asset reports "has a new code version" once after the upgrade.
+A Polars upgrade can do the same, because Polars documents its expression serialization as unstable between versions.
+`dd.asset` now calls every `@dy.rule()` function when the asset is defined, so a function that raises raises there.
+An `is_in` over a Python set of strings gives a different code version in each process, so write a list.
+
+### Added in 0.11
+
+`dd.build_rule_checks(schema, asset=...)` returns the schema's checks on a table that `dd.asset` did not build, as one `dg.AssetChecksDefinition`.
+The checks read the table through the asset's own IO manager and write nothing, so a row that fails a rule stays in the table.
+[Rule checks](https://ozanozbeker.com/dagster-dataframely/user-guide/rule-checks.html) covers it.
+
+Every check result has a description with its counts: `3 rows failed.`, `No row failed.`, or the failing rules and their counts for a collapsed check.
+The column-schema result names the columns that do not match.
+
+A check description that names a `check=` key, `custom check` or a rule name shows the rule's Polars expression after it.
+
+`dd.asset` writes the schema's column schema on every materialization, so the Columns tab keeps every constraint and the primary key under an IO manager that writes a column schema without them.
+A `dagster/column_schema` the decorated function adds with `add_asset_metadata` is replaced.
+
+`dd.asset` adds the `polars` kind to every asset, and `build_error_rows_spec` gives its spec the same kind.
+Your `kinds` add to it and never replace it.
+
+`build_error_rows_spec` copies the asset's owners and tags from a definition, and `owners=` and `tags=` replace them whole, as `group_name=` does.
+
+### Fixed in 0.11
+
+A single-run backfill logs one error-rows materialization per partition in the range, so Dagster shows each partition as materialized.
+Before, the range got one materialization with no partition.
+
+### Documentation in 0.11
+
 *Schema checks* is [Rule checks](https://ozanozbeker.com/dagster-dataframely/user-guide/rule-checks.html), and *Advanced: `filter=True`* is [Filtering error rows](https://ozanozbeker.com/dagster-dataframely/user-guide/filtering-error-rows.html).
+The partitioning page covers single-run backfills.
+`docs/out-of-scope/` records three declined designs: the error rows as a second asset output, Dataframely's testing helpers in the testing guide, and the function's docstring before the schema's.
 
 ## 0.10.0 - 2026-10-18
 
