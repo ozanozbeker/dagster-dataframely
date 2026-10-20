@@ -38,7 +38,6 @@ Across `src/`, docstrings and comments stay under 40% of the characters.
 
 ### Examples use markdown fences, not doctest prompts
 
-**This overrides the global rule.**
 [Great Docs](https://posit-dev.github.io/great-docs/user-guide/writing-docstrings.html) builds this package's site on Quarto and expects ` ```{python} ` executable cells: it runs them at build time and embeds their output.
 Doctest is not its syntax.
 
@@ -57,6 +56,10 @@ Ruff's `docstring-code-format` formats only plain fences in a docstring, so noth
 Ruff formats a chunk but does not lint it, so nothing reports an unused import or an ambiguous name inside a chunk.
 
 Do not add a `# 'value'` comment to an example: Quarto prints the real return value, so the comment would repeat it.
+
+An example imports its schema and frames from `dd.data`, which the package ships, so it runs for any user from an editor hover.
+The demo and the guide import the same names, so every screenshot, guide cell and docstring shows one `OrdersSchema`.
+Define a schema inline only for a rule `OrdersSchema` lacks.
 
 Hovering a fence in Zed shows `&nbsp;` in front of every indented line.
 That is a pyrefly bug, so do not work around it.
@@ -83,6 +86,12 @@ Three tiers set the verb.
    A function that makes one such record from something else is a classmethod in Polars' form: `DirectInvocationResult.from_invocation`, `DescribedRule.from_rule`.
 
 A function that returns nothing is a verb too: `validate_error_rows_key` raises or returns `None`.
+
+### A schema ends in `Schema`
+
+A `dy.Schema` subclass ends in `Schema`, and a `dy.Collection` subclass does not, as Dataframely names its own: `OrdersSchema`, `Invoices`.
+The asset keeps the bare noun: `orders` is the asset, `OrdersSchema` is its schema.
+This holds in `src/`, `tests/`, `demo/` and the guide.
 
 ### Change part of a value with `with_*`
 
@@ -137,13 +146,14 @@ Four places, and each sentence goes in exactly one.
 - `README.md` is a landing page and a quick start, and it is also PyPI's long description and the docs site's landing page.
   What the package is, the one example, install, and links out.
   Its code blocks are copies of `demo/` modules that a prek hook keeps in sync, so edit the demo module and let the hook rewrite the README.
-- `user_guide/` is how to use the package, one `.qmd` page per topic.
-  It covers every behaviour, every setting and every error, with worked examples.
+- `user_guide/` is how to use the package, one `.qmd` page per topic, in two sections that `great-docs.yml` lists as pkgdown lists `articles:`.
+  "Get started" is the tour, named after the package as a pkgdown vignette is.
+  "Guide" pages are read once, in order.
+  "Details" pages are looked up: Settings, Naming, Errors, Hand-wiring, Upgrading.
   Every code cell runs when the site builds, so an example that no longer works fails the build.
-- Docstrings and comments give the reason the code is the way it is, within the limits in "Keep prose short".
+- Docstrings are the reference pages, in pkgdown's shape: every owned parameter, `Returns`, `Raises`, one `Examples` block that runs, and the reason the code is the way it is, within the limits in "Keep prose short".
+  The numpydoc hook in `prek.toml` enforces the shape.
 - `docs/pre-1.0.md` records the decisions and the measurements the package was built on.
   It is closed at 1.0, so a new decision goes in the module that implements it.
 
-So a docstring does not explain how to use a feature, and the guide does not explain the implementation.
-Write a numpydoc `Parameters` entry only when the name and the annotation do not already explain the parameter.
-`convention = "numpy"` disables D417, so ruff does not require one.
+So a docstring shows the one call and the guide tells the story, and the guide does not explain the implementation.
