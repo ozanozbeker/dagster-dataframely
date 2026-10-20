@@ -39,7 +39,7 @@ class InvalidSettingError(DagsterDataframelyError):
     def __init__(  # noqa: PLR0913 - the message names every argument
         self,
         setting: str,
-        value: str,
+        value: object,
         allowed: Sequence[str] | str,
         *,
         source: str,
@@ -68,7 +68,7 @@ class InvalidSettingError(DagsterDataframelyError):
             else f"The package reads it from two sources, each overriding the one before: the package default, then the environment variable {env_var}. There is no `{setting}=` argument."
         )
         super().__init__(
-            f"Setting `{setting}` got '{value}' from {source}. Allowed values are {rendered}. {sources}"
+            f"Setting `{setting}` got {value!r} ({type(value).__name__}) from {source}. Allowed values are {rendered}. {sources}"
         )
 
 

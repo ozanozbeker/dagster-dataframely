@@ -104,8 +104,9 @@ def test_a_flag_rejects_a_word_from_the_argument():
     with pytest.raises(InvalidSettingError) as raised:
         STATISTICS.resolve(_WORD)
 
-    assert "Setting `statistics` got 'false' from the `statistics=` argument" in str(
-        raised.value
+    assert (
+        "Setting `statistics` got 'false' (str) from the `statistics=` argument"
+        in str(raised.value)
     )
 
 
@@ -134,7 +135,7 @@ def test_a_count_rejects_a_negative_from_the_argument():
     message = str(raised.value)
 
     assert (
-        "Setting `max_failure_examples` got '-1' from the `max_failure_examples=` argument"
+        "Setting `max_failure_examples` got -1 (int) from the `max_failure_examples=` argument"
         in message
     )
     assert "non-negative integers" in message
@@ -148,7 +149,7 @@ def test_a_count_rejects_a_negative_from_the_environment(
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(None)
 
-    assert f"got '-1' from the environment variable {_ROW_SAMPLE_ENV}" in str(
+    assert f"got -1 (int) from the environment variable {_ROW_SAMPLE_ENV}" in str(
         raised.value
     )
 
@@ -172,7 +173,7 @@ def test_a_count_rejects_a_fraction():
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_FRACTION)
 
-    assert "'2.5'" in str(raised.value)
+    assert "got 2.5 (float)" in str(raised.value)
 
 
 def test_a_count_rejects_a_bool():
@@ -180,7 +181,7 @@ def test_a_count_rejects_a_bool():
     with pytest.raises(InvalidSettingError) as raised:
         ROW_SAMPLE.resolve(_YES)
 
-    assert "'True'" in str(raised.value)
+    assert "got True (bool)" in str(raised.value)
 
 
 def test_a_directory_reads_the_environment_source_as_the_path_it_contains(
@@ -201,7 +202,10 @@ def test_a_directory_rejects_an_empty_value_rather_than_reading_it_as_unset(
         ERROR_ROWS_DIR.resolve(None)
     message = str(raised.value)
 
-    assert f"got '   ' from the environment variable {_ERROR_ROWS_DIR_ENV}" in message
+    assert (
+        f"got '   ' (str) from the environment variable {_ERROR_ROWS_DIR_ENV}"
+        in message
+    )
     assert "filesystem paths" in message
 
 
@@ -211,7 +215,10 @@ def test_a_directory_rejects_something_that_is_not_a_path():
         ERROR_ROWS_DIR.resolve(_PATH_OBJECT)
 
     # This test does not assert the source: the message names an `error_rows_dir=` argument, which `dd.asset` does not take.
-    assert "Setting `error_rows_dir` got '/scratch'" in str(raised.value)
+    assert (
+        f"Setting `error_rows_dir` got {_PATH_OBJECT!r} ({type(_PATH_OBJECT).__name__})"
+        in str(raised.value)
+    )
 
 
 def test_a_value_outside_the_allowed_values_raises_from_the_environment(
@@ -222,8 +229,9 @@ def test_a_value_outside_the_allowed_values_raises_from_the_environment(
     with pytest.raises(InvalidSettingError) as raised:
         CHECK_GRANULARITY.resolve(None)
 
-    assert f"got 'per_column' from the environment variable {_GRANULARITY_ENV}" in str(
-        raised.value
+    assert (
+        f"got 'per_column' (str) from the environment variable {_GRANULARITY_ENV}"
+        in str(raised.value)
     )
 
 
@@ -241,22 +249,22 @@ def test_a_value_outside_the_allowed_values_raises_from_the_default_source():
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN.resolve(None)
 
-    assert "got 'per_column' from the package default" in str(raised.value)
+    assert "got 'per_column' (str) from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_COUNT.resolve(None)
 
-    assert "got '-1' from the package default" in str(raised.value)
+    assert "got -1 (int) from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_FLAG.resolve(None)
 
-    assert "got 'false' from the package default" in str(raised.value)
+    assert "got 'false' (str) from the package default" in str(raised.value)
 
     with pytest.raises(InvalidSettingError) as raised:
         _BROKEN_DIRECTORY.resolve(None)
 
-    assert "got '' from the package default" in str(raised.value)
+    assert "got '' (str) from the package default" in str(raised.value)
 
 
 def test_the_error_names_the_setting_the_value_and_the_source_order():
@@ -265,7 +273,7 @@ def test_the_error_names_the_setting_the_value_and_the_source_order():
     message = str(raised.value)
 
     assert (
-        "Setting `check_granularity` got 'per_column' from the `check_granularity=` argument"
+        "Setting `check_granularity` got 'per_column' (str) from the `check_granularity=` argument"
         in message
     )
     assert "Allowed values are 'rule', 'column'." in message

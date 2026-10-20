@@ -304,4 +304,4 @@ SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
         dd.wiring.stream_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
     ),
 }
-"""Every public function that takes a schema, with placeholders for its other arguments, so a `TypeError` means a check runs too late (ADR-0008)."""
+"""Every public function that takes a schema, except `get_code_version`, which builds no names, with placeholders for its other arguments, so a test fails when a function uses them before it validates the schema (ADR-0008)."""

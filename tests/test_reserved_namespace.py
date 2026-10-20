@@ -1,4 +1,4 @@
-"""Every public function that takes a schema rejects one whose column or rule names this package cannot use."""
+"""Every public function that takes a schema, except `get_code_version`, rejects one whose column or rule names this package cannot use."""
 
 from collections.abc import Callable
 

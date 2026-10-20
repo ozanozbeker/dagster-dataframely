@@ -116,7 +116,7 @@ class TestDirectCall:
             _results(mixed_orders())
 
         assert (
-            f"got 'five' from the environment variable {_FAILURE_EXAMPLES_ENV}"
+            f"got 'five' (str) from the environment variable {_FAILURE_EXAMPLES_ENV}"
             in str(raised.value)
         )
 

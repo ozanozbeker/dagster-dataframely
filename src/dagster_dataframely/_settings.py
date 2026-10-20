@@ -23,6 +23,7 @@ class _Setting[T]:
     default: T
     allowed: Sequence[str] | str
     accepts: Callable[[object], bool]
+    argument_allowed: Sequence[str] | str | None = None
     parse: Callable[[str], object] = str
     takes_argument: bool = True
 
@@ -34,7 +35,9 @@ class _Setting[T]:
     def resolve(self, argument: T | None) -> T:
         """Return the setting's value, validated."""
         if argument is not None:
-            return self._check(argument, f"the `{self.name}=` argument")
+            return self._check(
+                argument, f"the `{self.name}=` argument", self.argument_allowed
+            )
         word: str | None = os.environ.get(self.env_var)
         if word is not None:
             return self._check(
@@ -42,13 +45,18 @@ class _Setting[T]:
             )
         return self._check(self.default, "the package default")
 
-    def _check(self, value: object, source: str) -> T:
+    def _check(
+        self,
+        value: object,
+        source: str,
+        allowed: Sequence[str] | str | None = None,
+    ) -> T:
         """Return `value` if `accepts` passes it, else raise."""
         if not self.accepts(value):
             raise InvalidSettingError(
                 self.name,
-                str(value),
-                self.allowed,
+                value,
+                allowed or self.allowed,
                 source=source,
                 env_var=self.env_var,
                 takes_argument=self.takes_argument,
@@ -99,6 +107,7 @@ STATISTICS = _Setting[bool](
     default=True,
     allowed=tuple(_FLAG_WORDS),
     accepts=lambda value: type(value) is bool,
+    argument_allowed="True or False",
     parse=_parse_flag,
 )
 

@@ -34,8 +34,9 @@ So the check results always name the checks the asset declares.
 So with an empty value, every `dd.asset` call raises `InvalidSettingError`, with or without `filter=True`.
 For example, `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR=${SCRATCH}` is empty when `SCRATCH` is unset.
 
-The package validates every source when it resolves the setting, including the package default and the argument.
-An invalid value raises `InvalidSettingError`, which names the value and its source.
+The package validates the value from the source it uses.
+An asset that passes the argument does not read the environment variable, so an invalid variable raises only on an asset without the argument.
+An invalid value raises `InvalidSettingError`, which names the value, its type and its source.
 So `statistics="false"` raises instead of turning statistics on, and `max_failure_examples=True` raises instead of meaning one row.
 
 **`DAGSTER_DATAFRAMELY_STATISTICS` accepts `true` or `false`, and nothing else.**
