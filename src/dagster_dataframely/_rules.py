@@ -17,7 +17,7 @@ import polars as pl
 # Private in Dataframely, as are `_validation_rules` and `Collection._filters`; `tests/test_upstream_characterization.py` pins all four.
 from dataframely._rule import Rule, RuleFactory
 
-from dagster_dataframely._naming import RESERVED_NAMESPACE, asset_check_name
+from dagster_dataframely._naming import RESERVED_NAMESPACE, get_check_name_for_rule
 from dagster_dataframely.errors import (
     CheckNameCollisionError,
     InvalidColumnNameError,
@@ -73,7 +73,7 @@ def _described_rule(
     factory = getattr(schema, name, None)
     return DescribedRule(
         name=name,
-        check_name=asset_check_name(name),
+        check_name=get_check_name_for_rule(name),
         column=column if delimiter else None,
         rule_name=rule_name if delimiter else None,
         description=(

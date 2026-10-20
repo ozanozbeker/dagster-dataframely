@@ -147,14 +147,14 @@ class CollectionNotSupportedError(DagsterDataframelyError):
     def __init__(self, collection_name: str) -> None:
         """Name the Collection and what to declare instead."""
         super().__init__(
-            f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema, then pass them to `dd.collection_checks`."
+            f"{collection_name} is a Dataframely Collection. This decorator takes a single `dy.Schema`. Declare one asset per member, each with the member's own schema, then pass them to `dd.build_collection_checks`."
         )
 
 
 class InvalidMembersError(DagsterDataframelyError):
     """`members=` does not map a Collection's members to unpartitioned assets.
 
-    Raised when `dd.collection_checks` is called.
+    Raised when `dd.build_collection_checks` is called.
     """
 
     def __init__(
@@ -176,7 +176,7 @@ class InvalidMembersError(DagsterDataframelyError):
 class FailurePropagationError(DagsterDataframelyError):
     """A Collection member sets `propagate_row_failures=True`.
 
-    Raised when `dd.collection_checks` is called, because a check over the members' tables cannot evaluate failure propagation (`docs/out-of-scope/collection-assets.md`).
+    Raised when `dd.build_collection_checks` is called, because a check over the members' tables cannot evaluate failure propagation (`docs/out-of-scope/collection-assets.md`).
     """
 
     def __init__(self, collection_name: str, members: Sequence[str]) -> None:
@@ -184,7 +184,7 @@ class FailurePropagationError(DagsterDataframelyError):
         names: str = ", ".join(f"'{member}'" for member in members)
         plural, verb = ("", "sets") if len(members) == 1 else ("s", "set")
         super().__init__(
-            f"Member{plural} {names} of {collection_name} {verb} `propagate_row_failures=True`, which `dd.collection_checks` cannot check. A row that fails its member's own rules is not in the member's table, so a check over the tables would always pass. Remove the setting, or write a collection filter that states the condition."
+            f"Member{plural} {names} of {collection_name} {verb} `propagate_row_failures=True`, which `dd.build_collection_checks` cannot check. A row that fails its member's own rules is not in the member's table, so a check over the tables would always pass. Remove the setting, or write a collection filter that states the condition."
         )
 
 
@@ -197,7 +197,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
     def __init__(self, asset: str) -> None:
         """Name the asset and the three ways to fix the return."""
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.schema_metadata` to fill its Columns tab."
+            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame and call `context.add_asset_metadata({{...}})` from a `context` parameter. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.get_column_schema_metadata` to fill its Columns tab."
         )
 
 
@@ -239,7 +239,7 @@ class ColumnSchemaError(DagsterDataframelyError):
         problems
             One mapping of `column`, `expected` and `actual` per mismatched column, as `_column_schema_problems` returns.
         stored
-            Whether the frame is a table read back from storage, as in `dd.schema_checks`, where no asset body exists to cast in.
+            Whether the frame is a table read back from storage, as in `dd.build_rule_checks`, where no asset body exists to cast in.
         """
         self.problems: Sequence[Mapping[str, str]] = problems
         mismatches: str = ", ".join(
@@ -319,7 +319,7 @@ class ErrorRowsKeyCollisionError(DagsterDataframelyError):
     def __init__(self, asset: str, error_rows: str) -> None:
         """Name both assets and each fix."""
         super().__init__(
-            f"'{asset}' declares `filter=True`, so its error rows are written to '{error_rows}', which an asset in this code location already materializes. Rename that asset, set `error_rows_key` on '{asset}' to another key, or remove `filter=True` from '{asset}'. If that asset is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the error rows themselves to the asset graph."
+            f"'{asset}' declares `filter=True`, so its error rows are written to '{error_rows}', which an asset in this code location already materializes. Rename that asset, set `error_rows_key` on '{asset}' to another key, or remove `filter=True` from '{asset}'. If that asset is your own table for the error rows, delete it and use `build_error_rows_spec` instead, which adds the error rows themselves to the asset graph."
         )
 
 

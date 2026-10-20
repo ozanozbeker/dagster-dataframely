@@ -12,7 +12,7 @@ def marketing_orders(raw_marketplace_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_marketplace_orders
 
 
-marketing_orders__error_rows = dd.error_rows_spec(Orders, marketing_orders)
+marketing_orders__error_rows = dd.build_error_rows_spec(Orders, marketing_orders)
 
 
 @dd.asset(Orders, owners=["team:finance"])

@@ -9,7 +9,7 @@ import pytest
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     ERROR_ROWS_DIR,
-    MAX_FAILURE_SAMPLES,
+    MAX_FAILURE_EXAMPLES,
     ROW_SAMPLE,
     STATISTICS,
 )
@@ -30,7 +30,7 @@ _PATH_OBJECT: Any = Path("/scratch")
 
 # Every shipped default is valid, so these copies with a wrong default test the default source.
 _BROKEN = replace(CHECK_GRANULARITY, name="fake_setting", default=_WRONG)
-_BROKEN_COUNT = replace(MAX_FAILURE_SAMPLES, name="fake_count", default=-1)
+_BROKEN_COUNT = replace(MAX_FAILURE_EXAMPLES, name="fake_count", default=-1)
 _BROKEN_FLAG = replace(STATISTICS, name="fake_flag", default=_WORD)
 _BROKEN_DIRECTORY = replace(ERROR_ROWS_DIR, name="fake_directory", default="")
 
@@ -38,7 +38,7 @@ _BROKEN_DIRECTORY = replace(ERROR_ROWS_DIR, name="fake_directory", default="")
 def test_a_setting_nobody_touched_is_the_package_default():
     assert CHECK_GRANULARITY.resolve(None) == "rule"
     assert STATISTICS.resolve(None) is True
-    assert MAX_FAILURE_SAMPLES.resolve(None) == 5
+    assert MAX_FAILURE_EXAMPLES.resolve(None) == 5
     assert ROW_SAMPLE.resolve(None) == 5
     assert ERROR_ROWS_DIR.resolve(None) is None
 
@@ -60,7 +60,7 @@ def test_the_argument_beats_the_environment_variable(monkeypatch: pytest.MonkeyP
 def test_every_setting_names_its_environment_variable_after_itself():
     assert CHECK_GRANULARITY.env_var == _GRANULARITY_ENV
     assert STATISTICS.env_var == _STATISTICS_ENV
-    assert MAX_FAILURE_SAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
+    assert MAX_FAILURE_EXAMPLES.env_var == "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
     assert ROW_SAMPLE.env_var == _ROW_SAMPLE_ENV
     assert ERROR_ROWS_DIR.env_var == _ERROR_ROWS_DIR_ENV
 
@@ -128,11 +128,11 @@ def test_a_count_turned_off_by_an_argument_is_off_rather_than_unset(
 
 def test_a_count_rejects_a_negative_from_the_argument():
     with pytest.raises(InvalidSettingError) as raised:
-        MAX_FAILURE_SAMPLES.resolve(-1)
+        MAX_FAILURE_EXAMPLES.resolve(-1)
     message = str(raised.value)
 
     assert (
-        "Setting `max_failure_samples` got '-1' from the `max_failure_samples=` argument"
+        "Setting `max_failure_examples` got '-1' from the `max_failure_examples=` argument"
         in message
     )
     assert "non-negative integers" in message

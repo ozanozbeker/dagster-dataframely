@@ -28,7 +28,7 @@ To test an asset, call it.
 Direct invocation is Dagster's documented way to unit-test an asset.
 It needs no run, no IO manager and no instance.
 A call returns the same materialization and check results a run yields, as ordinary Python objects.
-`dd.testing.direct_invocation_result` separates them into the materialization and the check results:
+`dd.testing.DirectInvocationResult.from_invocation` separates them into the materialization and the check results:
 
 ```{python}
 #| label: testing-an-asset-1
@@ -47,7 +47,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 def test_orders_filters_the_failing_lines(error_rows_dir):
-    result = dd.testing.direct_invocation_result(
+    result = dd.testing.DirectInvocationResult.from_invocation(
         orders(dg.build_asset_context(), marketplace_orders())
     )
 
@@ -79,7 +79,7 @@ The validated frame is its `value`.
 Its `metadata` has the keys a run writes, such as `dataframely/error_rows_count`.
 
 **`checks` holds each `dg.AssetCheckResult` whole, keyed by check name.**
-A failing rule's result has the failing rows in its `dataframely/failed_sample` metadata, so a test can assert which rows a rule failed.
+A failing rule's result has the failing rows in its `dataframely/failed_examples` metadata, so a test can assert which rows a rule failed.
 
 **Pass the helper the call's return value, not a list of it.**
 Dagster annotates the call as returning `object`, so a type checker rejects `list(orders(...))`.
@@ -105,7 +105,7 @@ def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 clean = storefront_orders()
-result = dd.testing.direct_invocation_result(plain_orders(clean))
+result = dd.testing.DirectInvocationResult.from_invocation(plain_orders(clean))
 ```
 
 The call yields a separate `dg.AssetCheckResult` for every check the asset declares, with its asset key set.
@@ -122,7 +122,7 @@ def daily_orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
     return pl.read_parquet(f"raw/orders/{context.partition_key}.parquet")
 
 
-result = dd.testing.direct_invocation_result(
+result = dd.testing.DirectInvocationResult.from_invocation(
     daily_orders(dg.build_asset_context(partition_key="2026-01-02"))
 )
 ```
@@ -135,7 +135,9 @@ The helper iterates it, so put the helper inside `pytest.raises`:
 #| label: testing-an-asset-5
 def test_plain_orders_stops_at_a_failing_line():
     with pytest.raises(dd.errors.ValidationAbortError):
-        dd.testing.direct_invocation_result(plain_orders(marketplace_orders()))
+        dd.testing.DirectInvocationResult.from_invocation(
+            plain_orders(marketplace_orders())
+        )
 ```
 
 ```{python}
@@ -150,7 +152,7 @@ Test a failing `"error"` rule with `pytest.raises(dd.errors.ValidationAbortError
 **The helper raises `TypeError` for anything that calling an asset built with `dd.asset` does not return.**
 That covers the asset itself, uncalled, and the frame or `dg.MaterializeResult` a plain `@dg.asset` returns.
 It also covers a second materialization and a repeated check name.
-The check results of `dd.collection_checks` repeat each check name, once per member.
+The check results of `dd.build_collection_checks` repeat each check name, once per member.
 
 **Direct invocation does not support metadata added through the context.**
 `context.add_asset_metadata` raises when you call the asset directly:

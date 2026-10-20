@@ -56,7 +56,7 @@ user_guide:
       - partitioning.qmd
       - lazyframes.qmd
       - collection-checks.qmd
-      - schema-checks.qmd
+      - rule-checks.qmd
   - section: Reference
     contents:
       - settings.qmd
@@ -74,24 +74,22 @@ reference:
   sections:
     - title: Core
       desc: >-
-        `dd.asset` builds an asset from a schema, and `error_rows_spec` adds that asset's
-        error rows to the asset graph. `collection_checks` reports a Collection's
-        collection filters as asset checks on its member assets. `schema_checks` reports
+        `dd.asset` builds an asset from a schema, and `build_error_rows_spec` adds that asset's
+        error rows to the asset graph. `build_collection_checks` reports a Collection's
+        collection filters as asset checks on its member assets. `build_rule_checks` reports
         a schema's rules as asset checks on an asset `dd.asset` did not build.
       contents:
         - asset
-        - error_rows_spec
-        - collection_checks
-        - schema_checks
+        - build_error_rows_spec
+        - build_collection_checks
+        - build_rule_checks
         - Granularity
-        - SchemaRules
 
     - title: Testing
       desc: >-
-        `direct_invocation_result` separates what a direct invocation of an asset built with
-        `dd.asset` yields into its materialization and its check results.
+        `DirectInvocationResult.from_invocation` separates what a direct invocation of an asset
+        built with `dd.asset` yields into its materialization and its check results.
       contents:
-        - testing.direct_invocation_result
         - testing.DirectInvocationResult
 
     - title: Hand-wiring
@@ -99,18 +97,17 @@ reference:
         `dd.asset` assembles these parts. Use them to build a `@dg.asset` yourself, where
         `dd.asset` does not fit.
       contents:
-        - wiring.schema_metadata
-        - wiring.table_schema
-        - wiring.asset_check_specs
-        - wiring.asset_check_results
-        - wiring.asset_check_name
-        - wiring.validation_results
-        - wiring.AssetYield
+        - wiring.get_column_schema_metadata
+        - wiring.get_table_schema
+        - wiring.build_asset_check_specs
+        - wiring.evaluate_checks
+        - wiring.get_check_name_for_rule
+        - wiring.stream_results
         - wiring.ErrorRowsWriter
-        - wiring.delegating_writer
-        - wiring.file_writer
-        - wiring.error_rows_frame
-        - wiring.error_rows_path
+        - wiring.build_io_manager_writer
+        - wiring.build_file_writer
+        - wiring.get_error_rows
+        - wiring.get_error_rows_path
         - wiring.validate_error_rows_key
 
     - title: Errors

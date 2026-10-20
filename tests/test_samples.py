@@ -24,7 +24,7 @@ from tests.scenario import (
     records,
 )
 
-_FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
+_FAILURE_EXAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
 _ROW_SAMPLE_ENV = "DAGSTER_DATAFRAMELY_ROW_SAMPLE"
 
 _GOOD_KEY = dg.AssetKey(["orders"])
@@ -207,7 +207,7 @@ class TestFailureSamples:
     def test_a_failing_check_has_the_rows_that_failed_it(self, tmp_path: Path):
         result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
-        sampled = records(metadata["dataframely/failed_sample"])
+        sampled = records(metadata["dataframely/failed_examples"])
 
         assert metadata["dataframely/failed_row_count"].value == 1
         assert [row["order_id"] for row in sampled] == ["ORD-4"]
@@ -220,7 +220,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, _with_error_rows)
         sampled = records(
             check_evaluations(result)["dy_rule__amount__min"].metadata[
-                "dataframely/failed_sample"
+                "dataframely/failed_examples"
             ]
         )
 
@@ -230,7 +230,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, _with_error_rows)
         metadata = check_evaluations(result)["dy_rule__quantity__min"].metadata
 
-        assert "dataframely/failed_sample" not in metadata
+        assert "dataframely/failed_examples" not in metadata
         assert {"dataframely/rule", "dataframely/rule_expr"} <= set(metadata)
 
     def test_the_failure_sample_is_bounded(self, tmp_path: Path):
@@ -242,7 +242,7 @@ class TestFailureSamples:
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
 
         assert metadata["dataframely/failed_row_count"].value == _DEFAULT * 2
-        assert len(records(metadata["dataframely/failed_sample"])) == _DEFAULT
+        assert len(records(metadata["dataframely/failed_examples"])) == _DEFAULT
 
     def test_a_failure_sample_of_zero_leaves_the_key_absent_rather_than_empty(
         self,
@@ -252,7 +252,7 @@ class TestFailureSamples:
             Orders,
             name="orders",
             filter=True,
-            max_failure_samples=0,
+            max_failure_examples=0,
         )
         def unsampled() -> pl.DataFrame:
             return mixed_orders()
@@ -260,13 +260,13 @@ class TestFailureSamples:
         result = materialize(tmp_path, unsampled)
         metadata = check_evaluations(result)["dy_rule__amount__min"].metadata
 
-        assert "dataframely/failed_sample" not in metadata
+        assert "dataframely/failed_examples" not in metadata
         assert metadata["dataframely/failed_row_count"].value == 1
 
     def test_the_environment_variable_sets_the_failure_sample(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "0")
+        monkeypatch.setenv(_FAILURE_EXAMPLES_ENV, "0")
 
         @dd.asset(Orders, name="orders", filter=True)
         def orders() -> pl.DataFrame:
@@ -275,7 +275,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, orders)
 
         assert (
-            "dataframely/failed_sample"
+            "dataframely/failed_examples"
             not in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 
@@ -289,7 +289,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, aborting, raise_on_error=False)
         sampled = records(
             check_evaluations(result)["dy_rule__amount__min"].metadata[
-                "dataframely/failed_sample"
+                "dataframely/failed_examples"
             ]
         )
 
@@ -303,7 +303,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, _by_column)
         sampled = records(
             check_evaluations(result)["dy_col__amount"].metadata[
-                "dataframely/failed_sample"
+                "dataframely/failed_examples"
             ]
         )
 
@@ -317,7 +317,7 @@ class TestFailureSamples:
         result = materialize(tmp_path, _by_column)
         sampled = records(
             check_evaluations(result)["dy_rule__paid_orders_have_amount"].metadata[
-                "dataframely/failed_sample"
+                "dataframely/failed_examples"
             ]
         )
 
@@ -341,7 +341,7 @@ class TestSampleSettings:
         ]
         assert "dataframely/table_sample" in metadata
         assert (
-            "dataframely/failed_sample"
+            "dataframely/failed_examples"
             in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 
@@ -351,7 +351,7 @@ class TestSampleSettings:
             name="orders",
             filter=True,
             row_sample=0,
-            max_failure_samples=0,
+            max_failure_examples=0,
         )
         def unsampled() -> pl.DataFrame:
             return mixed_orders()
@@ -362,7 +362,7 @@ class TestSampleSettings:
         assert "dataframely/table_statistics/numeric" in metadata
         assert "dataframely/table_sample" not in metadata
         assert (
-            "dataframely/failed_sample"
+            "dataframely/failed_examples"
             not in check_evaluations(result)["dy_rule__amount__min"].metadata
         )
 

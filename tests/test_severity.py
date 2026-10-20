@@ -125,7 +125,8 @@ class TestDeclaredSeverity:
 
     def test_the_columns_tab_omits_the_declaration_and_keeps_other_tags(self):
         columns = {
-            column.name: column for column in dd.wiring.table_schema(Declared).columns
+            column.name: column
+            for column in dd.wiring.get_table_schema(Declared).columns
         }
 
         assert columns["note"].tags == {"owner": "sales"}

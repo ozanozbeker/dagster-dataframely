@@ -1,9 +1,9 @@
 """Runtime behaviour of `dd.asset`, asserted on a run's events, check evaluations, metadata and written files.
 
-`TestOutcomeSelection` calls `validation_results` directly, to assert each of the six outcomes without a run.
+`TestOutcomeSelection` calls `stream_results` directly, to assert each of the six outcomes without a run.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +21,11 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from dagster_dataframely.wiring import (
-    AssetYield,
-    asset_check_results,
-    asset_check_specs,
-    schema_metadata,
-    table_schema,
-    validation_results,
+    build_asset_check_specs,
+    evaluate_checks,
+    get_column_schema_metadata,
+    get_table_schema,
+    stream_results,
 )
 from tests.scenario import (
     Orders,
@@ -64,7 +63,7 @@ class TestCleanFrame:
 
     def test_a_clean_run_emits_row_count(self):
         # Called directly, because in a run `dagster-polars` writes the same key.
-        materialization = dd.testing.direct_invocation_result(
+        materialization = dd.testing.DirectInvocationResult.from_invocation(
             orders(clean_orders())
         ).materialization
         assert materialization is not None
@@ -436,7 +435,7 @@ class TestFilterWithValidRows:
         self, tmp_path: Path
     ):
         evaluations = check_evaluations(materialize(tmp_path, _filtered))
-        direct = asset_check_results(Orders, mixed_orders(), asset_key=_GOOD_KEY)
+        direct = evaluate_checks(Orders, mixed_orders(), asset_key=_GOOD_KEY)
 
         assert {name: e.description for name, e in evaluations.items()} == {
             result.check_name: result.description for result in direct
@@ -661,11 +660,13 @@ class TestSkip:
         @dg.asset(
             name="orders",
             output_required=False,
-            metadata=schema_metadata(Orders),
-            check_specs=asset_check_specs(Orders, asset="orders"),
+            metadata=get_column_schema_metadata(Orders),
+            check_specs=build_asset_check_specs(Orders, asset="orders"),
         )
-        def orders_by_hand(context: dg.AssetExecutionContext) -> AssetYield:
-            yield from validation_results(Orders, None, valid_key=context.asset_key)
+        def orders_by_hand(
+            context: dg.AssetExecutionContext,
+        ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+            yield from stream_results(Orders, None, asset_key=context.asset_key)
 
         result = materialize(tmp_path, orders_by_hand)
 
@@ -714,7 +715,7 @@ def _counted(frame: pl.DataFrame) -> tuple[pl.LazyFrame, list[int]]:
 class TestLazyReturn:
     """A run whose decorated function returns a `LazyFrame`."""
 
-    # No test compares the two returns per outcome, because `validation_results` calls `frame.lazy()` on both.
+    # No test compares the two returns per outcome, because `stream_results` calls `frame.lazy()` on both.
 
     @pytest.mark.parametrize("lazily", [False, True], ids=["eager", "lazy"])
     def test_the_filter_runs_on_the_streaming_engine(
@@ -877,7 +878,7 @@ class TestColumnSchema:
         def orders() -> pl.DataFrame:
             return clean_orders()
 
-        assert _column_schema(materialize(tmp_path, orders)) == table_schema(Orders)
+        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(Orders)
 
     def test_the_schemas_column_schema_replaces_one_the_function_adds(
         self, tmp_path: Path
@@ -889,7 +890,7 @@ class TestColumnSchema:
             })
             return clean_orders()
 
-        assert _column_schema(materialize(tmp_path, orders)) == table_schema(Orders)
+        assert _column_schema(materialize(tmp_path, orders)) == get_table_schema(Orders)
 
 
 _ADDRESS = "orders__error_rows"
@@ -898,7 +899,7 @@ _ADDRESS = "orders__error_rows"
 def _drained(
     frame: pl.DataFrame | None, *, filtering: bool
 ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
-    """Return what `validation_results` yielded and wrote, and the error it raised, if any.
+    """Return what `stream_results` yielded and wrote, and the error it raised, if any.
 
     Three outcomes raise after yielding, so `list()` alone would lose the results.
     """
@@ -910,10 +911,10 @@ def _drained(
         return _ADDRESS
 
     yielded: Yielded = []
-    results = validation_results(
+    results = stream_results(
         Orders,
         frame,
-        valid_key=_GOOD_KEY,
+        asset_key=_GOOD_KEY,
         error_rows_writer=writer if filtering else None,
     )
     try:
@@ -942,7 +943,7 @@ def _rules(yielded: Yielded) -> list[dg.AssetCheckResult]:
 
 
 class TestOutcomeSelection:
-    """The six outcomes, asserted on what `validation_results` yields, writes and raises, with no run."""
+    """The six outcomes, asserted on what `stream_results` yields, writes and raises, with no run."""
 
     def test_a_clean_frame_writes_an_empty_error_rows_with_every_column(self):
         yielded, written, error = _drained(clean_orders(), filtering=True)
@@ -1010,10 +1011,10 @@ class TestOutcomeSelection:
         sample = _metadata(yielded)["dataframely/error_rows_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
-        bounded = validation_results(
+        bounded = stream_results(
             Orders,
             mixed_orders(),
-            valid_key=_GOOD_KEY,
+            asset_key=_GOOD_KEY,
             error_rows_writer=lambda _: _ADDRESS,
             row_sample=1,
         )

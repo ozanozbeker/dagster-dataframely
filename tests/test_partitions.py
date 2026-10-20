@@ -14,7 +14,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 import dagster_dataframely as dd
-from dagster_dataframely.wiring import table_schema, validation_results
+from dagster_dataframely.wiring import get_table_schema, stream_results
 from tests.scenario import (
     Orders,
     check_evaluations,
@@ -43,7 +43,9 @@ def _orders() -> pl.DataFrame:
 
 def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
     """Return the materialization a call yielded."""
-    materialization = dd.testing.direct_invocation_result(called).materialization
+    materialization = dd.testing.DirectInvocationResult.from_invocation(
+        called
+    ).materialization
     assert materialization is not None
     return materialization
 
@@ -106,7 +108,7 @@ class TestPartitionRuns:
         result = materialize(tmp_path, _orders, partition_key="clean")
         metadata = materializations(result)[_GOOD_KEY].metadata
 
-        assert metadata["dagster/column_schema"].value == table_schema(Orders)
+        assert metadata["dagster/column_schema"].value == get_table_schema(Orders)
 
     def test_the_error_rows_is_written_under_the_partition_that_produced_it(
         self, tmp_path: Path
@@ -349,8 +351,8 @@ class TestRowCount:
     ):
         (materialization,) = [
             r
-            for r in validation_results(
-                Orders, clean_orders(), valid_key=_GOOD_KEY, partitioned=partitioned
+            for r in stream_results(
+                Orders, clean_orders(), asset_key=_GOOD_KEY, partitioned=partitioned
             )
             if isinstance(r, dg.MaterializeResult)
         ]

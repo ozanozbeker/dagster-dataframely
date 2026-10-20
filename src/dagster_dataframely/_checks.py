@@ -1,4 +1,4 @@
-"""Asset check specs derived from a schema, and the results `_runtime` and `asset_check_results` yield for them.
+"""Asset check specs derived from a schema, and the results `_runtime` and `evaluate_checks` yield for them.
 
 Specs and results both group the rules with `_rule_sets`, so they name the same checks only when given the same settings.
 """
@@ -20,7 +20,7 @@ from dagster_dataframely._rules import (
 from dagster_dataframely._samples import Row, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
-    MAX_FAILURE_SAMPLES,
+    MAX_FAILURE_EXAMPLES,
     Granularity,
 )
 from dagster_dataframely.errors import ColumnSchemaError
@@ -77,7 +77,7 @@ def _rule_sets(
     return rule_sets
 
 
-def asset_check_specs(
+def build_asset_check_specs(
     schema: type[dy.Schema],
     *,
     # `dagster` has no alias for this union.
@@ -274,7 +274,7 @@ def _rule_metadata(
     if failed:
         # The key follows dagster-dbt's `dagster_dbt/failed_row_count`.
         metadata["dataframely/failed_row_count"] = failed
-    return metadata | sample_metadata("dataframely/failed_sample", sampled)
+    return metadata | sample_metadata("dataframely/failed_examples", sampled)
 
 
 def _collapsed_metadata(
@@ -298,7 +298,7 @@ def _collapsed_metadata(
         for rule in rules
         for row in sampled.get(rule.name, [])
     ]
-    return metadata | sample_metadata("dataframely/failed_sample", attributed)
+    return metadata | sample_metadata("dataframely/failed_examples", attributed)
 
 
 def rule_check_results(
@@ -307,7 +307,7 @@ def rule_check_results(
     *,
     asset_key: dg.AssetKey,
     check_granularity: Granularity | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
 ) -> list[dg.AssetCheckResult]:
     """Return one result per rule set from `failure`.
 
@@ -315,7 +315,7 @@ def rule_check_results(
     """
     counts: dict[str, int] = failure.counts()
     sampled: dict[str, list[Row]] = _failed_rows(
-        schema, failure, counts, MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+        schema, failure, counts, MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     )
     results: list[dg.AssetCheckResult] = []
     for rule_set in _rule_sets(schema, check_granularity):
@@ -351,28 +351,28 @@ def rule_check_results(
     return results
 
 
-def asset_check_results(
+def evaluate_checks(
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame,
     *,
     asset_key: dg.AssetKey,
     check_granularity: Granularity | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
 ) -> Iterator[dg.AssetCheckResult]:
-    """Yield a result for each check `asset_check_specs` declares, without writing any rows.
+    """Yield a result for each check `build_asset_check_specs` declares, without writing any rows.
 
     Each failing rule's check has its rule's severity, as in `dd.asset`.
 
     Parameters
     ----------
     check_granularity
-        Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    max_failure_samples
-        A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
+        Pass the value `build_asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+    max_failure_examples
+        A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
 
     Yields
     ------
-    The column-schema check's result, then one result per rule set, in the order of `asset_check_specs`.
+    The column-schema check's result, then one result per rule set, in the order of `build_asset_check_specs`.
 
     Raises
     ------
@@ -399,5 +399,5 @@ def asset_check_results(
         failure,
         asset_key=asset_key,
         check_granularity=check_granularity,
-        max_failure_samples=max_failure_samples,
+        max_failure_examples=max_failure_examples,
     )

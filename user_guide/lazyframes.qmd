@@ -77,7 +77,7 @@ The column-schema check runs first and reads only `collect_schema()`, which does
 So a frame whose columns or dtypes differ from the schema raises `ColumnSchemaError` before the plan runs.
 
 The plan runs on the streaming engine, but the write does not stream: the IO manager receives a `DataFrame` in memory.
-The package counts the valid rows and the invalid rows to determine the outcome, and two outcomes do not write the table.
+The package counts the valid rows and the invalid rows to determine whether it writes the table, and two kinds of run do not.
 Streaming straight to storage would write the table before the package counted the rows.
 A plain `@dg.asset` has no validation, checks or statistics, so it can stream end to end without collecting its result into memory.
 The measurements are in [`docs/pre-1.0.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/pre-1.0.md#lazy-validation-and-lazy-storage).

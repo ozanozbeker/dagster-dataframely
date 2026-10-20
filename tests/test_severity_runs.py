@@ -16,9 +16,9 @@ from dagster_dataframely.errors import (
     ValidationAbortError,
 )
 from dagster_dataframely.wiring import (
-    asset_check_results,
-    asset_check_specs,
-    validation_results,
+    build_asset_check_specs,
+    evaluate_checks,
+    stream_results,
 )
 from tests.scenario import Yielded, check_evaluations, materialize
 
@@ -74,7 +74,7 @@ def _all_error() -> pl.DataFrame:
 def _drained(
     frame: pl.DataFrame, *, filtering: bool
 ) -> tuple[Yielded, list[pl.DataFrame], DagsterDataframelyError | None]:
-    """Return what `validation_results` yielded and wrote, and the error it raised, if any."""
+    """Return what `stream_results` yielded and wrote, and the error it raised, if any."""
     written: list[pl.DataFrame] = []
 
     def writer(rows: pl.DataFrame) -> str:
@@ -84,10 +84,10 @@ def _drained(
     yielded: Yielded = []
     try:
         yielded.extend(
-            validation_results(
+            stream_results(
                 Shipments,
                 frame,
-                valid_key=_KEY,
+                asset_key=_KEY,
                 error_rows_writer=writer if filtering else None,
             )
         )
@@ -259,7 +259,9 @@ class TestBlockingSpecs:
     def test_without_filter_a_check_is_blocking_when_it_has_an_error_rule(
         self, granularity: dd.Granularity, blocking: set[str]
     ):
-        specs = asset_check_specs(Shipments, asset=_KEY, check_granularity=granularity)
+        specs = build_asset_check_specs(
+            Shipments, asset=_KEY, check_granularity=granularity
+        )
 
         assert _blocking(specs) == blocking
 
@@ -267,7 +269,7 @@ class TestBlockingSpecs:
     def test_with_filter_only_the_column_schema_check_is_blocking(
         self, granularity: dd.Granularity
     ):
-        specs = asset_check_specs(
+        specs = build_asset_check_specs(
             Shipments, asset=_KEY, check_granularity=granularity, filter=True
         )
 
@@ -279,7 +281,7 @@ class TestBlockingSpecs:
         def shipments() -> pl.DataFrame:
             return _clean()
 
-        expected = asset_check_specs(Shipments, asset=_KEY, filter=filtering)
+        expected = build_asset_check_specs(Shipments, asset=_KEY, filter=filtering)
         assert _blocking(list(shipments.check_specs)) == _blocking(expected)
 
 
@@ -300,7 +302,7 @@ class TestCollapsedCheck:
 
     def test_a_collapsed_check_is_an_error_when_its_error_rule_failed(self):
         yielded = list(
-            asset_check_results(
+            evaluate_checks(
                 Shipments, _mixed(), asset_key=_KEY, check_granularity="column"
             )
         )
@@ -311,7 +313,7 @@ class TestCollapsedCheck:
 
 class TestCheckResults:
     def test_each_result_has_its_rules_severity(self):
-        yielded = list(asset_check_results(Shipments, _mixed(), asset_key=_KEY))
+        yielded = list(evaluate_checks(Shipments, _mixed(), asset_key=_KEY))
 
         assert _failed(yielded) == {
             "dy_rule__weight__min": dg.AssetCheckSeverity.ERROR,
@@ -327,7 +329,7 @@ class WarnOnTheClass(dy.Schema):
 
 def test_a_duplicate_key_declared_warn_is_written():
     frame = pl.DataFrame({"shipment_id": ["A", "A"]})
-    yielded = list(validation_results(WarnOnTheClass, frame, valid_key=_KEY))
+    yielded = list(stream_results(WarnOnTheClass, frame, asset_key=_KEY))
 
     assert _ids(_table(yielded)) == {"A"}
     assert len(_table(yielded)) == 2  # pyrefly: ignore[bad-argument-type]

@@ -251,7 +251,7 @@ def checked_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 
 
-checked_orders__error_rows = dd.error_rows_spec(Orders, checked_orders)
+checked_orders__error_rows = dd.build_error_rows_spec(Orders, checked_orders)
 
 
 @dg.asset(
@@ -274,4 +274,4 @@ You can also add your own asset check to the asset:
 def triage_needed() -> dg.AssetCheckResult: ...
 ```
 
-Or read the error rows on a schedule, through the spec `error_rows_spec` returns.
+Or read the error rows on a schedule, through the spec `build_error_rows_spec` returns.

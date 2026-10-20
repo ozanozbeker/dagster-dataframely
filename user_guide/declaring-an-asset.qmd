@@ -65,7 +65,7 @@ A run checks the column schema of the frame the decorated function returns, then
 The asset's IO manager writes the table.
 With `filter=True`, a writer writes the rows that failed an `"error"` rule, the error rows, under `<name>__error_rows` unless `error_rows_key` sets another key.
 Each check reports a result.
-Not every run writes the table: [Validation](validation.qmd) lists the outcomes and what each one writes.
+Not every run writes the table: [Validation](validation.qmd) lists the five kinds of run and what each one writes.
 
 ![The Checks tab after a run with no failing rows, at the default granularity: one check per rule, each with its own history. The selected check's description is its rendered constraint, and its metadata has the rule's name and expression.](../assets/images/check-list.png)
 
@@ -76,9 +76,9 @@ A type checker rejects the five legacy forms, but nothing rejects them at run ti
 
 | `@dg.asset` parameter | why it is not here | what to write instead |
 | --- | --- | --- |
-| `asset_check_specs` | they come from the schema's rules | nothing |
+| `build_asset_check_specs` | they come from the schema's rules | nothing |
 | `key` | `key_prefix` and `name` set it | `key_prefix=` plus `name=` |
-| `output_required` | the outcomes that write nothing must end the step without an output | nothing |
+| `output_required` | a run that writes nothing must end the step without an output | nothing |
 | `dagster_type` | declined ([#3](https://github.com/ozanozbeker/dagster-dataframely/issues/3)): it runs before the IO manager and cannot set a severity, so it cannot apply the rules' severities | the schema, which this package validates against |
 | `is_virtual` | a virtual asset has no function to decorate | nothing |
 | `io_manager_def` | `resource_defs` already sets it | `resource_defs={"io_manager": ...}` |
@@ -126,9 +126,9 @@ The error rows' spec has no code version, because Dagster reports an external as
 
 Passing a Collection raises `CollectionNotSupportedError` at decoration time.
 Declare one asset per member instead, each with the member's own schema.
-Then pass them to `dd.collection_checks`, which reports the Collection's collection filters as asset checks, as [Collection checks](collection-checks.qmd) shows.
+Then pass them to `dd.build_collection_checks`, which reports the Collection's collection filters as asset checks, as [Collection checks](collection-checks.qmd) shows.
 
-The parts under [Hand-wiring](hand-wiring.qmd) cannot validate a Collection either, because `validation_results` takes a single schema.
+The parts under [Hand-wiring](hand-wiring.qmd) cannot validate a Collection either, because `stream_results` takes a single schema.
 
 ## What the decorated function returns
 

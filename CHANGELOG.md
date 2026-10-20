@@ -15,6 +15,37 @@ This is what `schema_rules="per_rule"` did.
 Remove `schema_rules=`, `dd.SchemaRules` and `DAGSTER_DATAFRAMELY_SCHEMA_RULES`; nothing replaces them.
 [`docs/out-of-scope/schema-rules.md`](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-rules.md) has the reasons.
 
+**Every function that returns something is named with a verb.**
+A function is `build_*` when it returns a Dagster object, `get_*` when it derives a value from a schema, as dagster-dbt's `DagsterDbtTranslator` does, and `evaluate_*` when it reads data and reports pass or fail.
+`stream_results` takes dagster-dbt's verb for a function a hand-wired body uses with `yield from`.
+Nothing behaves differently, and no check name or check history moves.
+
+| 0.10 | 0.11 |
+| --- | --- |
+| `dd.collection_checks` | `dd.build_collection_checks` |
+| `dd.schema_checks` | `dd.build_rule_checks` |
+| `dd.error_rows_spec` | `dd.build_error_rows_spec` |
+| `dd.testing.direct_invocation_result(called)` | `dd.testing.DirectInvocationResult.from_invocation(called)` |
+| `dd.wiring.validation_results(schema, frame, valid_key=...)` | `dd.wiring.stream_results(schema, frame, asset_key=...)` |
+| `dd.wiring.AssetYield` | gone: write `Iterator[dg.MaterializeResult | dg.AssetCheckResult]` |
+| `dd.wiring.asset_check_specs` | `dd.wiring.build_asset_check_specs` |
+| `dd.wiring.asset_check_results` | `dd.wiring.evaluate_checks` |
+| `dd.wiring.asset_check_name` | `dd.wiring.get_check_name_for_rule` |
+| `dd.wiring.schema_code_version` | `dd.wiring.get_code_version` |
+| `dd.wiring.schema_metadata` | `dd.wiring.get_column_schema_metadata` |
+| `dd.wiring.table_schema` | `dd.wiring.get_table_schema` |
+| `dd.wiring.error_rows_frame` | `dd.wiring.get_error_rows` |
+| `dd.wiring.error_rows_path` | `dd.wiring.get_error_rows_path` |
+| `dd.wiring.delegating_writer` | `dd.wiring.build_io_manager_writer` |
+| `dd.wiring.file_writer` | `dd.wiring.build_file_writer` |
+
+**The failure rows a check shows are failure examples, Dataframely's word.**
+`max_failure_samples=` is `max_failure_examples=`, the variable is `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`, and the metadata key `dataframely/failed_sample` is `dataframely/failed_examples`.
+`row_sample` keeps its name, because Polars' word for the first rows of a table is a sample.
+
+**Two guide pages have new titles.**
+*Schema checks* is [Rule checks](https://ozanozbeker.com/dagster-dataframely/user-guide/rule-checks.html), and *Advanced: `filter=True`* is [Filtering error rows](https://ozanozbeker.com/dagster-dataframely/user-guide/filtering-error-rows.html).
+
 ## 0.10.0 - 2026-10-18
 
 ### Breaking in 0.10

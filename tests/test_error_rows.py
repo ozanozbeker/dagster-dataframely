@@ -1,6 +1,6 @@
 """The error rows' path, spec and key, and the two writers.
 
-The delegation tests run on a `UPathIOManager` and a `DbIOManager`, because one IO manager cannot show that `delegating_writer` works with any IO manager (ADR-0006).
+The delegation tests run on a `UPathIOManager` and a `DbIOManager`, because one IO manager cannot show that `build_io_manager_writer` works with any IO manager (ADR-0006).
 `test_upstream_characterization.py` checks the multi-partition path format against `UPathIOManager`'s own.
 """
 
@@ -26,16 +26,16 @@ from polars.testing import assert_frame_equal
 from upath import UPath
 
 import dagster_dataframely as dd
-from dagster_dataframely import _error_rows, error_rows_spec
+from dagster_dataframely import _error_rows, build_error_rows_spec
 from dagster_dataframely.errors import ErrorRowsKeyCollisionError, NoValidRowsError
 from dagster_dataframely.wiring import (
     ErrorRowsWriter,
-    asset_check_specs,
-    error_rows_frame,
-    error_rows_path,
-    file_writer,
+    build_asset_check_specs,
+    build_file_writer,
+    get_error_rows,
+    get_error_rows_path,
+    stream_results,
     validate_error_rows_key,
-    validation_results,
 )
 from tests.scenario import (
     WAREHOUSE_SCHEMA,
@@ -64,23 +64,23 @@ _GRID = dg.MultiPartitionsDefinition({
 def _invalid_rows() -> pl.DataFrame:
     """Return the error rows for `mixed_orders`."""
     _, failure = Orders.filter(mixed_orders())
-    return error_rows_frame(Orders, failure)
+    return get_error_rows(Orders, failure)
 
 
 class TestPath:
-    """The path `error_rows_path` returns."""
+    """The path `get_error_rows_path` returns."""
 
     def test_the_leaf_carries_the_suffix_so_a_shared_root_cannot_overwrite(
         self, tmp_path: Path
     ):
         """`UPathIOManager` can write the asset's own `orders.parquet` to the same directory."""
-        path = error_rows_path(_ORDERS, tmp_path)
+        path = get_error_rows_path(_ORDERS, tmp_path)
 
         assert path == UPath(tmp_path) / "orders__error_rows.parquet"
 
     def test_a_path_is_a_upath_whatever_the_root_arrived_as(self, tmp_path: Path):
         paths = [
-            error_rows_path(_ORDERS, error_rows_dir)
+            get_error_rows_path(_ORDERS, error_rows_dir)
             for error_rows_dir in (tmp_path, str(tmp_path), UPath(tmp_path))
         ]
 
@@ -90,18 +90,18 @@ class TestPath:
     def test_a_key_prefix_becomes_directories_and_only_the_name_is_suffixed(
         self, tmp_path: Path
     ):
-        path = error_rows_path(dg.AssetKey(["sales", "orders"]), tmp_path)
+        path = get_error_rows_path(dg.AssetKey(["sales", "orders"]), tmp_path)
 
         assert path == UPath(tmp_path) / "sales" / "orders__error_rows.parquet"
 
     def test_an_asset_name_carrying_a_dot_keeps_it(self, tmp_path: Path):
         """`Path.with_suffix` would turn `orders.v2` into `orders.parquet`, which another asset writes."""
-        path = error_rows_path(dg.AssetKey(["orders.v2"]), tmp_path)
+        path = get_error_rows_path(dg.AssetKey(["orders.v2"]), tmp_path)
 
         assert path == UPath(tmp_path) / "orders.v2__error_rows.parquet"
 
     def test_a_partition_becomes_a_file_under_the_leaf(self, tmp_path: Path):
-        path = error_rows_path(_ORDERS, tmp_path, "2026-01-02")
+        path = get_error_rows_path(_ORDERS, tmp_path, "2026-01-02")
 
         assert path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02.parquet"
 
@@ -110,7 +110,7 @@ class TestPath:
     ):
         key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
 
-        path = error_rows_path(_ORDERS, tmp_path, key)
+        path = get_error_rows_path(_ORDERS, tmp_path, key)
 
         assert (
             path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02" / "eu.parquet"
@@ -130,7 +130,7 @@ class TestPath:
     )
     def test_a_cloud_root_is_the_same_rule(self, partition_key: str | None, tail: str):
         """Each partition form, because a `/` in the tail is where an `s3://` path could differ."""
-        path = error_rows_path(
+        path = get_error_rows_path(
             dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse", partition_key
         )
 
@@ -149,7 +149,7 @@ class TestPath:
         self, tmp_path: Path, partition_key: str, tail: str
     ):
         """A partition key can come from data."""
-        path = error_rows_path(_ORDERS, tmp_path, partition_key)
+        path = get_error_rows_path(_ORDERS, tmp_path, partition_key)
 
         assert path == UPath(tmp_path) / f"orders__error_rows/{tail}.parquet"
         assert path.resolve().is_relative_to(UPath(tmp_path).resolve())
@@ -162,19 +162,19 @@ class TestPath:
     def test_an_error_rows_key_replaces_the_suffixed_key(
         self, tmp_path: Path, error_rows_key: dg.AssetKey | Sequence[str]
     ):
-        path = error_rows_path(
+        path = get_error_rows_path(
             _ORDERS, tmp_path, "2026-01-02", error_rows_key=error_rows_key
         )
 
         assert path == UPath(tmp_path) / "audit" / "orders" / "2026-01-02.parquet"
 
     def test_a_bare_string_error_rows_key_is_a_single_key_part(self, tmp_path: Path):
-        path = error_rows_path(_ORDERS, tmp_path, error_rows_key="rejected_orders")
+        path = get_error_rows_path(_ORDERS, tmp_path, error_rows_key="rejected_orders")
 
         assert path == UPath(tmp_path) / "rejected_orders.parquet"
 
 
-# `error_rows_path` keeps a `..` inside a name, as in `my..backup`; `test_upstream_characterization.py` pins it.
+# `get_error_rows_path` keeps a `..` inside a name, as in `my..backup`; `test_upstream_characterization.py` pins it.
 
 
 @dg.asset(key_prefix="sales", partitions_def=_DAYS)
@@ -197,17 +197,19 @@ def owned_orders() -> None:
 
 
 class TestSpec:
-    """The spec `error_rows_spec` returns."""
+    """The spec `build_error_rows_spec` returns."""
 
     def test_the_spec_is_keyed_as_the_file_is_named(self):
-        spec = error_rows_spec(Orders, orders)
+        spec = build_error_rows_spec(Orders, orders)
 
         assert spec.key == dg.AssetKey(["sales", "orders__error_rows"])
         # Each against the literal, because `_suffixed` builds both and comparing them would pass for any `_LEAF_SUFFIX`.
-        assert error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
+        assert (
+            get_error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
+        )
 
     def test_the_spec_depends_on_the_asset_the_invalid_rows_came_from(self):
-        (dep,) = error_rows_spec(Orders, orders).deps
+        (dep,) = build_error_rows_spec(Orders, orders).deps
 
         assert dep.asset_key == dg.AssetKey(["sales", "orders"])
 
@@ -219,10 +221,10 @@ class TestSpec:
     def test_the_spec_has_the_polars_kind(
         self, asset: dg.AssetsDefinition | dg.AssetKey
     ):
-        assert error_rows_spec(Orders, asset).kinds == {"polars"}
+        assert build_error_rows_spec(Orders, asset).kinds == {"polars"}
 
     def test_merge_attributes_adds_a_storage_kind_beside_polars(self):
-        spec = error_rows_spec(Orders, orders).merge_attributes(kinds={"duckdb"})
+        spec = build_error_rows_spec(Orders, orders).merge_attributes(kinds={"duckdb"})
 
         assert spec.kinds == {"polars", "duckdb"}
 
@@ -232,27 +234,27 @@ class TestSpec:
             return pl.DataFrame()
 
         assert versioned.get_asset_spec().code_version is not None
-        assert error_rows_spec(Orders, versioned).code_version is None
+        assert build_error_rows_spec(Orders, versioned).code_version is None
 
     def test_the_spec_takes_the_partitions_off_the_definition(self):
-        assert error_rows_spec(Orders, orders).partitions_def == _DAYS
+        assert build_error_rows_spec(Orders, orders).partitions_def == _DAYS
 
     def test_the_spec_takes_the_group_off_the_definition(self):
-        assert error_rows_spec(Orders, grouped_orders).group_name == "sales"
+        assert build_error_rows_spec(Orders, grouped_orders).group_name == "sales"
 
     def test_a_group_name_overrides_the_definitions_group(self):
-        spec = error_rows_spec(Orders, grouped_orders, group_name="error_rows")
+        spec = build_error_rows_spec(Orders, grouped_orders, group_name="error_rows")
 
         assert spec.group_name == "error_rows"
 
     def test_the_error_rows_is_in_its_parents_group_in_the_asset_graph(self):
-        spec = error_rows_spec(Orders, grouped_orders)
+        spec = build_error_rows_spec(Orders, grouped_orders)
         graph = dg.Definitions(assets=[grouped_orders, spec]).resolve_asset_graph()
 
         assert graph.get(spec.key).group_name == "sales"
 
     def test_the_spec_takes_the_owners_and_tags_off_the_definition(self):
-        spec = error_rows_spec(Orders, owned_orders)
+        spec = build_error_rows_spec(Orders, owned_orders)
 
         assert spec.owners == ["team:marketing"]
         assert spec.tags == {
@@ -262,23 +264,23 @@ class TestSpec:
         }
 
     def test_the_spec_keeps_none_of_the_definitions_other_kinds(self):
-        spec = error_rows_spec(Orders, owned_orders)
+        spec = build_error_rows_spec(Orders, owned_orders)
 
         assert spec.kinds == {"polars"}
         assert "dagster/kind/parquet" not in spec.tags
 
     def test_owners_replaces_the_definitions_owners(self):
-        spec = error_rows_spec(Orders, owned_orders, owners=["team:data"])
+        spec = build_error_rows_spec(Orders, owned_orders, owners=["team:data"])
 
         assert spec.owners == ["team:data"]
 
     def test_tags_replaces_the_definitions_tags(self):
-        spec = error_rows_spec(Orders, owned_orders, tags={"tier": "silver"})
+        spec = build_error_rows_spec(Orders, owned_orders, tags={"tier": "silver"})
 
         assert spec.tags == {"tier": "silver", "dagster/kind/polars": ""}
 
     def test_empty_owners_and_tags_clear_the_definitions(self):
-        spec = error_rows_spec(Orders, owned_orders, owners=[], tags={})
+        spec = build_error_rows_spec(Orders, owned_orders, owners=[], tags={})
 
         assert spec.owners == []
         assert spec.tags == {"dagster/kind/polars": ""}
@@ -286,7 +288,7 @@ class TestSpec:
     def test_the_error_rows_have_their_parents_owners_and_tags_in_the_asset_graph(
         self,
     ):
-        spec = error_rows_spec(Orders, owned_orders)
+        spec = build_error_rows_spec(Orders, owned_orders)
         graph = dg.Definitions(assets=[owned_orders, spec]).resolve_asset_graph()
         node = graph.get(spec.key)
 
@@ -295,13 +297,13 @@ class TestSpec:
         assert node.kinds == {"polars"}
 
     def test_the_description_names_the_asset_the_rows_came_from(self):
-        description = error_rows_spec(Orders, orders).description
+        description = build_error_rows_spec(Orders, orders).description
 
         assert description is not None
         assert "sales/orders" in description
 
     def test_the_columns_tab_states_no_constraint(self):
-        table = error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+        table = build_error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
 
         assert isinstance(table, dg.TableSchema)
         assert table.constraints == dg.TableConstraints(other=[])
@@ -311,7 +313,7 @@ class TestSpec:
         )
 
     def test_the_columns_tab_carries_a_column_for_every_rule(self):
-        table = error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+        table = build_error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
         names = [column.name for column in table.columns]
 
         assert names[: len(Orders.columns())] == list(Orders.columns())
@@ -323,7 +325,7 @@ class TestSpec:
         written = [
             name for name in _invalid_rows().columns if name.startswith("dy_rule__")
         ]
-        table = error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
+        table = build_error_rows_spec(Orders, orders).metadata[_COLUMN_SCHEMA_KEY]
         assert isinstance(table, dg.TableSchema)
 
         declared = [
@@ -333,7 +335,7 @@ class TestSpec:
         ]
         checks = [
             spec.name
-            for spec in asset_check_specs(Orders, asset=_ORDERS)
+            for spec in build_asset_check_specs(Orders, asset=_ORDERS)
             if spec.name.startswith("dy_rule__")
         ]
 
@@ -349,13 +351,13 @@ class TestSpec:
         self,
         form: dg.AssetKey | Sequence[str],
     ):
-        assert error_rows_spec(Orders, form).key == dg.AssetKey([
+        assert build_error_rows_spec(Orders, form).key == dg.AssetKey([
             "sales",
             "orders__error_rows",
         ])
 
     def test_a_bare_string_is_a_single_key_part(self):
-        assert error_rows_spec(Orders, "orders").key == dg.AssetKey([
+        assert build_error_rows_spec(Orders, "orders").key == dg.AssetKey([
             "orders__error_rows"
         ])
 
@@ -368,7 +370,7 @@ class TestSpec:
         self,
         form: dg.AssetKey | Sequence[str],
     ):
-        assert error_rows_spec(Orders, form).partitions_def is None
+        assert build_error_rows_spec(Orders, form).partitions_def is None
 
     @pytest.mark.parametrize(
         "form",
@@ -379,9 +381,9 @@ class TestSpec:
         self,
         form: dg.AssetKey | Sequence[str],
     ):
-        assert error_rows_spec(Orders, form, partitions_def=_DAYS).partitions_def == (
-            _DAYS
-        )
+        assert build_error_rows_spec(
+            Orders, form, partitions_def=_DAYS
+        ).partitions_def == (_DAYS)
 
     @pytest.mark.parametrize(
         "form",
@@ -391,22 +393,25 @@ class TestSpec:
     def test_a_key_form_takes_the_group_it_is_given(
         self, form: dg.AssetKey | Sequence[str]
     ):
-        assert error_rows_spec(Orders, form, group_name="silver").group_name == "silver"
+        assert (
+            build_error_rows_spec(Orders, form, group_name="silver").group_name
+            == "silver"
+        )
 
     def test_a_key_form_with_no_group_is_in_the_default_group(self):
-        spec = error_rows_spec(Orders, "orders")
+        spec = build_error_rows_spec(Orders, "orders")
         graph = dg.Definitions(assets=[spec]).resolve_asset_graph()
 
         assert graph.get(spec.key).group_name == "default"
 
     def test_a_key_form_has_no_owners_or_tags_by_default(self):
-        spec = error_rows_spec(Orders, "orders")
+        spec = build_error_rows_spec(Orders, "orders")
 
         assert spec.owners == []
         assert spec.tags == {"dagster/kind/polars": ""}
 
     def test_a_key_form_takes_the_owners_and_tags_it_is_given(self):
-        spec = error_rows_spec(
+        spec = build_error_rows_spec(
             Orders, "orders", owners=["team:data"], tags={"tier": "gold"}
         )
 
@@ -419,7 +424,7 @@ class TestSpec:
         @dg.asset(io_manager_key="warehouse")
         def wired() -> None: ...
 
-        spec = error_rows_spec(Orders, wired)
+        spec = build_error_rows_spec(Orders, wired)
 
         assert spec.key == dg.AssetKey(["wired__error_rows"])
         assert spec.metadata["dagster/io_manager_key"] == "warehouse"
@@ -431,18 +436,18 @@ class TestSpec:
         def kept() -> pl.DataFrame:
             return pl.DataFrame()
 
-        metadata = error_rows_spec(Orders, kept).metadata
+        metadata = build_error_rows_spec(Orders, kept).metadata
 
         assert metadata["schema"] == "sales"
         assert (
             metadata[_COLUMN_SCHEMA_KEY]
-            == (error_rows_spec(Orders, "kept").metadata[_COLUMN_SCHEMA_KEY])
+            == (build_error_rows_spec(Orders, "kept").metadata[_COLUMN_SCHEMA_KEY])
         )
         assert not any(name.startswith("dataframely/") for name in metadata)
 
     def test_a_definition_and_a_partitions_def_together_raise(self):
         with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-            error_rows_spec(Orders, orders, partitions_def=_DAYS)
+            build_error_rows_spec(Orders, orders, partitions_def=_DAYS)
 
         assert "partitions_def" in str(raised.value)
         assert "sales/orders" in str(raised.value)
@@ -454,9 +459,9 @@ def _loaded(
     partitions_def: dg.PartitionsDefinition | None = None,
     partition_key: str | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Write an error-rows file at `error_rows_path`, then return what a downstream asset loads from it and the rows it holds."""
+    """Write an error-rows file at `get_error_rows_path`, then return what a downstream asset loads from it and the rows it holds."""
     invalid = _invalid_rows()
-    path = error_rows_path(_ORDERS, tmp_path, partition_key)
+    path = get_error_rows_path(_ORDERS, tmp_path, partition_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as file:
         invalid.write_parquet(file)
@@ -467,7 +472,7 @@ def _loaded(
         loaded["rows"] = orders__error_rows
 
     result = dg.materialize(
-        [audit, error_rows_spec(Orders, "orders", partitions_def=partitions_def)],
+        [audit, build_error_rows_spec(Orders, "orders", partitions_def=partitions_def)],
         partition_key=partition_key,
         resources=storage(tmp_path),
     )
@@ -565,7 +570,7 @@ def _run(
 
 
 class TestDelegatingWriter:
-    """The writer `delegating_writer` returns, which writes through the asset's IO manager."""
+    """The writer `build_io_manager_writer` returns, which writes through the asset's IO manager."""
 
     @pytest.mark.parametrize(("frame", "invalid", "aborts"), _WITH_INVALID_ROWS)
     @pytest.mark.parametrize("partitioned", [False, True], ids=["whole", "partitioned"])
@@ -674,7 +679,7 @@ class TestDelegatingWriter:
     def test_the_step_probe_does_not_widen_to_the_whole_writer(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """A `DagsterInvalidPropertyError` from `delegating_writer` fails the run instead of switching to `file_writer`."""
+        """A `DagsterInvalidPropertyError` from `build_io_manager_writer` fails the run instead of switching to `build_file_writer`."""
         error_rows_dir = tmp_path / "filtering"
         monkeypatch.setenv("DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR", str(error_rows_dir))
 
@@ -682,7 +687,7 @@ class TestDelegatingWriter:
             not_the_step = "asset_partitions_time_window"
             raise DagsterInvalidPropertyError(not_the_step)
 
-        monkeypatch.setattr(_error_rows, "delegating_writer", raises)
+        monkeypatch.setattr(_error_rows, "build_io_manager_writer", raises)
 
         result = dg.materialize(
             [_delegating(mixed_orders, partitioned=False)],
@@ -807,7 +812,7 @@ class TestOverrides:
             ({}, {"schema": "configured"}, "configured"),
             ({"schema": "sales"}, {"schema": "configured"}, "sales"),
         ],
-        ids=["key_prefix", "manager_config", "schema_metadata"],
+        ids=["key_prefix", "manager_config", "get_column_schema_metadata"],
     )
     def test_a_database_reads_the_schema_from_metadata_then_config_then_key_prefix(
         self,
@@ -873,7 +878,7 @@ class TestMaterialization:
         asset = _delegating(frame, partitioned=False)
 
         result = dg.materialize(
-            [asset, error_rows_spec(Orders, asset)],
+            [asset, build_error_rows_spec(Orders, asset)],
             resources=storage(tmp_path),
             raise_on_error=False,
         )
@@ -892,7 +897,7 @@ class TestMaterialization:
         asset = _delegating(mixed_orders, partitioned=True)
 
         result = dg.materialize(
-            [asset, error_rows_spec(Orders, asset)],
+            [asset, build_error_rows_spec(Orders, asset)],
             resources=storage(tmp_path),
             partition_key=_DAY,
         )
@@ -929,7 +934,7 @@ class TestMaterialization:
         asset = _delegating(mixed_orders, partitioned=False, **overrides)
 
         result = dg.materialize(
-            [asset, error_rows_spec(Orders, asset)], resources=resources(tmp_path)
+            [asset, build_error_rows_spec(Orders, asset)], resources=resources(tmp_path)
         )
         (materialization,) = _error_rows_materializations(
             result.get_asset_materialization_events()
@@ -941,7 +946,7 @@ class TestMaterialization:
         self, tmp_path: Path
     ):
         asset = _delegating(mixed_orders, partitioned=False)
-        spec = error_rows_spec(Orders, asset)
+        spec = build_error_rows_spec(Orders, asset)
 
         @dg.asset(deps=[spec], automation_condition=dg.AutomationCondition.eager())
         def triage() -> None: ...
@@ -1019,7 +1024,10 @@ _LOADS = [
         id="the_assets_io_manager",
     ),
     pytest.param(
-        {"metadata": {"schema": "sales"}}, warehouse, None, id="schema_metadata"
+        {"metadata": {"schema": "sales"}},
+        warehouse,
+        None,
+        id="get_column_schema_metadata",
     ),
     pytest.param(
         # A cast, so the partition's date matches the rows' 12:00 timestamps.
@@ -1042,7 +1050,7 @@ _LOADS = [
 
 
 class TestLoadedErrorRows:
-    """The error rows a downstream asset loads through `error_rows_spec(schema, definition)` after a run wrote them."""
+    """The error rows a downstream asset loads through `build_error_rows_spec(schema, definition)` after a run wrote them."""
 
     @pytest.mark.parametrize(("arguments", "resources", "partition_key"), _LOADS)
     def test_a_downstream_asset_loads_the_rows_from_where_the_writer_wrote_them(
@@ -1064,7 +1072,7 @@ class TestLoadedErrorRows:
         def orders() -> pl.DataFrame:
             return _ledger()
 
-        spec = error_rows_spec(_Ledger, orders)
+        spec = build_error_rows_spec(_Ledger, orders)
 
         @dg.asset(
             ins={"rows": dg.AssetIn(spec.key)}, partitions_def=orders.partitions_def
@@ -1081,15 +1089,15 @@ class TestLoadedErrorRows:
 
 
 class TestFileWriter:
-    """The writer `file_writer` returns."""
+    """The writer `build_file_writer` returns."""
 
     def test_the_file_writer_writes_where_the_path_rule_says(self, tmp_path: Path):
         events = list(
-            validation_results(
+            stream_results(
                 Orders,
                 mixed_orders(),
-                valid_key=_ORDERS,
-                error_rows_writer=file_writer(_ORDERS, tmp_path),
+                asset_key=_ORDERS,
+                error_rows_writer=build_file_writer(_ORDERS, tmp_path),
             )
         )
         (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
@@ -1103,19 +1111,19 @@ class TestFileWriter:
     def test_the_file_writer_creates_the_directories_it_needs(self, tmp_path: Path):
         key = dg.AssetKey(["sales", "eu", "orders"])
 
-        file_writer(key, tmp_path)(_invalid_rows())
+        build_file_writer(key, tmp_path)(_invalid_rows())
 
         assert (tmp_path / "sales" / "eu" / "orders__error_rows.parquet").exists()
 
     def test_the_file_writer_puts_a_partition_under_the_leaf(self, tmp_path: Path):
-        file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
+        build_file_writer(_ORDERS, tmp_path, "2026-01-02")(_invalid_rows())
 
         assert (tmp_path / "orders__error_rows" / "2026-01-02.parquet").exists()
 
     def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
-        address = file_writer(_ORDERS, tmp_path, error_rows_key=["audit", "orders"])(
-            _invalid_rows()
-        )
+        address = build_file_writer(
+            _ORDERS, tmp_path, error_rows_key=["audit", "orders"]
+        )(_invalid_rows())
 
         assert address == str(tmp_path / "audit" / "orders.parquet")
         assert_frame_equal(pl.read_parquet(address), _invalid_rows())
@@ -1123,7 +1131,7 @@ class TestFileWriter:
     def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(
         self, tmp_path: Path
     ):
-        file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
+        build_file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
 
         assert list(tmp_path.iterdir()) == []
 
@@ -1248,9 +1256,9 @@ class TestReservedKey:
             )
 
     def test_a_error_rows_spec_stands_for_the_error_rows_rather_than_competing(self):
-        """`error_rows_spec` has the error rows' key but is not executable, so it does not collide."""
+        """`build_error_rows_spec` has the error rows' key but is not executable, so it does not collide."""
         asset = _delegating(mixed_orders, partitioned=False)
-        defs = dg.Definitions(assets=[asset, error_rows_spec(Orders, asset)])
+        defs = dg.Definitions(assets=[asset, build_error_rows_spec(Orders, asset)])
         repository = defs.get_repository_def()
 
         validate_error_rows_key(

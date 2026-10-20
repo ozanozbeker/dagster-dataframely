@@ -38,7 +38,7 @@ The schema's docstring takes precedence over the function's, because it describe
 Assets that share a schema share its description, and `description=` gives one of them its own.
 `dd.asset` reads the schema's own docstring only, and ignores one inherited from a parent class, including `dy.Schema`'s.
 
-The spec from `error_rows_spec` has its own description: `Rows from <asset> that failed an 'error' rule, with one column per rule.`
+The spec from `build_error_rows_spec` has its own description: `Rows from <asset> that failed an 'error' rule, with one column per rule.`
 
 ## Where a check's text comes from
 
@@ -94,15 +94,15 @@ There are three.
 The check names are the column-schema check `dy_schema__columns`, each rule's check `dy_rule__<rule>`, the collapsed checks `dy_col__<column>`, and each collection filter's check `dy_filter__<name>`.
 A check name becomes an op output name, which Dagster checks against `^[A-Za-z0-9_]+$`.
 So a check name cannot contain a slash.
-A collapsed check's sample also has a `dy_rule` column, which names the rule each row failed.
+A collapsed check's failure examples also have a `dy_rule` column, which names the rule each row failed.
 
 A rule's check name is `dy_rule__` plus the name Dataframely gives the rule, with `|` replaced by `__`: `amount|min` becomes `dy_rule__amount__min`.
-`dd.wiring.asset_check_name("amount|min")` returns that check name, so a test does not have to build it by hand.
+`dd.wiring.get_check_name_for_rule("amount|min")` returns that check name, so a test does not have to build it by hand.
 
 A collection filter's check name is `dy_filter__` plus the collection filter's name, as [Collection checks](collection-checks.qmd) shows.
 
 **`dataframely/`** starts every metadata key this package names, on a materialization, a definition or a check result.
-A check result can have `dataframely/rule`, `dataframely/rule_expr`, `dataframely/rules`, `dataframely/filter`, `dataframely/failed_row_count`, `dataframely/failed_sample` and `dataframely/column_schema_errors`.
+A check result can have `dataframely/rule`, `dataframely/rule_expr`, `dataframely/rules`, `dataframely/filter`, `dataframely/failed_row_count`, `dataframely/failed_examples` and `dataframely/column_schema_errors`.
 A metadata key can contain a slash, so this namespace has the same form as Dagster's own `dagster/`.
 This package's keys then sort together, apart from Dagster's keys and your IO manager's.
 
@@ -125,4 +125,4 @@ Before the decorated function runs, a run of an asset with `filter=True` checks 
 If one does, the run raises `ErrorRowsKeyCollisionError`.
 
 No setting changes any of the three.
-`error_rows_key` replaces the third for one asset, as [Advanced: `filter=True`](filtering-error-rows.qmd#two-keywords-change-the-key-and-the-io-manager) describes.
+`error_rows_key` replaces the third for one asset, as [Filtering error rows](filtering-error-rows.qmd#two-keywords-change-the-key-and-the-io-manager) describes.

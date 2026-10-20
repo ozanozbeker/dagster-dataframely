@@ -1,13 +1,14 @@
 """What a decorated function may return, and how a returned `dg.MaterializeResult` changes the materialization.
 
-Both functions wrap `validation_results`, which takes only a frame.
+Both functions wrap `stream_results`, which takes only a frame.
 Returning `dg.MaterializeResult(value=None)` raises instead of skipping, because a skipped run writes no materialization to copy the result's fields onto.
 """
+
+from collections.abc import Iterator
 
 import dagster as dg
 import polars as pl
 
-from dagster_dataframely._runtime import AssetYield
 from dagster_dataframely.errors import (
     MaterializeResultFieldError,
     MaterializeResultValueError,
@@ -36,11 +37,11 @@ def frame_and_result(
 
 
 def with_returned_fields(
-    results: AssetYield,
+    results: Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult],
     returned_result: ReturnedResult | None,
     *,
-    valid_key: dg.AssetKey,
-) -> AssetYield:
+    asset_key: dg.AssetKey,
+) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
     """Copy the returned result's `metadata`, `data_version` and `tags` onto the asset's materialization."""
     if returned_result is None:
         yield from results
@@ -48,7 +49,7 @@ def with_returned_fields(
     for result in results:
         if (
             not isinstance(result, dg.MaterializeResult)
-            or result.asset_key != valid_key
+            or result.asset_key != asset_key
         ):
             yield result
             continue

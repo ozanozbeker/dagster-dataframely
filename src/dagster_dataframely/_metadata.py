@@ -23,7 +23,7 @@ def _tags(column: dy.Column) -> dict[str, str] | None:
     return tags or None
 
 
-def table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
+def get_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     """Return the schema as the `dg.TableSchema` that Dagster's Columns tab shows.
 
     Each column has its dtype, description, nullability, uniqueness and column constraints. Its tags come from `dy.Column(metadata=...)`, with each value converted to a string, except the `dagster_dataframely` key, whose severities the checks show. The primary key is a table constraint, so only `unique=True` marks a key column unique.
@@ -89,12 +89,12 @@ def _error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
     )
 
 
-def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
+def get_column_schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     """Return the metadata that fills an asset's Columns tab from the schema.
 
     Returns
     -------
-    A one-entry mapping from `dagster/column_schema` to `table_schema(schema)`, to pass to `dg.asset(metadata=...)` and, in a run, to `context.add_asset_metadata`.
+    A one-entry mapping from `dagster/column_schema` to `get_table_schema(schema)`, to pass to `dg.asset(metadata=...)` and, in a run, to `context.add_asset_metadata`.
 
     Raises
     ------
@@ -107,7 +107,7 @@ def schema_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:
     InvalidSeverityError
         The schema declares a severity this package cannot read.
     """
-    return {_COLUMN_SCHEMA_KEY: table_schema(schema)}
+    return {_COLUMN_SCHEMA_KEY: get_table_schema(schema)}
 
 
 def error_rows_metadata(schema: type[dy.Schema]) -> dict[str, dg.TableSchema]:

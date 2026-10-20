@@ -9,10 +9,10 @@ import dagster_dataframely as dd
 
 _PUBLIC = {
     "asset",
-    "collection_checks",
-    "error_rows_spec",
+    "build_collection_checks",
+    "build_error_rows_spec",
     "errors",
-    "schema_checks",
+    "build_rule_checks",
     "testing",
     "wiring",
     # At the root rather than in a namespace, because annotated code uses them often.
@@ -20,26 +20,25 @@ _PUBLIC = {
 }
 
 _WIRING = {
-    "AssetYield",
     "ErrorRowsWriter",
-    "asset_check_name",
-    "asset_check_results",
-    "asset_check_specs",
-    "delegating_writer",
-    "file_writer",
-    "validation_results",
-    "error_rows_frame",
-    "error_rows_path",
-    "schema_code_version",
-    "schema_metadata",
-    "table_schema",
+    "get_check_name_for_rule",
+    "evaluate_checks",
+    "build_asset_check_specs",
+    "build_io_manager_writer",
+    "build_file_writer",
+    "stream_results",
+    "get_error_rows",
+    "get_error_rows_path",
+    "get_code_version",
+    "get_column_schema_metadata",
+    "get_table_schema",
     "validate_error_rows_key",
 }
 
-_TESTING = {"DirectInvocationResult", "direct_invocation_result"}
+_TESTING = {"DirectInvocationResult"}
 
 # Imported by `dd.testing`, and listed so a new import fails a test.
-_TESTING_IMPORTS = {"Iterable", "dataclass", "dg", "pl"}
+_TESTING_IMPORTS = {"Iterable", "Self", "dataclass", "dg", "pl"}
 
 # Imported by `dd.errors` for its annotations, and listed so a third import fails a test.
 _ERROR_IMPORTS = {"Mapping", "Sequence"}
@@ -72,7 +71,7 @@ def test_the_error_module_exports_exactly_its_family():
     assert set(dd.errors.__all__) == _ERRORS
 
 
-def test_the_testing_module_exports_exactly_the_record_and_its_function():
+def test_the_testing_module_exports_exactly_the_record():
     assert set(dd.testing.__all__) == _TESTING
 
 

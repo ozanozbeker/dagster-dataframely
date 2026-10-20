@@ -21,25 +21,25 @@ Every message names what failed and how to fix it.
 
 | error | raised | what to do |
 | --- | --- | --- |
-| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema, then pass them to `dd.collection_checks` |
-| `InvalidMembersError` | when `dd.collection_checks` is called | map every required member, and only the Collection's members, to an unpartitioned asset; the message lists the members |
+| `CollectionNotSupportedError` | at decoration | pass a `dy.Schema`; declare one asset per Collection member, each with the member's own schema, then pass them to `dd.build_collection_checks` |
+| `InvalidMembersError` | when `dd.build_collection_checks` is called | map every required member, and only the Collection's members, to an unpartitioned asset; the message lists the members |
 | `FailurePropagationError` | the same | remove `propagate_row_failures=True` from the member, or write a collection filter that states the condition |
 | `ReservedColumnError` | at decoration, and by every public function that takes a schema | rename the column that starts with `dy_` |
 | `InvalidColumnNameError` | the same | rename the column, or change the `alias=` that sets its name, so the name uses only `A-Za-z0-9_`, the characters Dagster allows in a check name |
 | `CheckNameCollisionError` | the same | rename one of the two rules that produce the same check name |
-| `InvalidSeverityError` | the same, and when `dd.collection_checks` is called | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms, and [Collection checks](collection-checks.qmd#severity) covers a Collection's |
+| `InvalidSeverityError` | the same, and when `dd.build_collection_checks` is called | fix the severity declaration the message names; [Rule severity](rule-severity.qmd) lists the forms, and [Collection checks](collection-checks.qmd#severity) covers a Collection's |
 | `InvalidSettingError` | when the package resolves the setting | fix the value at the source the message names |
-| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.schema_metadata` |
+| `MaterializeResultValueError` | before the column-schema check | set `value=` to the frame; or return the frame and call `context.add_asset_metadata`; or write a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` |
 | `MaterializeResultFieldError` | the same | remove `asset_key=` or `check_results=`, which the decorator sets itself |
-| `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body; for `dd.schema_checks`, declare the dtype the table stores, or change what writes the table |
+| `ColumnSchemaError` | after the column-schema check fails | fix the function that produced the frame, or cast with `Schema.cast` in the asset body; for `dd.build_rule_checks`, declare the dtype the table stores, or change what writes the table |
 | `ValidationAbortError` | after `Schema.filter`, when a row failed an `"error"` rule and the asset has `filter=False` | fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule `"warn"`, or drop them in the asset body |
 | `NoValidRowsError` | after `Schema.filter`, when every row failed an `"error"` rule and the asset has `filter=True` | read the error rows at the address in the message |
-| `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `error_rows_spec` |
+| `ErrorRowsKeyCollisionError` | before the decorated function runs, on every run of an asset with `filter=True` | rename the other asset, set `error_rows_key` to another key, or remove `filter=True`; if the other asset is your own table for the error rows, delete it and use `build_error_rows_spec` |
 | `ErrorRowsDirError` | under direct invocation only, when there are error rows to write | set `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or run the asset |
 
 The package also raises two of Dagster's errors.
 `dd.asset` raises `dg.DagsterInvalidDefinitionError` at decoration when `error_rows_key` or `error_rows_io_manager_key` is set and `filter` is `False`.
-`error_rows_spec` raises `dg.DagsterInvariantViolationError` when it receives both an asset definition and a `partitions_def`.
+`build_error_rows_spec` raises `dg.DagsterInvariantViolationError` when it receives both an asset definition and a `partitions_def`.
 
 `ColumnSchemaError` names every mismatched column at once, with its expected and actual dtype.
 The failing check's `dataframely/column_schema_errors` table lists the same columns.
@@ -64,7 +64,7 @@ So every run of `orders` checks for such an asset before the decorated function 
 ErrorRowsKeyCollisionError: 'orders' declares `filter=True`, so its error rows are written to
 'orders__error_rows', which an asset in this code location already materializes. Rename that asset,
 set `error_rows_key` on 'orders' to another key, or remove `filter=True` from 'orders'. If that asset
-is your own table for the error rows, delete it and use `error_rows_spec` instead, which adds the
+is your own table for the error rows, delete it and use `build_error_rows_spec` instead, which adds the
 error rows themselves to the asset graph.
 ```
 

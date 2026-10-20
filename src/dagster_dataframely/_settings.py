@@ -102,8 +102,8 @@ STATISTICS = _Setting[bool](
     parse=_flag,
 )
 
-MAX_FAILURE_SAMPLES = _Setting[int](
-    name="max_failure_samples",
+MAX_FAILURE_EXAMPLES = _Setting[int](
+    name="max_failure_examples",
     default=5,
     allowed="non-negative integers",
     accepts=_non_negative,

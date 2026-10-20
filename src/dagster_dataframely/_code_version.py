@@ -1,4 +1,4 @@
-"""`schema_code_version` derives the code version `dd.asset` sets from a schema, as dagster-dbt's `default_code_version_fn` derives one from a model's SQL.
+"""`get_code_version` derives the code version `dd.asset` sets from a schema, as dagster-dbt's `default_code_version_fn` derives one from a model's SQL.
 
 It hashes each rule's `meta.serialize` output, not its repr, because `str(pl.Expr)` truncates a long literal.
 A column's repr also differs between processes, because it prints a function's memory address.
@@ -21,7 +21,7 @@ def _serialized_expression(rule: DescribedRule) -> bytes | str:
         return str(expr)
 
 
-def schema_code_version(schema: type[dy.Schema]) -> str:
+def get_code_version(schema: type[dy.Schema]) -> str:
     """Return the sha1 hexdigest of the schema's columns and rules, which `dd.asset` uses as the asset's code version.
 
     Returns

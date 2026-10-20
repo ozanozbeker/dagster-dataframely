@@ -18,11 +18,11 @@ The column-schema check runs first, then `Schema.filter`.
 Each rule has a severity, `"error"` or `"warn"`, and a rule is `"error"` unless the schema declares `"warn"` ([Rule severity](rule-severity.qmd)).
 
 This page covers the default, `filter=False`.
-[Advanced: `filter=True`](filtering-error-rows.qmd) covers what `filter=True` changes.
+[Filtering error rows](filtering-error-rows.qmd) covers what `filter=True` changes.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
-%%| label: validation-outcomes
+%%| label: validation-runs
 flowchart TD
     F["the decorated function returns"] --> N{"None?"}
     N -- yes --> SKIP["skip: nothing written<br/>every check passes<br/>run succeeds"]
@@ -45,8 +45,8 @@ Otherwise it writes every row, including the rows that failed only `"warn"` rule
 | a row that failed an `"error"` rule | not written | each `"error"` rule's check at `ERROR`, each `"warn"` rule's check at `WARN` | fails, `ValidationAbortError` |
 | `None`, meaning no source data | skipped | none | succeeds |
 
-Each row of the table is one of the five outcomes a run can have.
-A failing check has its rule's severity in every outcome, so a check's history shows only its own rule's failures.
+Each row of the table is one of the five kinds of run.
+A failing check has its rule's severity in every kind of run, so a check's history shows only its own rule's failures.
 When the column-schema check fails, its severity is always `ERROR`.
 
 ![The Checks tab of `finance_orders`, which has `filter=False`, after some rows failed an `"error"` rule. The selected check is blocking, and it failed.](../assets/images/severity-error.png)

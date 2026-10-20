@@ -37,4 +37,4 @@ def regional_orders(
     return _data.orders_in(raw_orders, day, cell["region"])
 
 
-regional_orders__error_rows = dd.error_rows_spec(Orders, regional_orders)
+regional_orders__error_rows = dd.build_error_rows_spec(Orders, regional_orders)

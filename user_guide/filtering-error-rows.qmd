@@ -1,5 +1,5 @@
 ---
-title: "Advanced: `filter=True`"
+title: "Filtering error rows"
 ---
 
 ```{python}
@@ -34,7 +34,7 @@ It writes every other row to the asset's table, and the run succeeds.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}
-%%| label: filtering-error-rows-outcomes
+%%| label: filtering-error-rows-runs
 flowchart TD
     F["the decorated function returns"] --> N{"None?"}
     N -- yes --> SKIP["skip: nothing written<br/>every check passes<br/>run succeeds"]
@@ -96,7 +96,7 @@ Nearly every first-party IO manager subclasses one of the two.
 The error rows have the original columns, then one `String` rule column per rule, with `valid`, `invalid` or `unknown` in each row.
 A rule column has the check name its rule gets at the default `rule` granularity, such as `dy_rule__amount__min`.
 At `column` granularity, use the rule column, not a check, to find the rows that failed a rule.
-Check samples have at most `max_failure_samples` rows per rule, so the rule columns are the only complete record of which rules each row failed.
+A check's failure examples have at most `max_failure_examples` rows per rule, so the rule columns are the only complete record of which rules each row failed.
 
 The error rows are not in the format `FailureInfo.write_parquet` writes, so `FailureInfo.read_parquet` and `FailureInfo.scan_parquet` cannot read them.
 Both read the names of the rule columns from the parquet metadata key `rule_columns`.
@@ -146,7 +146,11 @@ def audited_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 defs = dg.Definitions(
-    assets=[raw_orders, audited_orders, dd.error_rows_spec(Orders, audited_orders)],
+    assets=[
+        raw_orders,
+        audited_orders,
+        dd.build_error_rows_spec(Orders, audited_orders),
+    ],
     resources={
         "io_manager": PolarsParquetIOManager(base_dir="data/warehouse"),
         "audit": DuckDBPolarsIOManager(database="data/warehouse.duckdb"),
@@ -214,22 +218,22 @@ The run also raises when that key is the asset's own key.
 It has no IO manager, so `error_rows_io_manager_key` changes nothing there.
 Dagster still checks the asset's required resources, so pass a value for that resource key, such as `dg.build_asset_context(resources={"audit": None})`.
 
-## `error_rows_spec` adds the error rows to the asset graph
+## `build_error_rows_spec` adds the error rows to the asset graph
 
 They are a record of a run.
-They are not in the asset graph, so no asset can depend on them until you add them with `error_rows_spec`:
+They are not in the asset graph, so no asset can depend on them until you add them with `build_error_rows_spec`:
 
 ```{python}
 #| label: filtering-error-rows-4
 defs = dg.Definitions(
-    assets=[raw_orders, orders, dd.error_rows_spec(Orders, orders)],
+    assets=[raw_orders, orders, dd.build_error_rows_spec(Orders, orders)],
     resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
 )
 ```
 
 ![The lineage view shows the error rows' node. Its one edge comes from `marketing_orders`, the asset with `filter=True`, not from the upstream `raw_marketplace_orders`. Dagster draws the node with a dashed border because it is an external asset, and it shows the materialization that the step of `marketing_orders` logged.](../assets/images/error-rows-lineage.png)
 
-`error_rows_spec` returns a `dg.AssetSpec` keyed `orders__error_rows` that depends on `orders` and has its own Columns tab.
+`build_error_rows_spec` returns a `dg.AssetSpec` keyed `orders__error_rows` that depends on `orders` and has its own Columns tab.
 It has no compute function, because the decorator already writes the rows.
 It has the `polars` kind, as the asset does, but none of the asset's other kinds.
 To add a storage kind such as `duckdb`, call `.merge_attributes(kinds={"duckdb"})` on the spec.
@@ -240,7 +244,7 @@ It lists the schema's columns with their dtypes, descriptions and tags, then one
 The error rows can fail any of the schema's constraints, so a `not null` on a column full of nulls would be false.
 The primary key is absent too, because rows with a duplicate key are among the error rows.
 
-Pass `error_rows_spec` the asset definition, and the spec uses its partitions, its asset group, its owners and its tags.
+Pass `build_error_rows_spec` the asset definition, and the spec uses its partitions, its asset group, its owners and its tags.
 So the catalog lists the error rows in the same group as the asset.
 The spec drops the asset's `dagster/kind/` tags, because Dagster stores each kind as one of those tags.
 The spec also uses the error-rows key, the IO manager key and the definition metadata the writer used, so a downstream asset loads the rows from where they were written.
@@ -260,7 +264,7 @@ With an asset key, the error rows have the owners and tags these set, and the `p
 
 **With the spec, every write materializes the error rows.**
 The asset's own step logs the materialization after the IO manager writes the rows.
-It logs one for each outcome that writes them: a clean run's empty write, a run where some rows failed, and the write before `NoValidRowsError`.
+It logs one for each kind of run that writes them: a clean run's empty write, a run where some rows failed, and the write before `NoValidRowsError`.
 The materialization has the IO manager's metadata for the write, such as `path` or `dagster/table_name`, and the row count.
 The row count is under `dagster/partition_row_count` for a partition, and under `dagster/row_count` otherwise.
 
@@ -278,7 +282,7 @@ def marketplace_raw() -> pl.DataFrame:
 
 with tempfile.TemporaryDirectory() as tmp:
     result = dg.materialize(
-        [marketplace_raw, orders, dd.error_rows_spec(Orders, orders)],
+        [marketplace_raw, orders, dd.build_error_rows_spec(Orders, orders)],
         resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
     )
 
@@ -299,7 +303,7 @@ A run of `dg.materialize` or `execute_in_process` has no code location to read, 
 ## `error_rows_dir` is for calling, not running
 
 Direct invocation has no step, so there is no IO manager to write the error rows.
-Instead, `file_writer` writes them under the directory `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` sets.
+Instead, `build_file_writer` writes them under the directory `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` sets.
 A run does not use this directory.
 
 ```bash

@@ -6,37 +6,38 @@ With `filter=True` it still builds one `dg.asset`, not a `dg.multi_asset` with a
 
 import functools
 import inspect
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from typing import Any
 
 import dagster as dg
 import dataframely as dy
+import polars as pl
 
 # Dagster keeps both private; `tests/test_upstream_characterization.py` pins them.
 from dagster._core.definitions.assets.definition.asset_dep import CoercibleToAssetDep
 from dagster._core.definitions.decorators.op_decorator import is_context_provided
 
-from dagster_dataframely._checks import asset_check_specs
-from dagster_dataframely._code_version import schema_code_version
+from dagster_dataframely._checks import build_asset_check_specs
+from dagster_dataframely._code_version import get_code_version
 from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     error_rows_writer,
     validate_error_rows_key,
     writer_metadata,
 )
-from dagster_dataframely._metadata import schema_metadata
+from dagster_dataframely._metadata import get_column_schema_metadata
 from dagster_dataframely._returns import (
     DecoratedReturn,
     frame_and_result,
     with_returned_fields,
 )
 from dagster_dataframely._rules import validate_namespace
-from dagster_dataframely._runtime import AssetYield, validation_results
+from dagster_dataframely._runtime import stream_results
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     ERROR_ROWS_DIR,
-    MAX_FAILURE_SAMPLES,
+    MAX_FAILURE_EXAMPLES,
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
@@ -71,7 +72,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
     error_rows_io_manager_key: str | None = None,
     check_granularity: Granularity | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
     name: str | None = None,
@@ -114,8 +115,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         The resource key of the IO manager that writes the error rows in a run, which needs `filter=True`. `None` uses the asset's own IO manager.
     check_granularity
         How many asset checks report the schema's rules: one per rule at `rule`, and one per column with rules at `column`. Changing it on an asset that has already run starts a new check history. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    max_failure_samples
-        A rule's check metadata has at most this many rows that failed it, under `dataframely/failed_sample`. **A run writes the rows to the Dagster event log unredacted.** `dy.Config.set_max_failure_examples` does not change this number. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
+    max_failure_examples
+        A rule's check metadata has at most this many rows that failed it, under `dataframely/failed_examples`. **A run writes the rows to the Dagster event log unredacted.** `dy.Config.set_max_failure_examples` does not change this number. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
     statistics
         Whether the materialization metadata has statistics of the written rows, one table per dtype group. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
@@ -129,11 +130,11 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
     required_resource_keys
         With `error_rows_io_manager_key`, the asset also requires that key.
     io_manager_key
-        In a run, `delegating_writer` passes the error rows to the same IO manager, unless `error_rows_io_manager_key` names another.
+        In a run, `build_io_manager_writer` passes the error rows to the same IO manager, unless `error_rows_io_manager_key` names another.
     partitions_def
         The writer writes the error rows under the same partition key, and every check spec has the same partitions.
     code_version
-        `None` derives one from the schema, with `dd.wiring.schema_code_version`.
+        `None` derives one from the schema, with `dd.wiring.get_code_version`.
     kinds
         The asset has the `polars` kind as well as these, because Polars always computes it.
 
@@ -206,12 +207,14 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
     # Resolved once, here, for both the check specs and the run.
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+    failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     emit_statistics: bool = STATISTICS.resolve(statistics)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
     # Only to raise on a malformed value (#115).
     ERROR_ROWS_DIR.resolve(None)
-    column_schema_metadata: dict[str, dg.TableSchema] = schema_metadata(schema)
+    column_schema_metadata: dict[str, dg.TableSchema] = get_column_schema_metadata(
+        schema
+    )
 
     forwarded: dict[str, Any] = {
         "ins": ins,
@@ -235,7 +238,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         "backfill_policy": backfill_policy,
         "retry_policy": retry_policy,
         "code_version": (
-            schema_code_version(schema) if code_version is None else code_version
+            get_code_version(schema) if code_version is None else code_version
         ),
         "owners": owners,
         "kinds": {"polars", *(kinds or ())},
@@ -254,23 +257,23 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
 
         def asset_yields(
             returned: DecoratedReturn, writer: ErrorRowsWriter | None
-        ) -> AssetYield:
+        ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
             _write_column_schema(column_schema_metadata)
             frame, result = frame_and_result(returned, asset=key.to_user_string())
             yield from with_returned_fields(
-                validation_results(
+                stream_results(
                     schema,
                     frame,
-                    valid_key=key,
+                    asset_key=key,
                     error_rows_writer=writer,
                     check_granularity=granularity,
-                    max_failure_samples=failure_samples,
+                    max_failure_examples=failure_examples,
                     statistics=emit_statistics,
                     row_sample=sampled_rows,
                     partitioned=partitions_def is not None,
                 ),
                 result,
-                valid_key=key,
+                asset_key=key,
             )
 
         if filter:
@@ -278,7 +281,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
             @functools.wraps(fn)
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
-            ) -> AssetYield:
+            ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
                 validate_error_rows_key(context, error_rows_key=error_rows_key)
                 writer = error_rows_writer(
                     context,
@@ -311,7 +314,9 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
         else:
 
             @functools.wraps(fn)
-            def compute(*args: object, **kwargs: object) -> AssetYield:
+            def compute(
+                *args: object, **kwargs: object
+            ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
                 yield from asset_yields(fn(*args, **kwargs), None)
 
         return dg.asset(
@@ -332,7 +337,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters
                     else {}
                 ),
             },
-            check_specs=asset_check_specs(
+            check_specs=build_asset_check_specs(
                 schema,
                 asset=key,
                 partitions_def=partitions_def,

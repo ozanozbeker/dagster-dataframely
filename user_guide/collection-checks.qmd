@@ -21,7 +21,7 @@ import dagster_dataframely as dd
 A Dataframely `Collection` groups several tables.
 Its `@dy.filter` methods, its collection filters, state the relations between them.
 A foreign key is one such relation.
-`dd.collection_checks` reports each collection filter as an asset check on assets you already declare.
+`dd.build_collection_checks` reports each collection filter as an asset check on assets you already declare.
 
 The checks never change a table.
 A row that fails a collection filter stays in its table, and its check fails.
@@ -29,7 +29,7 @@ A row that fails a collection filter stays in its table, and its check fails.
 ## Declaring the checks
 
 Declare one asset per member, each with the member's own schema.
-Then pass the Collection and its member assets to `dd.collection_checks`:
+Then pass the Collection and its member assets to `dd.build_collection_checks`:
 
 ```{python}
 #| label: collection-checks-1
@@ -65,7 +65,7 @@ def orders() -> pl.DataFrame:
     return pl.DataFrame({"order_id": [10, 11, 12], "customer_id": [1, 2, 99]})
 
 
-shop_checks = dd.collection_checks(
+shop_checks = dd.build_collection_checks(
     Shop, members={"orders": orders, "customers": customers}
 )
 
@@ -135,7 +135,7 @@ class InvoiceBook(dy.Collection):
         return self.invoices.join(self.lines, on="invoice_id", how="semi")
 
 
-book_checks = dd.collection_checks(
+book_checks = dd.build_collection_checks(
     InvoiceBook,
     members={"invoices": dg.AssetSpec("invoices"), "lines": dg.AssetSpec("lines")},
 )
@@ -176,15 +176,15 @@ metadata = evaluation.metadata
     "severity": evaluation.severity,
     "description": evaluation.description,
     "dataframely/failed_row_count": metadata["dataframely/failed_row_count"].value,
-    "dataframely/failed_sample": [
-        dict(record.data) for record in metadata["dataframely/failed_sample"].records
+    "dataframely/failed_examples": [
+        dict(record.data) for record in metadata["dataframely/failed_examples"].records
     ],
 }
 ```
 
 The check reads each member's table as the member's asset wrote it.
 It calls `Collection.filter` with `skip_member_validation=True`, so it evaluates only the collection filters.
-Each member asset's own checks report the member's rules, so each table must already have passed its member's schema: declare it with `dd.asset`, or check it with `dd.schema_checks`.
+Each member asset's own checks report the member's rules, so each table must already have passed its member's schema: declare it with `dd.asset`, or check it with `dd.build_rule_checks`.
 
 A failing check's metadata has three keys:
 
@@ -192,13 +192,13 @@ A failing check's metadata has three keys:
 | --- | --- |
 | `dataframely/filter` | the collection filter's name, which a passing check has too |
 | `dataframely/failed_row_count` | how many of the member's rows failed the collection filter |
-| `dataframely/failed_sample` | up to `max_failure_samples` of those rows |
+| `dataframely/failed_examples` | up to `max_failure_examples` of those rows |
 
 A failing check's description, such as `1 row failed.`, gives the count.
 A passing check's description is `No row failed.`
 
 **A run writes the sample rows to the Dagster event log unredacted.**
-`max_failure_samples=` sets how many, and `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
+`max_failure_examples=` sets how many, and `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
 
 ### A failing row stays in its table
 
@@ -278,7 +278,7 @@ class LenientShop(dy.Collection):
         return self.orders.join(self.customers, on="customer_id", how="semi")
 
 
-lenient_checks = dd.collection_checks(
+lenient_checks = dd.build_collection_checks(
     LenientShop, members={"orders": orders, "customers": customers}
 )
 
@@ -310,7 +310,7 @@ class EagerShop(dy.Collection):
         return self.orders.join(self.customers, on="customer_id", how="semi").lazy()
 
 
-eager_checks = dd.collection_checks(
+eager_checks = dd.build_collection_checks(
     EagerShop, members={"orders": orders, "customers": customers}
 )
 
@@ -353,7 +353,7 @@ class ShopWithPromos(dy.Collection):
         return self.orders.join(self.customers, on="customer_id", how="semi")
 
 
-promo_checks = dd.collection_checks(
+promo_checks = dd.build_collection_checks(
     ShopWithPromos, members={"orders": orders, "customers": customers}
 )
 
@@ -366,7 +366,7 @@ A semi-join returns each row once.
 
 ## Errors
 
-`dd.collection_checks` raises when you call it.
+`dd.build_collection_checks` raises when you call it.
 It raises `InvalidMembersError` for four mistakes in `members`, and the message lists the Collection's members:
 
 - a required member left out, including a member with `ignored_in_filters=True`, which Dataframely still requires;
@@ -393,7 +393,7 @@ mistakes = {
 
 for mistake, members in mistakes.items():
     try:
-        dd.collection_checks(Shop, members=members)
+        dd.build_collection_checks(Shop, members=members)
     except dd.errors.InvalidMembersError as error:
         print(f"{mistake}: {error}")
 ```
@@ -410,7 +410,7 @@ class Propagating(dy.Collection):
 
 
 try:
-    dd.collection_checks(
+    dd.build_collection_checks(
         Propagating,
         members={"invoices": dg.AssetSpec("invoices"), "lines": dg.AssetSpec("lines")},
     )
@@ -438,7 +438,7 @@ class Misdeclared(dy.Collection):
 
 
 try:
-    dd.collection_checks(
+    dd.build_collection_checks(
         Misdeclared, members={"orders": orders, "customers": customers}
     )
 except dd.errors.InvalidSeverityError as error:

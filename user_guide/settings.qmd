@@ -23,7 +23,7 @@ Each variable is `DAGSTER_DATAFRAMELY_` plus the setting's name in upper case.
 | --- | --- | --- |
 | `check_granularity` | how many checks the package collapses the schema's rules into: `rule` or `column` | `rule` |
 | `statistics` | whether each materialization has statistics for the rows it wrote | `true` |
-| `max_failure_samples` | how many of the rows that failed a rule appear in that rule's check | `5` |
+| `max_failure_examples` | how many of the rows that failed a rule appear in that rule's check | `5` |
 | `row_sample` | how many rows of the table and how many error rows appear in the materialization | `5` |
 | `error_rows_dir` | the directory the package writes error rows to when you call the asset instead of running it | unset: a call with error rows raises `ErrorRowsDirError` |
 
@@ -36,7 +36,7 @@ For example, `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR=${SCRATCH}` is empty when `SCRA
 
 The package validates every source when it resolves the setting, including the package default and the argument.
 An invalid value raises `InvalidSettingError`, which names the value and its source.
-So `statistics="false"` raises instead of turning statistics on, and `max_failure_samples=True` raises instead of meaning one row.
+So `statistics="false"` raises instead of turning statistics on, and `max_failure_examples=True` raises instead of meaning one row.
 
 **A flag's environment variable accepts `true` or `false`, and nothing else.**
 Case does not matter, so `TRUE` is the same as `true`.
@@ -53,7 +53,7 @@ A call can still override a bound argument:
 #| label: settings-2
 from functools import partial
 
-audited = partial(dd.asset, filter=True, max_failure_samples=10)
+audited = partial(dd.asset, filter=True, max_failure_examples=10)
 
 
 @audited(Orders)
@@ -69,7 +69,7 @@ def finance_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 `marketing_orders` has `filter=True`, and `finance_orders` overrides it with `filter=False`.
 For both, at most 10 of the rows that failed a rule appear in that rule's check.
 A bound argument is an argument to `dd.asset`, the third source.
-So `max_failure_samples=10` overrides `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES`.
+So `max_failure_examples=10` overrides `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES`.
 To use `audited` in several modules, define it in one module and import it.
 
 In dbt, a `+` config in `dbt_project.yml` sets a default for many tests.
@@ -99,7 +99,7 @@ Nothing moves the old history to the new checks, so choose the granularity befor
 An asset that used `schema` starts a new check history at `rule` or `column`.
 [The out-of-scope record](https://github.com/ozanozbeker/dagster-dataframely/blob/main/docs/out-of-scope/schema-granularity.md) has the reasons.
 
-## Statistics and both samples are on by default
+## Statistics, the row sample and the failure examples are on by default
 
 Each materialization has summary statistics for the rows it wrote.
 [The statistics tables](what-a-run-produces.qmd#the-statistics-tables) lists their columns.
@@ -113,11 +113,11 @@ If a column contains an email address, a name or an account number, the package 
 
 | setting | what it writes | where |
 | --- | --- | --- |
-| `max_failure_samples` | up to this many of the rows that failed each rule | that rule's asset check, under `dataframely/failed_sample` |
+| `max_failure_examples` | up to this many of the rows that failed each rule | that rule's asset check, under `dataframely/failed_examples` |
 | `row_sample` | up to this many rows of the table and this many error rows | the materialization, under `dataframely/table_sample` and `dataframely/error_rows_sample` |
 
-A sample is the first rows of the frame, not a random selection.
-A sample is absent, never empty: with no rows to show, the package writes no metadata key for it.
+Both are the first rows of the frame, not a random selection.
+Both are absent, never empty: with no rows to show, the package writes no metadata key for them.
 
 Dataframely's comparable setting defaults to `0`.
 This package defaults to `5`, because a count shows how many rows failed a rule but not what they contain.
@@ -127,7 +127,7 @@ Per asset:
 
 ```{python}
 #| label: settings-1
-@dd.asset(Orders, max_failure_samples=0, row_sample=0)
+@dd.asset(Orders, max_failure_examples=0, row_sample=0)
 def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
     return raw_orders
 ```
@@ -135,10 +135,10 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 Or set it for a whole code location, in the deployment's environment:
 
 ```bash
-DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES=0
+DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES=0
 DAGSTER_DATAFRAMELY_ROW_SAMPLE=0
 ```
 
-Turning the samples off does not change `statistics`, which is a separate setting.
-A sample shows a `Decimal` as a string, with every digit.
+Turning the row sample and the failure examples off does not change `statistics`, which is a separate setting.
+Both show a `Decimal` as a string, with every digit.
 The statistics tables convert it to a float for display.

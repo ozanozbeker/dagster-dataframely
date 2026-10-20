@@ -285,21 +285,23 @@ _, _TAKER_FAILURE = Orders.filter(clean_orders())
 
 SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
     "asset": dd.asset,  # raises before it returns a decorator (ADR-0008)
-    "error_rows_spec": lambda schema: dd.error_rows_spec(schema, _TAKER_KEY),
-    "schema_checks": lambda schema: dd.schema_checks(schema, asset=_TAKER_KEY),
-    "wiring.asset_check_results": lambda schema: list(
-        dd.wiring.asset_check_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
+    "build_error_rows_spec": lambda schema: dd.build_error_rows_spec(
+        schema, _TAKER_KEY
     ),
-    "wiring.asset_check_specs": lambda schema: dd.wiring.asset_check_specs(
+    "build_rule_checks": lambda schema: dd.build_rule_checks(schema, asset=_TAKER_KEY),
+    "wiring.evaluate_checks": lambda schema: list(
+        dd.wiring.evaluate_checks(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
+    ),
+    "wiring.build_asset_check_specs": lambda schema: dd.wiring.build_asset_check_specs(
         schema, asset=_TAKER_KEY
     ),
-    "wiring.error_rows_frame": lambda schema: dd.wiring.error_rows_frame(
+    "wiring.get_error_rows": lambda schema: dd.wiring.get_error_rows(
         schema, _TAKER_FAILURE
     ),
-    "wiring.schema_metadata": dd.wiring.schema_metadata,
-    "wiring.table_schema": dd.wiring.table_schema,
-    "wiring.validation_results": lambda schema: list(
-        dd.wiring.validation_results(schema, pl.DataFrame(), valid_key=_TAKER_KEY)
+    "wiring.get_column_schema_metadata": dd.wiring.get_column_schema_metadata,
+    "wiring.get_table_schema": dd.wiring.get_table_schema,
+    "wiring.stream_results": lambda schema: list(
+        dd.wiring.stream_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
     ),
 }
 """Every public function that takes a schema, with placeholders for its other arguments, so a `TypeError` means a check runs too late (ADR-0008)."""

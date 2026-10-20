@@ -35,7 +35,9 @@ _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
     """Return the materialization a call yielded."""
-    materialization = dd.testing.direct_invocation_result(called).materialization
+    materialization = dd.testing.DirectInvocationResult.from_invocation(
+        called
+    ).materialization
     assert materialization is not None
     return materialization
 
@@ -249,7 +251,7 @@ class TestErrors:
         self, fn: Callable[[], object], error: type[Exception], message: str
     ):
         with pytest.raises(error, match=re.escape(message)):
-            dd.testing.direct_invocation_result(_orders_asset(fn)())
+            dd.testing.DirectInvocationResult.from_invocation(_orders_asset(fn)())
 
     @pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
     def test_a_rejected_return_fails_the_run_and_writes_nothing(
@@ -288,16 +290,18 @@ class TestErrors:
             )
 
         with pytest.raises(ValidationAbortError):
-            dd.testing.direct_invocation_result(orders())
+            dd.testing.DirectInvocationResult.from_invocation(orders())
 
     def test_the_frame_guard_names_every_route_out(self):
         """The error for a return that is not a frame names every accepted return and the hand-wired alternative."""
         with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-            dd.testing.direct_invocation_result(_orders_asset(lambda: "orders")())
+            dd.testing.DirectInvocationResult.from_invocation(
+                _orders_asset(lambda: "orders")()
+            )
         message = str(raised.value)
 
         assert "Polars DataFrame or LazyFrame" in message
         assert "dg.MaterializeResult" in message
         assert "`None` to skip" in message
         assert "plain `@dg.asset`" in message
-        assert "schema_metadata" in message
+        assert "get_column_schema_metadata" in message

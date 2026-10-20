@@ -1,6 +1,6 @@
 """The code location loads, and each asset does what the README and screenshots show.
 
-The tests read the resolved asset graph, because `Definitions.assets` lists each `error_rows_spec` twice.
+The tests read the resolved asset graph, because `Definitions.assets` lists each `build_error_rows_spec` twice.
 """
 
 import collections
@@ -208,7 +208,7 @@ def error_rows_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_apac_skips_the_days_before_it_opened():
     key = dg.MultiPartitionKey({"day": "2026-08-02", "region": "apac"})
     context = dg.build_asset_context(partition_key=key)
-    result = dd.testing.direct_invocation_result(
+    result = dd.testing.DirectInvocationResult.from_invocation(
         regional_orders(context, _data.storefront_orders())
     )
     assert result.materialization is None
@@ -216,17 +216,21 @@ def test_apac_skips_the_days_before_it_opened():
 
 def test_finance_stops_the_load_on_one_invalid_line():
     with pytest.raises(dd.errors.ValidationAbortError):
-        dd.testing.direct_invocation_result(finance_orders(_data.marketplace_orders()))
+        dd.testing.DirectInvocationResult.from_invocation(
+            finance_orders(_data.marketplace_orders())
+        )
 
 
 def test_the_partner_feed_stops_at_the_column_schema_check():
     with pytest.raises(dd.errors.ColumnSchemaError, match="quantity"):
-        dd.testing.direct_invocation_result(partner_orders(_data.partner_orders()))
+        dd.testing.DirectInvocationResult.from_invocation(
+            partner_orders(_data.partner_orders())
+        )
 
 
 def test_the_legacy_migration_writes_only_the_error_rows(error_rows_dir: Path):
     with pytest.raises(dd.errors.NoValidRowsError):
-        dd.testing.direct_invocation_result(
+        dd.testing.DirectInvocationResult.from_invocation(
             legacy_orders(dg.build_asset_context(), _data.legacy_orders())
         )
     assert (
@@ -236,7 +240,7 @@ def test_the_legacy_migration_writes_only_the_error_rows(error_rows_dir: Path):
 
 
 def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Path):
-    result = dd.testing.direct_invocation_result(
+    result = dd.testing.DirectInvocationResult.from_invocation(
         marketing_orders(dg.build_asset_context(), _data.marketplace_orders())
     )
     assert result.materialization is not None
@@ -248,7 +252,7 @@ def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Pa
 
 
 def test_a_returned_result_is_inspectable_by_calling_the_asset():
-    materialization = dd.testing.direct_invocation_result(
+    materialization = dd.testing.DirectInvocationResult.from_invocation(
         orders_snapshot(_data.storefront_orders())
     ).materialization
     assert materialization is not None

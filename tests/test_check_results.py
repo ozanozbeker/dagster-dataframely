@@ -1,6 +1,6 @@
-"""Tests for `asset_check_results`, mostly called directly, with no run.
+"""Tests for `evaluate_checks`, mostly called directly, with no run.
 
-`test_asset_runtime.py` asserts the result contents, which come from the same functions `validation_results` uses. This file asserts the check names, the severity, the asset key and the description, and `test_severity_outcomes.py` asserts each rule's severity.
+`test_asset_runtime.py` asserts the result contents, which come from the same functions `stream_results` uses. This file asserts the check names, the severity, the asset key and the description, and `test_severity_runs.py` asserts each rule's severity.
 """
 
 from collections.abc import Callable, Iterator
@@ -16,9 +16,9 @@ from dagster_dataframely._rules import described_rules
 from dagster_dataframely._settings import Granularity
 from dagster_dataframely.errors import ColumnSchemaError, InvalidSettingError
 from dagster_dataframely.wiring import (
-    asset_check_results,
-    asset_check_specs,
-    schema_metadata,
+    build_asset_check_specs,
+    evaluate_checks,
+    get_column_schema_metadata,
 )
 from tests.scenario import (
     Orders,
@@ -36,7 +36,7 @@ ERROR = dg.AssetCheckSeverity.ERROR
 COLUMN_SCHEMA = "dy_schema__columns"
 """A literal, not an import, so renaming the check fails these tests."""
 
-_FAILURE_SAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES"
+_FAILURE_EXAMPLES_ENV = "DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES"
 
 _RULE_ORDER = list(described_rules(Orders).values())
 """Read with `described_rules`, not `_rule_sets`, which builds both the specs and the results."""
@@ -56,7 +56,7 @@ def _results(
     frame: pl.DataFrame | pl.LazyFrame, **settings: object
 ) -> list[dg.AssetCheckResult]:
     return list(
-        asset_check_results(
+        evaluate_checks(
             Orders,
             frame,
             asset_key=KEY,
@@ -83,12 +83,12 @@ def _before_the_raise(frame: pl.DataFrame) -> list[dg.AssetCheckResult]:
     """Return the results yielded before `ColumnSchemaError`, which `list()` would discard."""
     results: list[dg.AssetCheckResult] = []
     with pytest.raises(ColumnSchemaError):
-        results.extend(asset_check_results(Orders, frame, asset_key=KEY))
+        results.extend(evaluate_checks(Orders, frame, asset_key=KEY))
     return results
 
 
 class TestDirectCall:
-    """The results `asset_check_results` yields when called directly, with no run."""
+    """The results `evaluate_checks` yields when called directly, with no run."""
 
     @pytest.mark.parametrize("granularity", ["rule", "column"])
     def test_the_results_answer_exactly_the_specs_at_every_granularity(
@@ -96,7 +96,9 @@ class TestDirectCall:
         granularity: Granularity,
     ):
         """The specs and the results name the same checks, in the schema's rule order."""
-        specs = asset_check_specs(Orders, asset=KEY, check_granularity=granularity)
+        specs = build_asset_check_specs(
+            Orders, asset=KEY, check_granularity=granularity
+        )
         results = _results(mixed_orders(), check_granularity=granularity)
         expected = [COLUMN_SCHEMA, *_CHECKS[granularity]]
 
@@ -107,14 +109,14 @@ class TestDirectCall:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A hand-wired call has no definition time, so `asset_check_results` raises on iteration."""
-        monkeypatch.setenv(_FAILURE_SAMPLES_ENV, "five")
+        """A hand-wired call has no definition time, so `evaluate_checks` raises on iteration."""
+        monkeypatch.setenv(_FAILURE_EXAMPLES_ENV, "five")
 
         with pytest.raises(InvalidSettingError) as raised:
             _results(mixed_orders())
 
         assert (
-            f"got 'five' from the environment variable {_FAILURE_SAMPLES_ENV}"
+            f"got 'five' from the environment variable {_FAILURE_EXAMPLES_ENV}"
             in str(raised.value)
         )
 
@@ -122,7 +124,7 @@ class TestDirectCall:
         class Blob(dy.Schema):
             payload = dy.String(nullable=True)
 
-        results = list(asset_check_results(Blob, Blob.create_empty(), asset_key=KEY))
+        results = list(evaluate_checks(Blob, Blob.create_empty(), asset_key=KEY))
 
         assert [result.check_name for result in results] == [COLUMN_SCHEMA]
         assert results[0].passed
@@ -147,10 +149,10 @@ class TestDirectCall:
         self,
         frame: Callable[[], pl.DataFrame],
     ):
-        """`asset_check_results` writes no rows, so it raises neither `ValidationAbortError` nor `NoValidRowsError`."""
+        """`evaluate_checks` writes no rows, so it raises neither `ValidationAbortError` nor `NoValidRowsError`."""
         results = _results(frame())
 
-        assert len(results) == len(asset_check_specs(Orders, asset=KEY))
+        assert len(results) == len(build_asset_check_specs(Orders, asset=KEY))
 
     def test_no_valid_rows_is_not_a_special_case(self):
         results = _results(no_valid_orders())
@@ -233,14 +235,14 @@ class TestDescription:
         assert _descriptions(clean_orders())[COLUMN_SCHEMA] == "Every column matches."
 
 
-@dg.asset(name="orders", metadata=schema_metadata(Orders))
+@dg.asset(name="orders", metadata=get_column_schema_metadata(Orders))
 def _orders() -> pl.DataFrame:
     return mixed_orders()
 
 
-@dg.multi_asset_check(specs=asset_check_specs(Orders, asset=KEY))
+@dg.multi_asset_check(specs=build_asset_check_specs(Orders, asset=KEY))
 def _orders_checks(orders: pl.DataFrame) -> Iterator[dg.AssetCheckResult]:
-    yield from asset_check_results(Orders, orders, asset_key=KEY)
+    yield from evaluate_checks(Orders, orders, asset_key=KEY)
 
 
 class TestHandWiringExample:
@@ -253,7 +255,7 @@ class TestHandWiringExample:
         evaluations = {e.check_name: e for e in result.get_asset_check_evaluations()}
 
         assert set(evaluations) == {
-            spec.name for spec in asset_check_specs(Orders, asset=KEY)
+            spec.name for spec in build_asset_check_specs(Orders, asset=KEY)
         }
         assert not evaluations["dy_rule__amount__min"].passed
         assert evaluations["dy_rule__amount__min"].severity == ERROR

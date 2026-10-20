@@ -1,4 +1,4 @@
-"""These tests call real assets built with `dd.asset` and pass the result to `dd.testing.direct_invocation_result`."""
+"""These tests call real assets built with `dd.asset` and pass the result to `dd.testing.DirectInvocationResult.from_invocation`."""
 
 from pathlib import Path
 from typing import Any
@@ -58,12 +58,12 @@ def _orders(frame: pl.DataFrame, **settings: Any) -> dg.AssetsDefinition:
 
 
 class TestDirectInvocationResult:
-    """The record `direct_invocation_result` returns for a call of an asset built with `dd.asset`."""
+    """The record `DirectInvocationResult.from_invocation` returns for a call of an asset built with `dd.asset`."""
 
     def test_a_clean_call_has_the_frame_and_every_check_passing(self):
         asset = _orders(clean_orders())
 
-        result = dd.testing.direct_invocation_result(asset())
+        result = dd.testing.DirectInvocationResult.from_invocation(asset())
 
         assert result.materialization is not None
         assert_frame_equal(result.materialization.value, clean_orders())
@@ -74,20 +74,22 @@ class TestDirectInvocationResult:
     def test_a_filtering_call_has_the_valid_rows_and_the_failing_check(self):
         asset = _orders(mixed_orders(), filter=True)
 
-        result = dd.testing.direct_invocation_result(asset(dg.build_asset_context()))
+        result = dd.testing.DirectInvocationResult.from_invocation(
+            asset(dg.build_asset_context())
+        )
 
         assert result.materialization is not None
         assert_frame_equal(result.materialization.value, clean_orders())
         failed = result.checks["dy_rule__amount__min"]
         assert not failed.passed
-        assert "dataframely/failed_sample" in failed.metadata
+        assert "dataframely/failed_examples" in failed.metadata
 
     def test_a_warn_only_failure_keeps_every_row_and_fails_at_warn(self):
         @dd.asset(Amounts)
         def amounts() -> pl.DataFrame:
             return pl.DataFrame({"amount": [1, -1]})
 
-        result = dd.testing.direct_invocation_result(amounts())
+        result = dd.testing.DirectInvocationResult.from_invocation(amounts())
 
         assert result.materialization is not None
         assert result.materialization.value.height == 2
@@ -100,7 +102,7 @@ class TestDirectInvocationResult:
         def orders() -> pl.DataFrame | None:
             return None
 
-        result = dd.testing.direct_invocation_result(orders())
+        result = dd.testing.DirectInvocationResult.from_invocation(orders())
 
         assert result.materialization is None
         assert set(result.checks) == {spec.name for spec in orders.check_specs}
@@ -111,7 +113,7 @@ class TestDirectInvocationResult:
         asset = _orders(mixed_orders())
 
         with pytest.raises(dd.errors.ValidationAbortError):
-            dd.testing.direct_invocation_result(asset())
+            dd.testing.DirectInvocationResult.from_invocation(asset())
 
 
 class TestNotACall:
@@ -121,7 +123,7 @@ class TestNotACall:
         with pytest.raises(
             TypeError, match="type `AssetsDefinition` that is not iterable"
         ):
-            dd.testing.direct_invocation_result(_orders(clean_orders()))
+            dd.testing.DirectInvocationResult.from_invocation(_orders(clean_orders()))
 
     def test_a_plain_asset_returning_a_frame_raises(self):
         """A plain asset's frame raises instead of reading as a skip."""
@@ -133,7 +135,7 @@ class TestNotACall:
         with pytest.raises(
             TypeError, match="type `DataFrame` that yielded a value of type `Series`"
         ):
-            dd.testing.direct_invocation_result(plain())
+            dd.testing.DirectInvocationResult.from_invocation(plain())
 
     def test_a_plain_asset_returning_a_materialize_result_raises(self):
         @dg.asset
@@ -141,16 +143,16 @@ class TestNotACall:
             return dg.MaterializeResult(value=clean_orders())
 
         with pytest.raises(TypeError, match="type `MaterializeResult` that yielded"):
-            dd.testing.direct_invocation_result(plain())
+            dd.testing.DirectInvocationResult.from_invocation(plain())
 
     def test_a_second_materialization_raises(self):
         events = list(_orders(clean_orders())())  # pyrefly: ignore[bad-argument-type]
 
         with pytest.raises(TypeError, match="a second `MaterializeResult`"):
-            dd.testing.direct_invocation_result([*events, events[0]])
+            dd.testing.DirectInvocationResult.from_invocation([*events, events[0]])
 
     def test_a_collection_checks_call_raises_on_the_repeated_check_name(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook,
             members={
                 "invoices": dg.AssetSpec("invoices"),
@@ -164,4 +166,4 @@ class TestNotACall:
         )
 
         with pytest.raises(TypeError, match="'dy_filter__invoice_has_lines' twice"):
-            dd.testing.direct_invocation_result(called)
+            dd.testing.DirectInvocationResult.from_invocation(called)

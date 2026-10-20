@@ -12,5 +12,5 @@ def orders() -> pl.DataFrame:
     return mixed_orders()
 
 
-with_spec = dg.Definitions(assets=[orders, dd.error_rows_spec(Orders, orders)])
+with_spec = dg.Definitions(assets=[orders, dd.build_error_rows_spec(Orders, orders)])
 without_spec = dg.Definitions(assets=[orders])

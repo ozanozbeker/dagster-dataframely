@@ -23,7 +23,7 @@ from dagster_dataframely.errors import (
     InvalidSettingError,
     ReservedColumnError,
 )
-from dagster_dataframely.wiring import schema_code_version
+from dagster_dataframely.wiring import get_code_version
 from tests.scenario import Orders
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
@@ -393,10 +393,10 @@ class TestCodeVersion:
     def test_the_wiring_function_returns_the_code_version_the_decorator_sets(self):
         (spec,) = orders.specs
 
-        assert schema_code_version(Orders) == spec.code_version
+        assert get_code_version(Orders) == spec.code_version
 
     def test_a_changed_column_constraint_changes_the_code_version(self):
-        assert schema_code_version(_Priced) != schema_code_version(_PricedFromOne)
+        assert get_code_version(_Priced) != get_code_version(_PricedFromOne)
 
     def test_a_changed_value_the_expression_text_elides_changes_the_code_version(
         self,
@@ -404,13 +404,13 @@ class TestCodeVersion:
         assert _expression_text("code|check", _Lettered) == _expression_text(
             "code|check", _Relettered
         )
-        assert schema_code_version(_Lettered) != schema_code_version(_Relettered)
+        assert get_code_version(_Lettered) != get_code_version(_Relettered)
 
     def test_a_changed_severity_changes_the_code_version(self):
-        assert schema_code_version(_Priced) != schema_code_version(_Warned)
+        assert get_code_version(_Priced) != get_code_version(_Warned)
 
     def test_a_changed_docstring_leaves_the_code_version_unchanged(self):
-        assert schema_code_version(_Priced) == schema_code_version(_Redocumented)
+        assert get_code_version(_Priced) == get_code_version(_Redocumented)
 
     def test_deriving_the_code_version_calls_every_rule_function(self):
         with pytest.raises(RuntimeError):
@@ -434,7 +434,7 @@ class TestCodeVersion:
 
     def test_two_processes_derive_the_same_code_version(self):
         """Two processes derive the same code version for a schema with a lambda `check=`."""
-        script = "from tests.scenario import Orders; import dagster_dataframely as dd; print(dd.wiring.schema_code_version(Orders))"
+        script = "from tests.scenario import Orders; import dagster_dataframely as dd; print(dd.wiring.get_code_version(Orders))"
         versions = {
             subprocess.run(  # noqa: S603 - the script is a literal
                 [sys.executable, "-c", script],
@@ -446,7 +446,7 @@ class TestCodeVersion:
             for _ in range(2)
         }
 
-        assert versions == {schema_code_version(Orders)}
+        assert versions == {get_code_version(Orders)}
 
 
 _COLUMNS_WITH_RULES = {rule.split("|")[0] for rule in _RULES if "|" in rule}
@@ -472,7 +472,7 @@ class TestCheckSpecs:
         assert list(_specs_by_name(orders)) == expected
 
     def test_every_check_is_blocking_because_every_rule_is_error(self):
-        """`test_severity_outcomes.py` covers a schema that declares `"warn"`."""
+        """`test_severity_runs.py` covers a schema that declares `"warn"`."""
         assert all(spec.blocking for spec in _specs_by_name(orders).values())
 
     def test_a_rules_docstring_becomes_its_check_description(self):
@@ -913,7 +913,7 @@ class TestErrorRows:
         error_rows_key: list[str],
         error_rows_io_manager_key: str,
     ):
-        """`error_rows_spec` reads both entries, so the spec loads the rows from where the writer wrote them."""
+        """`build_error_rows_spec` reads both entries, so the spec loads the rows from where the writer wrote them."""
 
         @dd.asset(Orders, filter=True, **overrides)
         def kept() -> pl.DataFrame:
@@ -999,7 +999,7 @@ class TestDefinitionTimeErrors:
             dd.asset(OrderBook)  # pyrefly: ignore[bad-argument-type]
 
         assert "OrderBook" in str(raised.value)
-        assert "then pass them to `dd.collection_checks`" in str(raised.value)
+        assert "then pass them to `dd.build_collection_checks`" in str(raised.value)
 
     def test_a_non_schema_argument_is_left_to_fail_however_it_fails(self):
         """Only `dy.Collection` has a guard, because it is the one plausible wrong argument."""
@@ -1134,7 +1134,7 @@ _NO_DG_ASSET_COUNTERPART = {
     "error_rows_key",
     "error_rows_io_manager_key",
     "check_granularity",
-    "max_failure_samples",
+    "max_failure_examples",
     "statistics",
     "row_sample",
 }

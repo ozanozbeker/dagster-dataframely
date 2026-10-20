@@ -32,7 +32,7 @@ from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
 from dagster_dataframely._rules import DAGSTER_NAME
-from dagster_dataframely.wiring import error_rows_path
+from dagster_dataframely.wiring import get_error_rows_path
 from tests.scenario import events
 
 
@@ -248,7 +248,7 @@ class TestDataframely:
             lazy_result.collect_all(engine="nonsense")
 
     def test_details_returns_invalid_rows_plus_one_column_per_rule(self):
-        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.error_rows_frame` and `_checks._failed_rows` both read."""
+        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.get_error_rows` and `_checks._failed_rows` both read."""
         _, failure = Orders.filter(_MIXED_ORDERS)
         details = failure.details()
 
@@ -257,7 +257,7 @@ class TestDataframely:
             Orders._validation_rules(with_cast=False)
         )
 
-        # An `Enum`, which `error_rows_frame` casts to `String` because the Delta writer panics on it.
+        # An `Enum`, which `get_error_rows` casts to `String` because the Delta writer panics on it.
         assert details.schema["amount|min"] == pl.Enum(["valid", "invalid", "unknown"])
         assert (
             details.filter(pl.col("order_id") == "ORD-2")["amount|min"].item()
@@ -265,7 +265,7 @@ class TestDataframely:
         )
 
     def test_the_failure_example_limit_does_not_truncate_the_filter_path(self):
-        """`dy.Config(max_failure_examples=)` limits only the message `validate` builds, so only `max_failure_samples` limits the rows in check metadata."""
+        """`dy.Config(max_failure_examples=)` limits only the message `validate` builds, so only `max_failure_examples` limits the rows in check metadata."""
         with dy.Config(max_failure_examples=1):
             _, failure = Orders.filter(_MIXED_ORDERS)
 
@@ -373,7 +373,7 @@ class TestDagster:
         assert [warning.category for warning in recorded] == [PreviewWarning]
 
     def test_dagster_does_not_enforce_a_matching_asset_check_partitions_def(self):
-        """Dagster does not check that a spec's `partitions_def` matches its asset's, so `asset_check_specs` passes its `partitions_def` through without checking it either."""
+        """Dagster does not check that a spec's `partitions_def` matches its asset's, so `build_asset_check_specs` passes its `partitions_def` through without checking it either."""
         days = dg.StaticPartitionsDefinition(["mon", "tue"])
         elsewhere = dg.StaticPartitionsDefinition(["x", "y"])
         key = dg.AssetKey(["orders"])
@@ -382,7 +382,7 @@ class TestDagster:
             warnings.simplefilter("ignore", PreviewWarning)
             spec = dg.AssetCheckSpec("row_count", asset=key, partitions_def=elsewhere)
 
-        # Unannotated: with `asset_check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
+        # Unannotated: with `build_asset_check_specs`, `-> None` raises `Expected Tuple annotation for multiple outputs`.
         @dg.asset(name="orders", partitions_def=days, check_specs=[spec])
         def orders():
             return dg.MaterializeResult(
@@ -403,7 +403,7 @@ class TestDagster:
     def test_a_blocking_asset_check_takes_a_partitions_def_and_still_stops_the_run(
         self,
     ):
-        """A failing blocking check with a `partitions_def` still fails the run, which `asset_check_specs` needs because it gives one to the column-schema check."""
+        """A failing blocking check with a `partitions_def` still fails the run, which `build_asset_check_specs` needs because it gives one to the column-schema check."""
         days = dg.StaticPartitionsDefinition(["mon", "tue"])
         key = dg.AssetKey(["orders"])
 
@@ -454,7 +454,7 @@ class TestDagster:
         )
 
     def test_direct_invocation_is_satisfied_only_by_a_standalone_check_result(self):
-        """A direct invocation raises on a check result inside a `MaterializeResult` but accepts one yielded separately, as `validation_results` yields them (ADR-0002)."""
+        """A direct invocation raises on a check result inside a `MaterializeResult` but accepts one yielded separately, as `stream_results` yields them (ADR-0002)."""
 
         def spec(asset: dg.AssetKey) -> dg.AssetCheckSpec:
             return dg.AssetCheckSpec("dy_schema__columns", asset=asset)
@@ -510,7 +510,7 @@ class TestDagster:
     def test_a_multi_asset_check_reads_its_inputs_off_an_explicit_signature(
         self, tmp_path: Path
     ):
-        """`@dg.multi_asset_check` reads each input's name and type off a `__signature__` set on the function, which `_collection.collection_checks` sets because it receives the members only when it is called."""
+        """`@dg.multi_asset_check` reads each input's name and type off a `__signature__` set on the function, which `_collection.build_collection_checks` sets because it receives the members only when it is called."""
         loaded: dict[str, type] = {}
 
         @dg.asset
@@ -548,7 +548,7 @@ class TestDagster:
         assert loaded == {"book_refunds": pl.LazyFrame}
 
     def test_a_check_input_is_still_type_checked_against_its_annotation(self):
-        """Dagster type-checks a `@dg.multi_asset_check` input, so `asset_check_results` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""
+        """Dagster type-checks a `@dg.multi_asset_check` input, so `evaluate_checks` does not (`docs/out-of-scope/wiring-argument-type-guards.md`)."""
         key = dg.AssetKey(["orders"])
         ran = False
 
@@ -717,7 +717,7 @@ class TestDagster:
     def test_a_materialization_logged_for_another_key_is_recorded_before_a_raise(
         self,
     ):
-        """`log_event` records a materialization for another asset's key before a later raise, which `_error_rows.delegating_writer` needs on the `NoValidRowsError` outcome."""
+        """`log_event` records a materialization for another asset's key before a later raise, which `_error_rows.build_io_manager_writer` needs on the `NoValidRowsError` outcome."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(
@@ -739,7 +739,7 @@ class TestDagster:
         ]
 
     def test_the_three_path_escapes_dagster_applies_are_still_importable(self):
-        """`UPathIOManager` escapes a leading `/` but not `..`, and `_error_rows.error_rows_path` calls these three functions to escape both."""
+        """`UPathIOManager` escapes a leading `/` but not `..`, and `_error_rows.get_error_rows_path` calls these three functions to escape both."""
         assert escape_leading_slash("/etc") == "%2Fetc"
         assert escape_leading_slash("etc") == "etc"
         assert escape_dotdot_segments("../etc") == "%2E%2E/etc"
@@ -787,7 +787,7 @@ class TestDagster:
             partition_key=key,
             resources={"io_manager": Probe(base_path=UPath(tmp_path))},
         )
-        filtered = error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
+        filtered = get_error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
 
         assert result.success
         base = UPath(tmp_path)
@@ -797,13 +797,13 @@ class TestDagster:
 
 
 class TestPrivateDagsterApis:
-    """The private Dagster APIs that the writers, `error_rows_spec` and `dd.asset` read."""
+    """The private Dagster APIs that the writers, `build_error_rows_spec` and `dd.asset` read."""
 
     def test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use(
         self,
         tmp_path: Path,
     ):
-        """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_error_rows.delegating_writer` uses."""
+        """A step's `get_output_context` and `get_io_manager` return the context and IO manager of its output, which `_error_rows.build_io_manager_writer` uses."""
         borrowed: dict[str, Any] = {}
 
         @dg.asset(
@@ -834,7 +834,7 @@ class TestPrivateDagsterApis:
         assert borrowed["manager"] == "PolarsParquetIOManager"
 
     def test_a_steps_run_config_still_holds_each_resources_config(self, tmp_path: Path):
-        """A step's `resolved_run_config.resources` holds the config of each resource its op requires, which `_error_rows.delegating_writer` reads for `error_rows_io_manager_key`."""
+        """A step's `resolved_run_config.resources` holds the config of each resource its op requires, which `_error_rows.build_io_manager_writer` reads for `error_rows_io_manager_key`."""
         database = str(tmp_path / "errors.duckdb")
         seen: dict[str, Any] = {}
 
@@ -851,7 +851,7 @@ class TestPrivateDagsterApis:
         assert seen["config"]["database"] == database
 
     def test_an_output_context_still_reads_its_resource_config_off_one_attribute(self):
-        """`resource_config` returns `_resource_config`, which `_error_rows.delegating_writer` sets on its copy for `error_rows_io_manager_key`."""
+        """`resource_config` returns `_resource_config`, which `_error_rows.build_io_manager_writer` sets on its copy for `error_rows_io_manager_key`."""
         original = dg.build_output_context(resource_config={"base_dir": "/warehouse"})
 
         repointed = copy.copy(original)
@@ -861,7 +861,7 @@ class TestPrivateDagsterApis:
         assert original.resource_config == {"base_dir": "/warehouse"}
 
     def test_a_definition_still_names_the_io_manager_key_of_its_output(self):
-        """`get_io_manager_key_for_asset_key` returns an output's IO manager key, which `_error_rows.error_rows_spec` reads off a hand-wired definition."""
+        """`get_io_manager_key_for_asset_key` returns an output's IO manager key, which `_error_rows.build_error_rows_spec` reads off a hand-wired definition."""
 
         @dg.asset(name="orders", io_manager_key="warehouse")
         def orders() -> None: ...
@@ -873,7 +873,7 @@ class TestPrivateDagsterApis:
         assert refunds.get_io_manager_key_for_asset_key(refunds.key) == "io_manager"
 
     def test_a_directly_invoked_asset_still_has_no_step(self):
-        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.error_rows_writer` catches to use `file_writer`."""
+        """`get_step_execution_context` raises `DagsterInvalidPropertyError` in a direct invocation, which `_error_rows.error_rows_writer` catches to use `build_file_writer`."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -884,7 +884,7 @@ class TestPrivateDagsterApis:
         assert orders(dg.build_asset_context()) == "called"
 
     def test_keys_by_output_name_still_omits_the_check_outputs(self):
-        """`keys_by_output_name` omits check outputs, so `_error_rows.delegating_writer` unpacks the asset's one output name from it."""
+        """`keys_by_output_name` omits check outputs, so `_error_rows.build_io_manager_writer` unpacks the asset's one output name from it."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(
@@ -913,7 +913,7 @@ class TestPrivateDagsterApis:
         assert not is_context_provided([])
 
     def test_an_output_context_still_clones_and_re_points_by_attribute(self):
-        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and keeps its own output metadata, which `_error_rows.delegating_writer` reads back with `get_logged_metadata`."""
+        """A `copy.copy` of an `OutputContext` accepts a new `_asset_key` and keeps its own output metadata, which `_error_rows.build_io_manager_writer` reads back with `get_logged_metadata`."""
         original = dg.build_output_context(
             asset_key=dg.AssetKey(["analytics", "orders"]),
             definition_metadata={"partition_expr": "ordered_at"},
@@ -932,10 +932,10 @@ class TestPrivateDagsterApis:
 
 
 class TestExecutableKeys:
-    """The Dagster behaviour that `_executable_keys` and `delegating_writer` read off the run's asset graph (ADR-0007)."""
+    """The Dagster behaviour that `_executable_keys` and `build_io_manager_writer` read off the run's asset graph (ADR-0007)."""
 
     def test_an_in_process_run_still_has_no_repository_definition(self):
-        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph and `_error_rows.delegating_writer` catches to log the error rows' materialization."""
+        """`repository_def` raises `CheckError` in an in-process run, which `_error_rows._executable_keys` catches to read the job's asset graph and `_error_rows.build_io_manager_writer` catches to log the error rows' materialization."""
 
         @dg.asset(name="orders")
         def orders(context: dg.AssetExecutionContext) -> str:
@@ -979,7 +979,7 @@ class TestExecutableKeys:
         assert seen[subset.run_id] == {"orders"}
 
     def test_a_bare_spec_is_still_unexecutable_beside_its_asset(self):
-        """Dagster marks a bare `dg.AssetSpec` unexecutable, which `validate_error_rows_key` and `_error_rows.delegating_writer` both read."""
+        """Dagster marks a bare `dg.AssetSpec` unexecutable, which `validate_error_rows_key` and `_error_rows.build_io_manager_writer` both read."""
         key = dg.AssetKey(["orders"])
 
         @dg.asset(name="orders")

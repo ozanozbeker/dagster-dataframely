@@ -40,32 +40,27 @@ _Avoid_: bad rows, rejected rows, held-back rows
 The per-check counts can add up to more than the number of invalid rows, because a row that fails three rules is three failures and one invalid row.
 _Avoid_: rejection, violation
 
-**Outcome**: How a run ended.
-The word has only this meaning: a rule column's `valid`, `invalid` or `unknown` is not an outcome, and neither is a check's result.
-Say what happened: no rows failed; an `"error"` rule failed and the asset has `filter=False`; every row failed an `"error"` rule; the decorated function returned `None`.
-_Avoid_: exit, the rule-column meaning, "check outcome"
-
 **Skip**: What happens when the decorated function returns `None`.
 The package validates nothing, nothing materializes, the partition stays unmaterialized, and the run succeeds.
-Dagster has no noun for it, only `output_required=False` and "the function can conditionally not `yield` a result".
+Dagster calls the feature conditional materialization and the result a skipped step, so both phrases are allowed.
 _Avoid_: empty run, no-op, conditional materialization
 
 **Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the error-rows key when the asset has `filter=True`.
 They are not an executable asset: they have no step of their own.
-`error_rows_spec` adds them to the asset graph, and then `delegating_writer` logs a materialization for the error-rows key after each write.
+`build_error_rows_spec` adds them to the asset graph, and then `build_io_manager_writer` logs a materialization for the error-rows key after each write.
 With `filter=True`, a run writes the other rows to the asset's table, so the two tables never share a row.
 With `filter=False`, a row that fails an `"error"` rule fails the run, and the package writes nothing.
 ADR-0004, ADR-0006 and ADR-0007 call it the quarantine, and the argument `quarantine`, their names at the time.
 _Avoid_: quarantine, invalid rows (Dataframely's, and it includes rows that failed only `"warn"` rules), bad rows, dead-letter asset
 
 **Writer**: A function that writes the error rows and returns the error-rows address.
-`validation_results` receives only that address.
-`delegating_writer` passes the rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
-`file_writer` writes a parquet file under `error_rows_dir`.
+`stream_results` receives only that address.
+`build_io_manager_writer` passes the rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
+`build_file_writer` writes a parquet file under `error_rows_dir`.
 Name the one you mean.
-_Avoid_: sink, emitter, exporter, router, dispatcher, resolver, and **the fallback** for `file_writer`
+_Avoid_: sink, emitter, exporter, router, dispatcher, resolver, and **the fallback** for `build_file_writer`
 
-**Error-rows address**: Where a writer wrote the error rows, as a string: an asset key from `delegating_writer`, or a file path from `file_writer`.
+**Error-rows address**: Where a writer wrote the error rows, as a string: an asset key from `build_io_manager_writer`, or a file path from `build_file_writer`.
 It is a string because the rows can be in a database table.
 Dagster uses the word address, in `TableMetadataSet.extract_storage_address`.
 This package reports the error-rows address and never the location of the asset's table.
@@ -73,10 +68,10 @@ _Avoid_: location, destination, and `path`, which assumes a filesystem
 
 **Error-rows key**: The asset key a writer writes the error rows under.
 It is `<name>__error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
-`delegating_writer` passes it to the IO manager, and `file_writer` turns it into a path under `error_rows_dir`.
+`build_io_manager_writer` passes it to the IO manager, and `build_file_writer` turns it into a path under `error_rows_dir`.
 _Avoid_: error-rows asset, because nothing executes the error rows; say _the error rows' spec_ for the `dg.AssetSpec`
 
-**`error_rows_dir`**: The directory `file_writer` writes under.
+**`error_rows_dir`**: The directory `build_file_writer` writes under.
 The error-rows key and the partition key form the rest of the file path.
 Set by `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` and nothing else.
 _Avoid_: root, base dir, output dir
@@ -91,17 +86,17 @@ Never a part of this package's own work: the column-schema check and `Schema.fil
 _Avoid_: execution context (Dagster's, but there it names `context` itself), and "step" or "stage" for this package's calls
 
 **Direct invocation**: Calling a decorated asset instead of running it, which is Dagster's documented unit-testing path and its own phrase.
-It is the only case with no step, which is why `file_writer` and `error_rows_dir` exist.
+It is the only case with no step, which is why `build_file_writer` and `error_rows_dir` exist.
 _Avoid_: "test", which is one use of it, not what it is
 
-**`DirectInvocationResult`**: The asset's materialization, or `None` on a skip, and every check result keyed by check name, which `dd.testing.direct_invocation_result` returns from what a direct invocation yields.
+**`DirectInvocationResult`**: The asset's materialization, or `None` on a skip, and every check result keyed by check name, which `dd.testing.DirectInvocationResult.from_invocation` returns from what a direct invocation yields.
 Dagster names its records this way: `dg.materialize` returns an `ExecuteInProcessResult`.
-_Avoid_: outcome (how a run ended), events, invoke result, test result
+_Avoid_: outcome, events, invoke result, test result
 
 **Hand-wiring**: Building a `@dg.asset` from `dd.wiring` instead of using `dd.asset`.
 _Avoid_: the kit, hand-wirer (write "you", or name the function called)
 
-**`validation_results`**: What an asset built with `dd.asset` runs after its decorated function.
+**`stream_results`**: What an asset built with `dd.asset` runs after its decorated function.
 A hand-wired asset calls it directly.
 ADR-0001 through ADR-0004 call it `process`, its name at the time.
 
@@ -149,12 +144,12 @@ A collection filter has one asset check, `dy_filter__<name>`, on each member wit
 Write "collection filter", never "filter" alone, because `filter=True` and `Schema.filter` use that word.
 _Avoid_: filter, cross-member rule, foreign key
 
-**`dd.collection_checks`**: The function that returns a Dataframely `Collection`'s asset checks, as one `dg.AssetChecksDefinition`.
+**`dd.build_collection_checks`**: The function that returns a Dataframely `Collection`'s asset checks, as one `dg.AssetChecksDefinition`.
 Each member of the Collection is an asset the user declares, and the checks report each collection filter on those assets.
 It reads every member's whole table and writes nothing.
 _Avoid_: collection asset, collection door
 
-**`dd.schema_checks`**: The function that returns a schema's asset checks on an asset that `dd.asset` did not build, as one `dg.AssetChecksDefinition`.
+**`dd.build_rule_checks`**: The function that returns a schema's asset checks on an asset that `dd.asset` did not build, as one `dg.AssetChecksDefinition`.
 The checks read the asset's table and write nothing, so a row that fails a rule stays in the table.
 _Avoid_: schema-on-read checks, source checks, external checks
 
@@ -196,9 +191,15 @@ _Avoid_: stats, profile, describe (Polars' `describe()` is a different thing thi
 Polars uses this word, in `polars.datatypes.DataTypeGroup` and the `*_DTYPES` sets beside it.
 _Avoid_: family, class, category
 
-**Sample**: Real rows a run writes to the event log: at most `max_failure_samples` for a check, and at most `row_sample` for a materialization.
+**Row sample**: The first `row_sample` rows of the table, and of the error rows, in the materialization's metadata.
+Polars uses the word, in `DataFrame.sample`, and nothing upstream has one for a preview of a table.
 A sample is absent, never empty.
 _Avoid_: preview, example, head
+
+**Failure examples**: The first `max_failure_examples` rows that failed a rule, in that rule's check result.
+Dataframely uses the word, in `dy.Config.set_max_failure_examples`, for the same rows.
+Write "sample" only for the row sample.
+_Avoid_: failure sample, failed sample
 
 **Reserved namespace**: Three namespaces.
 `dy_` starts every check name, every rule column and the `dy_rule` column of a collapsed check's sample, and nothing a user types.
@@ -220,7 +221,9 @@ Each one makes the reader learn a new word for something that already has a plai
 **split**, **halves**: `Schema.filter` separates valid rows from invalid rows, and those are the words for its two results.
 The verb "split" in its ordinary sense is fine.
 
-**exit**: name the outcome.
+**outcome**, **exit**: say what happened.
+The run wrote the table; the run raised `ValidationAbortError`; every row failed an `"error"` rule; the decorated function returned `None`.
+Dagster has no word for how a run ended beyond the run's status, and a rule column's `valid`, `invalid` or `unknown` is not one either.
 
 **phase**: name the call.
 The column-schema check runs, then `Schema.filter` runs.

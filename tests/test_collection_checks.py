@@ -1,4 +1,4 @@
-"""The asset checks `dd.collection_checks` returns for a Dataframely Collection, and what a run of them reports."""
+"""The asset checks `dd.build_collection_checks` returns for a Dataframely Collection, and what a run of them reports."""
 
 from pathlib import Path
 from typing import Annotated
@@ -106,7 +106,9 @@ def shop_assets(orders_rows: dict[str, list[int]]) -> list[dg.AssetsDefinition]:
     return [
         customers,
         orders,
-        dd.collection_checks(Shop, members={"orders": orders, "customers": customers}),
+        dd.build_collection_checks(
+            Shop, members={"orders": orders, "customers": customers}
+        ),
     ]
 
 
@@ -127,10 +129,10 @@ ORDERS_CHECK = dg.AssetCheckKey(
 
 
 class TestDefinition:
-    """The definition `dd.collection_checks` returns."""
+    """The definition `dd.build_collection_checks` returns."""
 
     def test_a_foreign_key_has_one_check_on_the_referencing_member(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             Shop, members={"orders": ORDERS, "customers": CUSTOMERS}
         )
 
@@ -143,7 +145,7 @@ class TestDefinition:
         assert spec.description == "Every order's customer exists."
 
     def test_members_that_share_a_primary_key_each_have_a_check(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook,
             members=INVOICE_MEMBERS,
         )
@@ -161,7 +163,7 @@ class TestDefinition:
         }
 
     def test_a_warn_collection_filter_has_a_non_blocking_check(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook,
             members=INVOICE_MEMBERS,
         )
@@ -169,7 +171,7 @@ class TestDefinition:
         assert not any(spec.blocking for spec in checks.check_specs)
 
     def test_an_undocumented_collection_filter_is_described_by_its_name(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook,
             members=INVOICE_MEMBERS,
         )
@@ -179,7 +181,7 @@ class TestDefinition:
         }
 
     def test_a_lazy_member_is_an_input_typed_as_a_lazy_frame(self):
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             Shop, members={"orders": ORDERS, "customers": CUSTOMERS}
         )
 
@@ -190,11 +192,11 @@ class TestDefinition:
 
 
 class TestCallErrors:
-    """The errors `dd.collection_checks` raises when it is called."""
+    """The errors `dd.build_collection_checks` raises when it is called."""
 
     def test_a_missing_required_member_raises(self):
         with pytest.raises(InvalidMembersError) as raised:
-            dd.collection_checks(Shop, members={"orders": ORDERS})
+            dd.build_collection_checks(Shop, members={"orders": ORDERS})
 
         assert str(raised.value) == (
             "`members` lacks the required member 'customers' of Shop. "
@@ -203,7 +205,7 @@ class TestCallErrors:
 
     def test_an_unknown_member_name_raises(self):
         with pytest.raises(InvalidMembersError) as raised:
-            dd.collection_checks(
+            dd.build_collection_checks(
                 Shop,
                 members={"orders": ORDERS, "customers": CUSTOMERS, "refunds": ORDERS},
             )
@@ -219,7 +221,7 @@ class TestCallErrors:
         )
 
         with pytest.raises(InvalidMembersError) as raised:
-            dd.collection_checks(
+            dd.build_collection_checks(
                 Shop, members={"orders": daily, "customers": CUSTOMERS}
             )
 
@@ -234,7 +236,7 @@ class TestCallErrors:
         def warehouse(): ...
 
         with pytest.raises(InvalidMembersError) as raised:
-            dd.collection_checks(
+            dd.build_collection_checks(
                 Shop, members={"orders": warehouse, "customers": CUSTOMERS}
             )
 
@@ -249,7 +251,7 @@ class TestCallErrors:
             ]
 
         with pytest.raises(FailurePropagationError) as raised:
-            dd.collection_checks(
+            dd.build_collection_checks(
                 Propagating,
                 members=INVOICE_MEMBERS,
             )
@@ -269,7 +271,7 @@ class TestCallErrors:
                 ),
             ]
 
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             IgnoredPropagating,
             members=INVOICE_MEMBERS,
         )
@@ -284,7 +286,7 @@ class TestCallErrors:
                 dy.CollectionMember(propagate_row_failures=True),
             ]
 
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             OptionalPropagating, members={"invoices": dg.AssetSpec("invoices")}
         )
 
@@ -304,7 +306,7 @@ class TestCallErrors:
                 ).lazy()
 
         with pytest.raises(InvalidSeverityError) as raised:
-            dd.collection_checks(
+            dd.build_collection_checks(
                 Misdeclared,
                 members=INVOICE_MEMBERS,
             )
@@ -337,7 +339,7 @@ class TestRun:
         )
         assert evaluation.metadata["dataframely/failed_row_count"].value == 1
         assert evaluation.description == "1 row failed."
-        assert records(evaluation.metadata["dataframely/failed_sample"]) == [
+        assert records(evaluation.metadata["dataframely/failed_examples"]) == [
             {"order_id": 12, "customer_id": 99}
         ]
 
@@ -353,7 +355,7 @@ class TestRun:
             == "order_references_customer"
         )
         assert "dataframely/failed_row_count" not in evaluation.metadata
-        assert "dataframely/failed_sample" not in evaluation.metadata
+        assert "dataframely/failed_examples" not in evaluation.metadata
         assert evaluation.description == "No row failed."
 
     def test_a_failing_error_check_stops_its_members_downstream_asset(
@@ -383,7 +385,7 @@ class TestRun:
         def invoice_lines() -> pl.DataFrame:
             return pl.DataFrame({"invoice_id": [1], "line": [1]})
 
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook, members={"invoices": invoices, "lines": invoice_lines}
         )
         assets = [invoices, invoice_lines, checks]
@@ -409,7 +411,7 @@ class TestRun:
         def invoice_lines() -> pl.DataFrame:
             return pl.DataFrame({"invoice_id": [1], "line": [1]})
 
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             InvoiceBook, members={"invoices": invoices, "lines": invoice_lines}
         )
 
@@ -423,7 +425,7 @@ class TestRun:
     def test_an_optional_member_left_out_is_not_read(self, tmp_path: Path):
         assets = shop_assets({"order_id": [10], "customer_id": [1]})
         customers, orders, _ = assets
-        checks = dd.collection_checks(
+        checks = dd.build_collection_checks(
             ShopWithPromos, members={"orders": orders, "customers": customers}
         )
 

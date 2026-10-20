@@ -1,6 +1,6 @@
-"""`dd.schema_checks`, which reports a schema's rules as asset checks on a table that something other than `dd.asset` wrote.
+"""`dd.build_rule_checks`, which reports a schema's rules as asset checks on a table that something other than `dd.asset` wrote.
 
-It builds one `@dg.multi_asset_check` from `asset_check_specs` and `asset_check_results`, as `_collection.py` does for a Collection's collection filters.
+It builds one `@dg.multi_asset_check` from `build_asset_check_specs` and `evaluate_checks`, as `_collection.py` does for a Collection's collection filters.
 It resolves each setting once and passes the value to both, so the results always name the checks the specs declare.
 """
 
@@ -10,16 +10,16 @@ import dagster as dg
 import dataframely as dy
 import polars as pl
 
-from dagster_dataframely._checks import asset_check_results, asset_check_specs
+from dagster_dataframely._checks import build_asset_check_specs, evaluate_checks
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
-    MAX_FAILURE_SAMPLES,
+    MAX_FAILURE_EXAMPLES,
     Granularity,
 )
 from dagster_dataframely.errors import ColumnSchemaError
 
 
-def schema_checks(  # noqa: PLR0913 - takes the specs' settings
+def build_rule_checks(  # noqa: PLR0913 - takes the specs' settings
     schema: type[dy.Schema],
     /,
     *,
@@ -27,7 +27,7 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
     name: str | None = None,
     partitions_def: dg.PartitionsDefinition | None = None,
     check_granularity: Granularity | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
 ) -> dg.AssetChecksDefinition:
     """Return an asset check for each of the schema's rules on `asset`, plus the column-schema check.
 
@@ -62,8 +62,8 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
     """
     key: dg.AssetKey = dg.AssetKey.from_coercible(asset)
     granularity: Granularity = CHECK_GRANULARITY.resolve(check_granularity)
-    failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
-    specs: list[dg.AssetCheckSpec] = asset_check_specs(
+    failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
+    specs: list[dg.AssetCheckSpec] = build_asset_check_specs(
         schema,
         asset=key,
         partitions_def=partitions_def,
@@ -74,12 +74,12 @@ def schema_checks(  # noqa: PLR0913 - takes the specs' settings
         context: dg.AssetCheckExecutionContext, table: pl.DataFrame
     ) -> Iterator[dg.AssetCheckResult]:
         selected: set[str] = {check.name for check in context.selected_asset_check_keys}
-        results: Iterator[dg.AssetCheckResult] = asset_check_results(
+        results: Iterator[dg.AssetCheckResult] = evaluate_checks(
             schema,
             table,
             asset_key=key,
             check_granularity=granularity,
-            max_failure_samples=failure_samples,
+            max_failure_examples=failure_examples,
         )
         try:
             yield from (result for result in results if result.check_name in selected)

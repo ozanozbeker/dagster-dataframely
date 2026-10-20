@@ -1,6 +1,6 @@
 """What an asset built with `dd.asset` runs after its decorated function.
 
-Choosing an outcome requires collecting the valid and the invalid rows (`docs/pre-1.0.md`).
+Whether the run writes the table depends on both the valid and the invalid rows, so it collects both (`docs/pre-1.0.md`).
 `Schema.filter` removes every invalid row, so the rows that failed only `"warn"` rules are read back from `FailureInfo` and appended to the valid rows, not to the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-warn`).
 """
 
@@ -18,20 +18,17 @@ from dagster_dataframely._checks import (
     rule_columns,
 )
 from dagster_dataframely._error_rows import ErrorRowsWriter
-from dagster_dataframely._naming import asset_check_name
+from dagster_dataframely._naming import get_check_name_for_rule
 from dagster_dataframely._rules import described_rules, validate_namespace
 from dagster_dataframely._samples import TABLE_SAMPLE_KEY, sample_metadata, sample_rows
 from dagster_dataframely._settings import (
-    MAX_FAILURE_SAMPLES,
+    MAX_FAILURE_EXAMPLES,
     ROW_SAMPLE,
     STATISTICS,
     Granularity,
 )
 from dagster_dataframely._statistics import statistics_metadata
 from dagster_dataframely.errors import NoValidRowsError, ValidationAbortError
-
-AssetYield = Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]
-"""What `validation_results` yields: the asset's materialization, if the run writes its table, then one result per check. Use it as the return annotation of a hand-wired asset's function."""
 
 _ADDRESS_KEY = "dataframely/error_rows_address"
 _ERROR_ROWS_COUNT_KEY = "dataframely/error_rows_count"
@@ -50,14 +47,14 @@ def _require_frame(frame: object, asset: str) -> None:
     """
     if frame is None or isinstance(frame, (pl.DataFrame, pl.LazyFrame)):
         return
-    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. An asset built with `dd.asset` must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. It can also return a `dg.MaterializeResult` whose `value` is the frame, to add metadata, tags or a data version, or `None` to skip the asset when a partition has no source data. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.schema_metadata` to fill its Columns tab."
+    wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. An asset built with `dd.asset` must return a Polars DataFrame or LazyFrame, because the column-schema check reads its columns and dtypes before anything is written. It can also return a `dg.MaterializeResult` whose `value` is the frame, to add metadata, tags or a data version, or `None` to skip the asset when a partition has no source data. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dagster_dataframely.wiring.get_column_schema_metadata` to fill its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
 
 
 def _with_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> pl.DataFrame:
     """Rename the rule columns to their check names, as `String`."""
     renames: dict[str, str] = {
-        rule: asset_check_name(rule) for rule in rule_columns(schema, details)
+        rule: get_check_name_for_rule(rule) for rule in rule_columns(schema, details)
     }
     return details.rename(renames).with_columns(
         pl.col(name).cast(pl.String) for name in renames.values()
@@ -93,12 +90,12 @@ def _error_rules(schema: type[dy.Schema]) -> set[str]:
     }
 
 
-def error_rows_frame(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
+def get_error_rows(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
     """Return the rows that failed an `"error"` rule, as a writer receives them, with one rule column per rule.
 
     Returns
     -------
-    The original columns in their own order, then a `String` rule column for every rule, named by `asset_check_name`. A rule column's value is `valid`, `invalid` or `unknown`.
+    The original columns in their own order, then a `String` rule column for every rule, named by `get_check_name_for_rule`. A rule column's value is `valid`, `invalid` or `unknown`.
 
     Raises
     ------
@@ -140,7 +137,7 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     It sorts the sets because `cooccurrence_counts()` returns them in arbitrary order.
     """
     ordered: list[tuple[int, str]] = sorted(
-        (-n, ", ".join(sorted(asset_check_name(rule) for rule in rules)))
+        (-n, ", ".join(sorted(get_check_name_for_rule(rule) for rule in rules)))
         for rules, n in counts.items()
     )
     return dg.MetadataValue.table([
@@ -148,32 +145,32 @@ def _cooccurrence(counts: Mapping[frozenset[str], int]) -> dg.TableMetadataValue
     ])
 
 
-def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
+def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     schema: type[dy.Schema],
     frame: pl.DataFrame | pl.LazyFrame | None,
     *,
-    valid_key: dg.AssetKey,
+    asset_key: dg.AssetKey,
     error_rows_writer: ErrorRowsWriter | None = None,
     check_granularity: Granularity | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
     partitioned: bool = False,
-) -> AssetYield:
+) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
     """Validate a frame and yield the asset's materialization and check results.
 
     Parameters
     ----------
     frame
         The frame to validate, or `None` to skip.
-    valid_key
+    asset_key
         The key the run materializes the table under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
     error_rows_writer
-        The writer for the rows that failed an `"error"` rule, called at most once, with the frame `error_rows_frame` returns. It receives every such row, because the error rows are the only copy of the rows that a run with `filter=True` leaves out of the table (`docs/out-of-scope/dbt-test-configs.md#limit`). When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
+        The writer for the rows that failed an `"error"` rule, called at most once, with the frame `get_error_rows` returns. It receives every such row, because the error rows are the only copy of the rows that a run with `filter=True` leaves out of the table (`docs/out-of-scope/dbt-test-configs.md#limit`). When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `build_asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
-        Pass the value `asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
-    max_failure_samples
-        A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_SAMPLES` if set, else `5`.
+        Pass the value `build_asset_check_specs` received, or the results name checks the asset does not declare. `None` uses `DAGSTER_DATAFRAMELY_CHECK_GRANULARITY` if set, else `rule`.
+    max_failure_examples
+        A rule's check metadata has at most this many rows that failed it. `None` uses `DAGSTER_DATAFRAMELY_MAX_FAILURE_EXAMPLES` if set, else `5`.
     statistics
         Whether the materialization metadata has statistics of the written rows. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
@@ -207,22 +204,22 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         Every row failed an `"error"` rule. It writes the error rows, and not the asset's table.
     """
     validate_namespace(schema)
-    _require_frame(frame, valid_key.to_user_string())
-    # Resolved before any outcome, so a mistyped environment variable fails every run.
+    _require_frame(frame, asset_key.to_user_string())
+    # Resolved before anything is written, so a mistyped environment variable fails every run.
     emit_statistics: bool = STATISTICS.resolve(statistics)
-    failure_samples: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+    failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     sampled_rows: int = ROW_SAMPLE.resolve(row_sample)
 
     def checks_for(failure: dy.FailureInfo) -> list[dg.AssetCheckResult]:
         """Return a passing column-schema result and every rule result."""
         return [
-            column_schema_result(asset_key=valid_key),
+            column_schema_result(asset_key=asset_key),
             *rule_check_results(
                 schema,
                 failure,
-                asset_key=valid_key,
+                asset_key=asset_key,
                 check_granularity=check_granularity,
-                max_failure_samples=failure_samples,
+                max_failure_examples=failure_examples,
             ),
         ]
 
@@ -232,7 +229,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
         yield from checks_for(nothing)
         return
 
-    valid, failure = yield from filtered(schema, frame, asset_key=valid_key)
+    valid, failure = yield from filtered(schema, frame, asset_key=asset_key)
     checks: list[dg.AssetCheckResult] = checks_for(failure)
     errors: set[str] = _error_rules(schema)
     warned, error_rows = _warned_and_error_rows(schema, failure, errors)
@@ -246,7 +243,7 @@ def validation_results(  # noqa: PLR0913 - hand-wiring passes all of these
     ) -> dg.MaterializeResult[pl.DataFrame]:
         """Return the asset's materialization."""
         return dg.MaterializeResult(
-            asset_key=valid_key,
+            asset_key=asset_key,
             value=table,
             metadata={
                 count_key: len(table),

@@ -9,7 +9,7 @@ RESERVED_NAMESPACE = "dy_"
 COLUMN_SCHEMA_CHECK = "dy_schema__columns"
 
 
-def asset_check_name(rule_name: str) -> str:
+def get_check_name_for_rule(rule_name: str) -> str:
     """Return the asset check name for the Dataframely rule named `rule_name`.
 
     The error rows' rule columns and the checks at `rule` granularity have this name.

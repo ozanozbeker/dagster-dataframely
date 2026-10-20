@@ -1,4 +1,4 @@
-"""`dd.collection_checks`, which reports a Dataframely Collection's collection filters as asset checks on the member assets the user declares.
+"""`dd.build_collection_checks`, which reports a Dataframely Collection's collection filters as asset checks on the member assets the user declares.
 
 The checks read the tables those assets wrote, and they evaluate only the collection filters.
 They never change a table: `docs/out-of-scope/collection-assets.md` records why a Collection produces no assets.
@@ -17,7 +17,7 @@ from dagster_dataframely._checks import failed_rows_description
 from dagster_dataframely._naming import collection_filter_check_name
 from dagster_dataframely._rules import Severity, collection_filter_severities, quoted
 from dagster_dataframely._samples import sample_metadata, sample_rows
-from dagster_dataframely._settings import MAX_FAILURE_SAMPLES
+from dagster_dataframely._settings import MAX_FAILURE_EXAMPLES
 from dagster_dataframely.errors import FailurePropagationError, InvalidMembersError
 
 type Members = Mapping[str, dg.AssetsDefinition | dg.AssetSpec]
@@ -113,13 +113,13 @@ def _filter_checks(
     ]
 
 
-def collection_checks(
+def build_collection_checks(
     collection: type[dy.Collection],
     /,
     *,
     members: Members,
     name: str | None = None,
-    max_failure_samples: int | None = None,
+    max_failure_examples: int | None = None,
 ) -> dg.AssetChecksDefinition:
     """Return an asset check for each collection filter of `collection` on each of its member assets.
 
@@ -149,7 +149,7 @@ def collection_checks(
         member: asset.key for member, asset in members.items()
     }
     severities: dict[str, Severity] = collection_filter_severities(collection)
-    limit: int = MAX_FAILURE_SAMPLES.resolve(max_failure_samples)
+    limit: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     checks: list[_FilterCheck] = _filter_checks(collection, keys, severities)
     # Dagster rejects an input that no spec depends on, so a Collection with nothing to check reads nothing.
     inputs: dict[str, dg.AssetKey] = keys if checks else {}
@@ -174,7 +174,7 @@ def collection_checks(
                 details: pl.DataFrame = failure[check.member].details()
                 metadata["dataframely/failed_row_count"] = failed
                 metadata |= sample_metadata(
-                    "dataframely/failed_sample",
+                    "dataframely/failed_examples",
                     sample_rows(
                         details.filter(pl.col(check.filter_name) == "invalid").select(
                             columns

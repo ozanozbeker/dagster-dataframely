@@ -1,7 +1,7 @@
 """Direct invocation of an asset built with `dd.asset`.
 
 Each test runs an outcome twice, once by a call and once by `dg.materialize`, because a call must yield the same keys, row counts and check results as a run.
-A call has no IO manager, so an asset with `filter=True` writes its error rows with `file_writer` under `error_rows_dir` (ADR-0006).
+A call has no IO manager, so an asset with `filter=True` writes its error rows with `build_file_writer` under `error_rows_dir` (ADR-0006).
 """
 
 from collections.abc import Callable
@@ -41,7 +41,7 @@ def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefi
 
 def _called(asset: dg.AssetsDefinition, *, filtering: bool) -> DirectInvocationResult:
     """Call the asset, passing a context when `filter=True` adds a `context` parameter."""
-    return dd.testing.direct_invocation_result(
+    return dd.testing.DirectInvocationResult.from_invocation(
         asset(*((dg.build_asset_context(),) if filtering else ()))
     )
 
@@ -142,7 +142,7 @@ def test_a_column_schema_drift_raises_out_of_the_call():
     asset = _orders(wrong_dtype_orders)
 
     with pytest.raises(ColumnSchemaError) as raised:
-        dd.testing.direct_invocation_result(asset())
+        dd.testing.DirectInvocationResult.from_invocation(asset())
 
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
@@ -172,7 +172,7 @@ def test_a_call_writes_the_error_rows_under_the_error_rows_key_it_set(
         error_rows_io_manager_key="audit",
     )
 
-    called = dd.testing.direct_invocation_result(
+    called = dd.testing.DirectInvocationResult.from_invocation(
         asset(dg.build_asset_context(resources={"audit": None}))
     )
     path = error_rows_dir / "audit" / "orders__error_rows.parquet"
@@ -230,7 +230,7 @@ def test_a_called_partitioned_error_rows_lands_under_its_partition(
     def orders() -> pl.DataFrame:
         return mixed_orders()
 
-    dd.testing.direct_invocation_result(
+    dd.testing.DirectInvocationResult.from_invocation(
         orders(dg.build_asset_context(partition_key="2026-01-02"))
     )
 
@@ -247,7 +247,7 @@ def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_buil
         return clean_orders()
 
     materialization = _materialization(
-        dd.testing.direct_invocation_result(
+        dd.testing.DirectInvocationResult.from_invocation(
             orders(dg.build_asset_context(partition_key="2026-01-02"))
         )
     )
@@ -267,7 +267,7 @@ def test_a_decorated_function_taking_context_alongside_an_input_is_invocable_too
         return raw_orders
 
     materialization = _materialization(
-        dd.testing.direct_invocation_result(
+        dd.testing.DirectInvocationResult.from_invocation(
             orders(dg.build_asset_context(), clean_orders())
         )
     )
