@@ -1,7 +1,7 @@
 # One Resolved Settings Value
 
 The `wiring` functions take each setting as a separate keyword argument, and each function resolves the settings it reads.
-`dd.asset` resolves its five settings once, where you declare the asset, and passes the resolved values to `asset_check_specs` and `validation_results`.
+`dd.asset` resolves its four setting arguments once, where you declare the asset, and passes the resolved values to `build_asset_check_specs` and `stream_results`.
 No public value holds the resolved settings.
 
 ## Why this is out of scope
@@ -9,11 +9,11 @@ No public value holds the resolved settings.
 Proposed as [#65](https://github.com/ozanozbeker/dagster-dataframely/issues/65) on 2026-08-12 and shelved the same day.
 Its status was reviewed on 2026-09-13.
 The maintainer moved it to the v1.0.0 milestone on 2026-10-15 and rejected it the same day.
-The counts below are from `ec0b583`.
+The counts below are from `ec0b583`, under the names the functions had before 0.11.
 
 The proposal was one public `Settings` class.
 `Settings.resolve()` would read each setting's sources and return a frozen value, and constructing one directly would require every field.
-`asset_check_specs` and the run-time function would take `settings=` in place of the separate arguments.
+`build_asset_check_specs` and `stream_results` would take `settings=` in place of the separate arguments.
 `dd.asset` would keep its keyword arguments, so a user of the decorator would see no change.
 
 ### Only shorter signatures are left
@@ -21,8 +21,9 @@ The proposal was one public `Settings` class.
 The proposal listed four benefits.
 
 The first was a correctness problem.
-`error_rows_dir` resolved in the decorator and again where the invalid rows are written, so a worker's environment overrode the code location's. [#115](https://github.com/ozanozbeker/dagster-dataframely/issues/115) made that the intended behaviour.
-`dd.asset` now resolves `error_rows_dir` only to raise on a malformed value, and `_error_rows.py` reads it again when a direct invocation writes the invalid rows.
+`error_rows_dir` resolved in the decorator and again where the error rows are written, so a worker's environment overrode the code location's.
+Issue [#115](https://github.com/ozanozbeker/dagster-dataframely/issues/115) made that the intended behaviour.
+`dd.asset` now resolves `error_rows_dir` only to raise on a malformed value, and `_error_rows.py` reads it again when a direct invocation writes the error rows.
 
 The other three measure the size of the code:
 
@@ -35,13 +36,13 @@ It would change nothing a user of `dd.asset` writes or reads.
 
 ### It adds a public type for hand-wiring alone
 
-`asset_check_specs`, `asset_check_results` and `validation_results` are public, so the value they take would be public too.
+`build_asset_check_specs`, `evaluate_checks` and `stream_results` are public, so the value they take would be public too.
 `dd.asset` keeps its keyword arguments, so only hand-wiring would construct a `Settings`.
 After 1.0, removing that type is a breaking change.
 
 The type would also no longer hold every setting.
-`ERROR_ROWS_DIR` sets `takes_argument=False`, so `dd.asset` takes no argument for it, and a `Settings` would hold five values.
-A sixth field would mean something different from the other five.
+`ERROR_ROWS_DIR` sets `takes_argument=False`, so `dd.asset` takes no argument for it, and a `Settings` would hold four values.
+A fifth field would mean something different from the other four.
 
 ### Nothing requires a breaking change after 1.0
 
@@ -58,8 +59,8 @@ So settling this before 1.0 does not prevent any later option.
 ## If someone proposes this again
 
 The package gaining settings, or functions that take them, would reopen it.
-[Rule sets fixed at definition time](rule-sets-fixed-at-definition-time.md) names the nearest case: a third grouping setting, or a fourth public function that a user must pass `check_granularity` and `schema_rules` to by hand.
-`dd.schema_checks` takes both and resolves them itself, as `dd.asset` does, so it is not that case.
+[Rule sets fixed at definition time](rule-sets-fixed-at-definition-time.md) names the nearest case: a second setting that changes the rule sets, or a fourth public function that a user must pass `check_granularity` to by hand.
+`dd.build_rule_checks` takes `check_granularity` and resolves it itself, as `dd.asset` does, so it is not that case.
 
 Build it as an additive change.
 Add `settings: Settings | None = None` to each `wiring` function that takes settings, keep the separate keyword arguments, and raise when a call passes both.

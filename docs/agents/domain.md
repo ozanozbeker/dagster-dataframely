@@ -1,16 +1,23 @@
 # Domain Docs
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+This page sets how the engineering skills read this repo's domain documentation when they explore the codebase.
 
 This repo is **single-context**: one `CONTEXT.md` and one `docs/pre-1.0.md` at the root.
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root.
-- **`docs/pre-1.0.md`**. It records every decision and measurement the package was built on. Read the entries that touch the area you're about to work in. It is closed at 1.0, so nothing is added to it.
-- **`docs/out-of-scope/`** — one file per rejected concept, with the measurements that rejected it. Read before proposing a feature, so a settled question is not re-derived.
+These two files record the project's words and its settled decisions.
 
-If any of these files don't exist, **proceed silently**. Don't flag their absence; don't suggest creating them upfront. The `/domain-modeling` skill (reached via `/grill-with-docs` and `/improve-codebase-architecture`) creates them lazily when terms or decisions actually get resolved.
+- **`CONTEXT.md`** lists the word for each thing.
+- **`docs/pre-1.0.md`** records the decisions and the measurements made before the record closed, with each decision under its ADR number.
+  Read the entries that touch the area you're about to work in.
+  A later decision is in the module that implements it.
+- **`docs/out-of-scope/`** has one file per rejected concept, with the measurements that justify the rejection.
+  Read it before you propose a feature, so you do not re-derive a settled question.
+
+The `/domain-modeling` skill updates `CONTEXT.md` when a term is resolved.
+`/grill-with-docs` and `/improve-codebase-architecture` both use it.
+Do not create `docs/adr/` for a new decision: write the decision in the module that implements it, and write a declined design in `docs/out-of-scope/`.
 
 ## File structure
 
@@ -30,12 +37,13 @@ If this repo ever splits into multiple bounded contexts, add a root `CONTEXT-MAP
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as `CONTEXT.md` defines it.
+Do not use a synonym that the glossary lists under _Avoid_.
 
-If the concept you need isn't in the glossary yet, that's a signal — either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
+If the concept you need isn't in the glossary yet, either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 
-## Flag ADR conflicts
+## Flag conflicts with a recorded decision
 
-If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
+If your output contradicts an ADR in `docs/pre-1.0.md`, a reason in a module's docstring, or a file in `docs/out-of-scope/`, say so explicitly instead of overriding it:
 
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+> _Contradicts ADR-0007 in `docs/pre-1.0.md` (the error-rows key is checked at run time), but worth reopening because…_

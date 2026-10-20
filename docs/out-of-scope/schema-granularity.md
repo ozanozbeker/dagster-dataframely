@@ -2,7 +2,7 @@
 
 `check_granularity` accepts `rule` and `column`.
 It does not accept `schema`, which gave one check, `dy_schema__rules`, for every rule of the schema.
-At `column` granularity, `dy_schema__rules` still reports the schema-level rules when `schema_rules="collapsed"`.
+At `column` granularity, each schema-level rule has its own `dy_rule__<rule>` check, as [Collapsing the schema-level rules](schema-rules.md) records.
 
 ## Why this is out of scope
 
@@ -37,7 +37,7 @@ Each new check result feature still handled it, as [#141](https://github.com/oza
 dagster-dbt makes one asset check per dbt data test, and has no setting that collapses them.
 A dbt model has one test per entry in its YAML, so a model with no tests has no checks.
 Dataframely generates rules from the column types and their defaults, so a schema with no constraints written still has rules.
-These are the check counts from `asset_check_specs`, without the column-schema check:
+These are the check counts from `build_asset_check_specs`, without the column-schema check:
 
 | schema, with no constraints written | `rule` | `column` | `schema` |
 | --- | --- | --- | --- |
@@ -50,13 +50,13 @@ These are the check counts from `asset_check_specs`, without the column-schema c
 
 ### Removing it saves little code
 
-`column` still collapses rules, so the collapsed metadata, the collapsed description and the grouping of rules into checks all stay.
+`column` still collapses rules, so the collapsed metadata, the collapsed description and the collapsed rule sets all stay.
 The removal saves one mode that each new check result feature handles and tests.
 
 ## If someone proposes this again
 
 A user who wants one pass or fail result per asset can read the run's status, or the asset's health, which any failing check sets.
-A request for fewer checks on a wide schema is a request for `column`, or for a grouping between `column` and `rule`, not for one check per schema.
+A request for fewer checks on a wide schema is a request for `column`, or for a granularity between `column` and `rule`, not for one check per schema.
 
 ## Prior requests
 

@@ -9,7 +9,7 @@ _Avoid_ lists words not to use **for the term above it**.
 The rule covers the meaning, not the string: `sink_parquet` is Polars' own name and not a writer, so the rule allows it.
 
 This is a glossary.
-The reason a thing works the way it does belongs in `docs/pre-1.0.md` or in the module that does it.
+The reason a thing works the way it does goes in the module that does it, and `docs/pre-1.0.md` keeps the reasons recorded before it closed.
 
 ## Language
 
@@ -19,7 +19,6 @@ The reason a thing works the way it does belongs in `docs/pre-1.0.md` or in the 
 Dagster owns this word, and `dd.asset` builds a `dg.asset` with a schema attached, by calling `@dg.asset`.
 Dataframely names its types the same way: `dy.DataFrame` is a `pl.DataFrame` with a schema, as `dd.asset` is a `dg.asset` with one.
 **Always written `dd.asset`, never bare**, in prose and in an example, because bare `asset` reads as Dagster's.
-ADR-0002, ADR-0005 and ADR-0008 call it `dataframely_asset` or `dy_asset`, its names at the time.
 _Avoid_: dataframely_asset, dy_asset, door, front door
 
 **Decorated function**: The function `dd.asset` wraps.
@@ -42,19 +41,20 @@ _Avoid_: rejection, violation
 
 **Skip**: What happens when the decorated function returns `None`.
 The package validates nothing, nothing materializes, the partition stays unmaterialized, and the run succeeds.
-Dagster calls the feature conditional materialization and the result a skipped step, so both phrases are allowed.
-_Avoid_: empty run, no-op, conditional materialization
+Dagster calls the feature conditional materialization: the asset's step succeeds, and Dagster skips each step downstream of it.
+_Avoid_: empty run, no-op, skipped step (Dagster's, for the downstream steps)
 
 **Error rows**: The rows that failed at least one `"error"` rule, which a writer writes under the error-rows key when the asset has `filter=True`.
 They are not an executable asset: they have no step of their own.
 `build_error_rows_spec` adds them to the asset graph, and then `build_io_manager_writer` logs a materialization for the error-rows key after each write.
 With `filter=True`, a run writes the other rows to the asset's table, so the two tables never share a row.
 With `filter=False`, a row that fails an `"error"` rule fails the run, and the package writes nothing.
-ADR-0004, ADR-0006 and ADR-0007 call it the quarantine, and the argument `quarantine`, their names at the time.
+`docs/pre-1.0.md` calls them the quarantine.
+The rename tables in `CHANGELOG.md` map each public name that `docs/pre-1.0.md` uses, such as `quarantine_writer` and `delegating_writer`, to the current one.
 _Avoid_: quarantine, invalid rows (Dataframely's, and it includes rows that failed only `"warn"` rules), bad rows, dead-letter asset
 
 **Writer**: A function that writes the error rows and returns the error-rows address.
-`stream_results` receives only that address.
+`stream_results` calls the writer and reads only the address it returns.
 `build_io_manager_writer` passes the rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
 `build_file_writer` writes a parquet file under `error_rows_dir`.
 Name the one you mean.
@@ -73,7 +73,7 @@ _Avoid_: error-rows asset, because nothing executes the error rows; say _the err
 
 **`error_rows_dir`**: The directory `build_file_writer` writes under.
 The error-rows key and the partition key form the rest of the file path.
-Set by `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` and nothing else.
+`dd.asset` reads it from `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` and nothing else, and `build_file_writer` takes it as an argument.
 _Avoid_: root, base dir, output dir
 
 **Rule column**: A column of the error rows with one rule's result per row: `valid`, `invalid` or `unknown`.
@@ -81,12 +81,12 @@ Dataframely uses this term, in `FailureInfo.details()`.
 _Avoid_: outcome column
 
 **Step**: Dagster's unit of execution, one node of the run's execution plan.
-Only a run has one, which is how the package tells a run from a direct invocation.
-Never a part of this package's own work: the column-schema check and `Schema.filter` are two calls, not two steps.
+Only a run has one, so the package checks for a step to detect a direct invocation.
+A step is never part of this package's own work: the column-schema check and `Schema.filter` are two calls, not two steps.
 _Avoid_: execution context (Dagster's, but there it names `context` itself), and "step" or "stage" for this package's calls
 
 **Direct invocation**: Calling a decorated asset instead of running it, which is Dagster's documented unit-testing path and its own phrase.
-It is the only case with no step, which is why `build_file_writer` and `error_rows_dir` exist.
+It is the only case with no step, so `dd.asset` writes the error rows with `build_file_writer`, under `error_rows_dir`.
 _Avoid_: "test", which is one use of it, not what it is
 
 **`DirectInvocationResult`**: The asset's materialization, or `None` on a skip, and every check result keyed by check name, which `dd.testing.DirectInvocationResult.from_invocation` returns from what a direct invocation yields.
@@ -98,7 +98,7 @@ _Avoid_: the kit, hand-wirer (write "you", or name the function called)
 
 **`stream_results`**: What an asset built with `dd.asset` runs after its decorated function.
 A hand-wired asset calls it directly.
-ADR-0001 through ADR-0004 call it `process`, its name at the time.
+`docs/pre-1.0.md` calls it `validation_results`, its name before 0.11.
 
 **Code version**: Dagster's `code_version`, which `dd.asset` derives from the schema when the decorator gets none.
 Dagster uses this word, and dagster-dbt derives one from a model in the same way.
@@ -123,8 +123,8 @@ Dataframely uses this word, in the `column_rules` it builds as `f"{col_name}|{ru
 **Rule name**: The part after the `|`.
 For example, `amount|min` has the rule name `min`.
 Dataframely uses this word, on that same line.
-It differs from the column argument Dataframely generated the rule from for four arguments: `nullable=False` generates `nullability`, `allow_inf=False` generates `inf`, `allow_nan=False` generates `nan`, and `check={"lowercase": ...}` generates `check__lowercase`.
-A `dy.List` or `dy.Array` adds `inner_` to each rule name of its inner column.
+It differs from the column argument Dataframely generated the rule from for four arguments: `nullable=False` generates `nullability`, `allow_inf=False` generates `inf`, `allow_nan=False` generates `nan`, and `check=` generates `check__<key>` from a dict and `check__<index>` from a list.
+A `dy.List` or `dy.Array` adds `inner_` to each rule name of its inner column, and a `dy.Struct` adds `inner_<field>_`.
 _Avoid_: kind (Dagster's `kinds=` is the asset's badges, and `dd.asset` adds `polars` to it), type, flavour
 
 **Schema-level rule**: A rule that belongs to no single column: a `@dy.rule()`, and `primary_key`.
@@ -153,7 +153,7 @@ _Avoid_: collection asset, collection door
 The checks read the asset's table and write nothing, so a row that fails a rule stays in the table.
 _Avoid_: schema-on-read checks, source checks, external checks
 
-**`DescribedRule`**: One rule with everything this package derives from it: its check name, its column and rule name, its docstring, and its expression.
+**`DescribedRule`**: One rule with everything this package derives from it: its check name, its column and rule name, its severity, its docstring, and its expression.
 _Avoid_: parsed rule, rule info, rule spec, enriched rule
 
 **Rule set**: The rules one asset check reports for.
@@ -161,13 +161,13 @@ A check reports one rule at `rule` granularity, and one column's rules at `colum
 A schema-level rule is its own rule set at both.
 _Avoid_: bucket, "member rule" (member is Dataframely's word for a Collection member)
 
-**Granularity**: How many checks the package collapses the rules into, which `check_granularity` sets: one per rule at `rule`, and one per column at `column`.
-Coined: Dagster's only `granularity` is an internal concurrency setting, and neither Dataframely nor Polars has one.
+**Granularity**: How many checks the package collapses the rules into, which `check_granularity` sets: one per rule at `rule`, and at `column` one per column with rules plus one per schema-level rule.
+Coined: Dagster's only `granularity` is `concurrency.pools.granularity` in `dagster.yaml`, and neither Dataframely nor Polars has one.
 _Avoid_: level, resolution, detail
 
 **Collapse**: Reducing several rules into a single asset check.
 Always say what the package collapses: it collapses rules into checks, and a check that reports for several of them is a collapsed check.
-_Avoid_: collapsing with no object, merge, group (which is Polars' word for a set of dtypes)
+_Avoid_: collapsing with no object, merge, group (Dagster's asset group, which `group_name` sets)
 
 **Column constraint**: One condition a rule states, rendered for Dagster's Columns tab.
 Dagster uses this name, in `dg.TableColumnConstraints`.
@@ -175,8 +175,8 @@ _Avoid_: pill, chip
 
 ### Configuration
 
-**Setting**: One configurable value, resolved from three sources, each overriding the one before: the package default, then `DAGSTER_DATAFRAMELY_*`, then the `dd.asset` argument.
-`error_rows_dir` has only the first two, because it takes no argument.
+**Setting**: One configurable value, resolved from three sources, each overriding the one before: the package default, then `DAGSTER_DATAFRAMELY_*`, then the argument of the function you call.
+`error_rows_dir` has only the first two, because `dd.asset` has no argument for it.
 Say "the setting's sources", not "the settings chain".
 _Avoid_: knob, dial, option, settings chain, house style
 
@@ -184,15 +184,15 @@ _Avoid_: knob, dial, option, settings chain, house style
 _Avoid_: vocabulary
 
 **Statistics**: The `skimr`-style summary of the written rows, in the materialization's metadata under `dataframely/table_statistics/<group>`.
-Spelled out everywhere, including the metadata key.
+Spell the word out everywhere, including in the metadata key.
 _Avoid_: stats, profile, describe (Polars' `describe()` is a different thing this package does not use)
 
 **Dtype group**: The set of dtypes that share one statistics table: `numeric`, `temporal`, `string`, `boolean`.
-Polars uses this word, in `polars.datatypes.DataTypeGroup` and the `*_DTYPES` sets beside it.
+Polars uses this word, in `polars.datatypes.group.DataTypeGroup` and the `*_DTYPES` sets beside it.
 _Avoid_: family, class, category
 
 **Row sample**: The first `row_sample` rows of the table, and of the error rows, in the materialization's metadata.
-Polars uses the word, in `DataFrame.sample`, and nothing upstream has one for a preview of a table.
+Coined: Polars' `DataFrame.sample` draws random rows, and nothing upstream names a preview of a table.
 A sample is absent, never empty.
 _Avoid_: preview, example, head
 
@@ -202,15 +202,15 @@ Write "sample" only for the row sample.
 _Avoid_: failure sample, failed sample
 
 **Reserved namespace**: Three namespaces.
-`dy_` starts every check name, every rule column and the `dy_rule` column of a collapsed check's sample, and nothing a user types.
+`dy_` starts every check name, every rule column and the `dy_rule` column of a collapsed check's failure examples, and nothing a user types.
 So the decorator is `dd.asset`, not `dy_asset`.
 `dataframely/` starts every metadata key this package names, on a materialization, a definition or a check result, as `dagster/` does for Dagster.
-The valid row count and the column schema are the exceptions, because Dagster already has keys for them.
+The row count and the column schema are the exceptions, because Dagster already has keys for them.
 The row count is under `dagster/partition_row_count` on a partitioned asset and `dagster/row_count` otherwise, and the column schema is under `dagster/column_schema`.
 `<name>__error_rows` is the default error-rows key.
 Only this package generates names in the first two.
 The third is in Dagster's asset key space, which the user also uses, so another asset can already have that key.
-Namespace, never prefix, even where the string is one.
+Write namespace, never prefix, even where the string is one.
 _Avoid_: prefix, reserved word
 
 ## Coinages to avoid

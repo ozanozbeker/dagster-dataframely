@@ -15,22 +15,22 @@ Every docstring had to say so, and the two value sets, `rule`/`column` and `coll
 
 ### The reason for `column` does not apply to a schema-level rule
 
-`column` exists because Dataframely generates rules nobody wrote: `nullability`, `inf`, `nan` and the dtype rules.
+`column` exists because Dataframely generates rules nobody wrote: `nullability`, `inf`, `nan`, and the `inner_` rules of a nested column.
 A schema with no written constraints still has checks, and collapsing them per column keeps the list readable ([`schema-granularity.md`](schema-granularity.md)).
 A `@dy.rule()` or a `primary_key` is always written by the user.
-Both dbt and dagster-dbt give each written test its own check, and [#8](https://github.com/ozanozbeker/dagster-dataframely/issues/8) called per-rule history "the entire reason to prefer asset checks over a log line".
+In dagster-dbt, each dbt data test has its own asset check, and [#8](https://github.com/ozanozbeker/dagster-dataframely/issues/8) called per-rule history "the entire reason to prefer asset checks over a log line".
 
 ### One check mixed severities
 
-The `schema` granularity was dropped on 2026-10-19 in part because one check held `"warn"` and `"error"` rules, so a `WARN` failure disappeared behind an `ERROR`.
+The maintainer agreed on 2026-10-19 to drop the `schema` granularity, in part because one check held `"warn"` and `"error"` rules.
+When a `"warn"` rule and an `"error"` rule both failed, the check failed at `ERROR`, and nothing showed the `WARN`.
 `dy_schema__rules` had the same flaw for the schema-level rules.
 
 ## If someone proposes this again
 
-A request for fewer checks on a schema with many `@dy.rule()`s is a request to group written rules, which would need a grouping the user names, not a flag.
-Nothing recorded a user asking for it.
+A request for fewer checks on a schema with many `@dy.rule()`s is a request to collapse written rules into checks, which would need rule sets the user names, not a flag.
+No issue records a user asking for it.
 
 ## Prior requests
 
 - [#8](https://github.com/ozanozbeker/dagster-dataframely/issues/8), "Check granularity: one check per rule, or per schema?"
-- [#148](https://github.com/ozanozbeker/dagster-dataframely/issues/148), "Drop the schema check granularity"

@@ -20,11 +20,11 @@ An asset keyed `["sales", "orders"]` writes them under `["sales", "orders__error
 
 The suffix is on the last key part, because `DbIOManager` takes the table name from the last key part only.
 It takes the schema from the asset's `schema` metadata, then from its own `schema` config, and only then from the key part before the last one.
-The writer copies the asset's metadata unchanged.
+`build_io_manager_writer` passes the asset's definition metadata to the IO manager unchanged.
 So with either of the first two set, a leading part such as `["error_rows", "orders"]` writes to the asset's own table.
 An asset with `metadata={"schema": "sales"}` and `error_rows_key=["error_rows", "orders"]` wrote its error rows to `sales.orders`.
 The asset's own write to that table then raised a DuckDB `BinderException`.
-The collision check raised nothing, because it compares asset keys.
+`validate_error_rows_key` raised nothing, because it compares asset keys.
 A trailing part such as `["orders", "error_rows"]` names every asset's error-rows table `error_rows`.
 Two assets with `metadata={"schema": "sales"}` and trailing parts both wrote to `sales.error_rows`, and the second write replaced the first one's rows with no error.
 
@@ -33,7 +33,7 @@ The key names a second IO manager configured with that schema.
 The asset's `schema` metadata still takes precedence over that config.
 
 The suffix starts with `__`, because the package already uses `__` to separate the parts of a name it generates.
-`dy_rule__amount__min` and `dy_schema__rules` are two such names.
+`dy_rule__amount__min` and `dy_schema__columns` are two such names.
 So the default never collides with an asset a user names `orders_error_rows`.
 
 `__` has a meaning in two other places.
@@ -111,7 +111,7 @@ The change would be a second argument that has an effect only with `filter=False
 
 A user would reopen a second frame for the rows that failed only `"warn"` rules by showing that they cannot read the table back to filter it.
 
-A user would reopen a cap on the error rows with a measurement where the write, not the collection, takes most of the run's time.
+A user would reopen a cap on the error rows with a measurement where writing the error rows, not collecting them, takes most of the run's time.
 The user would also have to accept that the cap drops rows.
 
 ## Prior requests

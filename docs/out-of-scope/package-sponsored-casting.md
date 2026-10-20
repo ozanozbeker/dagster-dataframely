@@ -12,7 +12,7 @@ A new proposal has to address the measurements below, and repeating them takes a
 ### Projection needs no cast
 
 The report assumed that extra columns forced a user to call `Schema.cast` in all 21 of their assets.
-It did not.
+Extra columns do not force a cast.
 With `cast=False`, `Schema.filter` runs `lf.select(target.column_names())`, eager or lazy, so it narrows a superset to the schema's columns, in the schema's order:
 
 ```text
@@ -21,7 +21,7 @@ cast=False -> ['order_id', 'amount']
 cast=True  -> ['order_id', 'amount']
 ```
 
-`_column_schema_problems` iterates the schema's columns, so the check never reads a column the schema does not declare.
+`_find_column_schema_problems` iterates the schema's columns, so the check never reads a column the schema does not declare.
 
 So `cast=True` adds only dtype coercion, and projection does not justify a `cast` argument.
 
@@ -53,7 +53,7 @@ That is new public API, and it goes out of date each time Polars adds a dtype.
 
 ### The blocking check does not work with a cast
 
-The column-schema check runs before `Schema.filter` and fails the run on a dtype mismatch, which is what a cast would fix.
+The column-schema check runs before `Schema.filter` and fails the run on a dtype mismatch, the problem a cast would fix.
 So adding a cast means changing what that check does, and every option failed when measured.
 
 Running the check after the cast does not work.
@@ -64,7 +64,7 @@ Int32   -> Int64     pre-cast problems: [order_id]   post-cast problems: []
 Struct  -> Float64   pre-cast problems: [amount]     post-cast problems: []
 ```
 
-For a cast that cannot succeed, the check passes a wrong frame.
+For a cast that cannot succeed, the check passes, and the collected frame has the wrong dtype.
 Polars resolves a lenient `Struct` cast to the target dtype at plan time, and produces a struct at collect time:
 
 ```text
@@ -80,7 +80,7 @@ Only collecting the plan shows it, because Polars raises there, and the only oth
 
 ### What an impossible cast does today
 
-For anyone measuring this again, `filter(cast=True)` end to end:
+For anyone measuring this again, `filter(cast=True)` gives these results end to end:
 
 ```text
 Int32 -> Int64, Decimal -> Float64    cast cleanly
@@ -96,7 +96,7 @@ Only the `List` error names the failing cast.
 
 `user_guide/validation.qmd` documents the policy.
 The policy is right, but its first stated reason was wrong: casting `Duration('ns')` to `Duration('us')` rescales the value, so the "thousandfold error" it warned about does not happen.
-That correction, and the fact that projection needs no cast, are [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88).
+Issue [#88](https://github.com/ozanozbeker/dagster-dataframely/issues/88) covered that correction, and the fact that projection needs no cast.
 
 ## If someone proposes this again
 

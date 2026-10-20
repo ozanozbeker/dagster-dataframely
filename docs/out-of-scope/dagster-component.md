@@ -11,7 +11,7 @@ So the asset's definition would be in two files, for people who already write Py
 
 [#48](https://github.com/ozanozbeker/dagster-dataframely/issues/48) asked whether any user gets something from the YAML that `dd.asset` does not give them.
 It named three candidates.
-The maintainer reviewed them on 2026-10-15, found that each already has what it needs, and closed #48.
+The maintainer reviewed them on 2026-10-15, found that each one already works without a Component from this package, and closed #48.
 
 ### A `dg` project already loads `dd.asset` assets
 
@@ -38,10 +38,10 @@ That source is `DAGSTER_DATAFRAMELY_*`.
 Each code location runs in its own process, so the environment of its deployment already sets a value for that code location alone.
 A platform team that wants the same settings across many code locations sets the same variables in each deployment.
 
-A Component cannot set them any better.
+A Component cannot set them more narrowly than a deployment does.
 `dd.asset` resolves the settings when Python imports the module that calls it.
 So the Component would have to write `os.environ` before that import, and the value would still apply to the whole process.
-Reading the Component's YAML instead would add a fourth source, and `user_guide/settings.qmd` states that there is none.
+Reading the Component's YAML instead would add a fourth source to the three that `user_guide/settings.qmd` lists.
 
 Storage is an IO manager, which is a Dagster resource.
 The demo binds it in `defs/resources.py`, and a shared module binds the same one in many code locations.
