@@ -53,7 +53,7 @@ jobs:
         with:
           version: "1.10.18"
       # `--group`, not `--only-group`, because great-docs imports the package to document it.
-      - run: uv sync --locked --all-packages --group docs
+      - run: uv sync --locked --group docs
       # great-docs fetches the changelog from the GitHub API. Without a token the limit is 60
       # requests an hour per shared runner IP, and on a 403 great-docs builds without the
       # changelog page instead of failing.

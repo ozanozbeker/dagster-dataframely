@@ -120,6 +120,7 @@ reference:
       contents:
         - wiring.get_column_schema_metadata
         - wiring.get_table_schema
+        - wiring.get_code_version
         - wiring.build_asset_check_specs
         - wiring.evaluate_checks
         - wiring.get_check_name_for_rule
