@@ -169,7 +169,7 @@ skill:
     - need: Report a Collection's collection filters as checks
       use: dd.build_collection_checks(Shop, members={...})
     - need: Read what a direct invocation yielded in a test
-      use: dd.testing.DirectInvocationResult.from_invocation(orders(frame))
+      use: dd.testing.DirectInvocationResult.from_invocation(orders(dg.build_asset_context(), frame))
     - need: Build a @dg.asset from the parts yourself
       use: dd.wiring
   gotchas:
@@ -177,7 +177,7 @@ skill:
     - "Write the values of Polars' `is_in` in a `check=` or a `@dy.rule()` as a list, not a set of strings. Python orders a set of strings differently in each process, so the code version changes each time the code location starts."
     - "Returning `dg.MaterializeResult(value=None)` raises `MaterializeResultValueError`. To skip, return `None` itself."
     - "A Polars upgrade can change every asset's code version at once, because the hash uses Polars' expression serialization."
-    - "`filter=True` adds a `context` parameter to the asset, so a direct invocation passes `dg.build_asset_context()` first."
+    - "Every `dd.asset` takes a `context` parameter, so a direct invocation passes `dg.build_asset_context()` first."
     - "A direct invocation with error rows needs `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`, or it raises `ErrorRowsDirError`."
     - "`DAGSTER_DATAFRAMELY_STATISTICS` accepts only `true` or `false`, in any letter case. `1`, `yes` and `on` raise `InvalidSettingError`."
   best_practices:

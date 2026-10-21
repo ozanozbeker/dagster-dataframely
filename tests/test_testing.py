@@ -66,7 +66,9 @@ class TestDirectInvocationResult:
     def test_a_clean_call_has_the_frame_and_every_check_passing(self):
         asset = _orders(clean_orders())
 
-        result = dd.testing.DirectInvocationResult.from_invocation(asset())
+        result = dd.testing.DirectInvocationResult.from_invocation(
+            asset(dg.build_asset_context())
+        )
 
         assert result.materialization is not None
         assert_frame_equal(result.materialization.value, clean_orders())
@@ -92,7 +94,9 @@ class TestDirectInvocationResult:
         def amounts() -> pl.DataFrame:
             return pl.DataFrame({"amount": [1, -1]})
 
-        result = dd.testing.DirectInvocationResult.from_invocation(amounts())
+        result = dd.testing.DirectInvocationResult.from_invocation(
+            amounts(dg.build_asset_context())
+        )
 
         assert result.materialization is not None
         assert result.materialization.value.height == 2
@@ -105,7 +109,9 @@ class TestDirectInvocationResult:
         def orders() -> pl.DataFrame | None:
             return None
 
-        result = dd.testing.DirectInvocationResult.from_invocation(orders())
+        result = dd.testing.DirectInvocationResult.from_invocation(
+            orders(dg.build_asset_context())
+        )
 
         assert result.materialization is None
         assert set(result.checks) == {spec.name for spec in orders.check_specs}
@@ -116,7 +122,9 @@ class TestDirectInvocationResult:
         asset = _orders(mixed_orders())
 
         with pytest.raises(dd.errors.ValidationAbortError):
-            dd.testing.DirectInvocationResult.from_invocation(asset())
+            dd.testing.DirectInvocationResult.from_invocation(
+                asset(dg.build_asset_context())
+            )
 
 
 class TestNotACall:
@@ -149,7 +157,7 @@ class TestNotACall:
             dd.testing.DirectInvocationResult.from_invocation(plain())
 
     def test_a_second_materialization_raises(self):
-        events = list(_orders(clean_orders())())  # pyrefly: ignore[bad-argument-type]
+        events = list(_orders(clean_orders())(dg.build_asset_context()))  # pyrefly: ignore[bad-argument-type]
 
         with pytest.raises(TypeError, match="a second `MaterializeResult`"):
             dd.testing.DirectInvocationResult.from_invocation([*events, events[0]])

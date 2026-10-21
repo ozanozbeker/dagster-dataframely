@@ -18,9 +18,13 @@ from dagster_dataframely.errors import (
 from dagster_dataframely.wiring import (
     build_asset_check_specs,
     evaluate_checks,
-    stream_results,
 )
-from tests.scenario import Yielded, check_evaluations, materialize
+from tests.scenario import (
+    Yielded,
+    check_evaluations,
+    invoke_stream_results,
+    materialize,
+)
 
 _WARN = {"dagster_dataframely": {"severity": {"max_length": "warn"}}}
 
@@ -84,7 +88,7 @@ def _drained(
     yielded: Yielded = []
     try:
         yielded.extend(
-            stream_results(
+            invoke_stream_results(
                 ShipmentsSchema,
                 frame,
                 asset_key=_KEY,
@@ -166,7 +170,9 @@ class TestWithoutFilter:
 
     def test_a_duplicate_key_declared_warn_is_written(self):
         frame = pl.DataFrame({"shipment_id": ["A", "A"]})
-        yielded = list(stream_results(WarnOnTheClassSchema, frame, asset_key=_KEY))
+        yielded = list(
+            invoke_stream_results(WarnOnTheClassSchema, frame, asset_key=_KEY)
+        )
 
         assert _ids(_table(yielded)) == {"A"}
         assert len(_table(yielded)) == 2  # pyrefly: ignore[bad-argument-type]

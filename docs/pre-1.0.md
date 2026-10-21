@@ -19,7 +19,6 @@ From 1.0, the reason a thing works the way it does lives in the module that impl
 ### ADR-0001: validation_results takes asset keys
 
 `validation_results` took `context: dg.AssetExecutionContext` and read it at exactly two places, both to resolve an asset key, so reaching any outcome in a test meant starting a Dagster run.
-It now takes `valid_key: dg.AssetKey` and reads nothing off the execution context, which makes every outcome reachable by calling a function.
 `src/dagster_dataframely/_runtime.py` holds the signature, and `TestOutcomeSelection` in `tests/test_asset_runtime.py` asserts all six outcomes with no run, no IO manager and no `tmp_path`.
 ADR-0006 replaced the second parameter with `quarantine_writer`, which writes the invalid rows and returns the quarantine address, so `validation_results` receives the address alone.
 

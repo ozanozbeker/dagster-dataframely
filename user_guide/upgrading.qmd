@@ -26,6 +26,24 @@ A `str` or `Sequence[str]` passed as `error_rows_key=` becomes `dg.AssetKey(...)
 **`stream_results` names its second parameter `returned`, not `frame`.**
 A call that passes the frame by keyword changes `frame=` to `returned=`.
 
+**`stream_results` takes the asset's `context` in place of `asset_key=` and `partitioned=`.**
+It reads the asset key and the run's partition from the context, so the table and the error rows have their row counts under the same key.
+
+| 0.11 | 0.12 |
+| --- | --- |
+| `stream_results(schema, returned, asset_key=context.asset_key, partitioned=True)` | `stream_results(schema, returned, context=context)` |
+
+A test that called `stream_results` outside an asset calls it inside a `@dg.asset`, and calls that asset with `dg.build_asset_context()`.
+An unbound context raises `DagsterInvalidPropertyError` when `stream_results` reads its asset key.
+
+**Every asset built with `dd.asset` takes a `context` parameter, so a direct invocation passes one first.**
+`orders(frame)` becomes `orders(dg.build_asset_context(), frame)`.
+An asset with `filter=True` already took one.
+
+**A partitioned asset that runs without a partition key records its row count under `dagster/row_count`.**
+That covers `dg.materialize` without `partition_key` and a direct invocation with `dg.build_asset_context()`.
+Before, `dd.asset(filter=True)` put the error rows' row count under `dagster/row_count` and the table's under `dagster/partition_row_count` in such a run.
+
 ## 0.11 {#v0.11}
 
 **Every function that returns something is named with a verb.**

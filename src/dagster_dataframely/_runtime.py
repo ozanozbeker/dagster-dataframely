@@ -17,6 +17,7 @@ from dagster_dataframely._checks import (
 )
 from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
+    get_row_count_key,
     separate_warned_and_error_rows,
 )
 from dagster_dataframely._naming import get_check_name_for_rule
@@ -122,13 +123,12 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     schema: type[dy.Schema],
     returned: DecoratedReturn,
     *,
-    asset_key: dg.AssetKey,
+    context: dg.AssetExecutionContext,
     error_rows_writer: ErrorRowsWriter | None = None,
     check_granularity: Granularity | None = None,
     max_failure_examples: int | None = None,
     statistics: bool | None = None,
     row_sample: int | None = None,
-    partitioned: bool = False,
 ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
     """Validate a frame and yield the asset's materialization and check results.
 
@@ -138,8 +138,8 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         The schema to validate against.
     returned
         The frame to validate, a `dg.MaterializeResult` whose `value` is the frame, or `None` to skip. The materialization has a returned result's `metadata`, `data_version` and `tags`, and the package's own metadata keys take precedence. `dg.MaterializeResult(value=None)` raises instead of skipping.
-    asset_key
-        The key the run materializes the table under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
+    context
+        The running asset's context, or one from `dg.build_asset_context()` in a direct invocation. Its asset definition must have exactly one asset, as a `@dg.asset` does. The asset key comes from it. The row count is under `dagster/partition_row_count` when the context has a partition key or range, and under `dagster/row_count` otherwise, because Dagster defines `dagster/row_count` as the whole table's count. `build_io_manager_writer` makes the same choice, so the table and the error rows have their row counts under the same key.
     error_rows_writer
         The writer for the rows that failed an `"error"` rule, called at most once, with the frame `get_error_rows` returns. It receives every such row, because the error rows are the only copy of the rows that a run with `filter=True` leaves out of the table (`docs/out-of-scope/dbt-test-configs.md#limit`). When no such row exists, it receives zero rows. Passing one means `filter=True`, so pass `filter=True` to `build_asset_check_specs` too. With `None`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, and the asset writes nothing.
     check_granularity
@@ -150,8 +150,6 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         Whether the materialization metadata has statistics of the written rows. `None` uses `DAGSTER_DATAFRAMELY_STATISTICS` if set, else `True`.
     row_sample
         The materialization metadata has at most this many rows of the table, and this many error rows. `None` uses `DAGSTER_DATAFRAMELY_ROW_SAMPLE` if set, else `5`.
-    partitioned
-        Whether the asset has a `partitions_def`. With `True`, the row count is under `dagster/partition_row_count`, because Dagster defines `dagster/row_count` as the whole table's count.
 
     Yields
     ------
@@ -170,6 +168,8 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         The schema declares a severity this package cannot read.
     InvalidSettingError
         A setting's argument or environment variable has a value the setting does not allow.
+    dagster._core.errors.DagsterInvalidPropertyError
+        `context` is bound to no asset, as a `dg.build_asset_context()` is until an asset is called with it.
     DagsterInvariantViolationError
         `returned` is not a Polars frame, a `dg.MaterializeResult` or `None`.
     MaterializeResultFieldError
@@ -205,7 +205,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
         context: dg.AssetExecutionContext,
     ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
         yield from dd.wiring.stream_results(
-            OrdersSchema, storefront_orders, asset_key=context.asset_key
+            OrdersSchema, storefront_orders, context=context
         )
 
 
@@ -213,6 +213,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     ```
     """
     validate_namespace(schema)
+    asset_key: dg.AssetKey = context.asset_key
     frame, returned_result = _unpack_return(returned, asset_key.to_user_string())
     # Resolved before anything is written, so a malformed environment variable fails every run.
     emit_statistics: bool = STATISTICS.resolve(statistics)
@@ -243,9 +244,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     errors: set[str] = get_error_rule_names(schema)
     warned, error_rows = separate_warned_and_error_rows(schema, failure, errors)
     table: pl.DataFrame = pl.concat([valid, warned])
-    count_key: str = (
-        "dagster/partition_row_count" if partitioned else "dagster/row_count"
-    )
+    count_key: str = get_row_count_key(context)
 
     def build_table_result(
         build_error_rows_metadata: ErrorRowsMetadata | None = None,

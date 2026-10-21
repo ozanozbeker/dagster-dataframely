@@ -35,7 +35,6 @@ from dagster_dataframely.wiring import (
     get_error_rows,
     get_error_rows_key,
     get_error_rows_path,
-    stream_results,
     validate_error_rows_key,
 )
 from tests.scenario import (
@@ -43,6 +42,7 @@ from tests.scenario import (
     OrdersSchema,
     clean_orders,
     cooccurring_orders,
+    invoke_stream_results,
     materializations,
     mixed_orders,
     no_valid_orders,
@@ -1102,7 +1102,7 @@ class TestFileWriter:
 
     def test_the_file_writer_writes_at_get_error_rows_path(self, tmp_path: Path):
         events = list(
-            stream_results(
+            invoke_stream_results(
                 OrdersSchema,
                 mixed_orders(),
                 asset_key=_ORDERS,

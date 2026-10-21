@@ -103,6 +103,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
     """Turn the decorated function into an asset that validates the frame it returns against `schema`.
 
     The decorated function returns a `pl.DataFrame` or `pl.LazyFrame`, a `dg.MaterializeResult` whose `value` is one of those, or `None` to skip.
+    The asset takes a `context` parameter whether or not the decorated function declares one, so a direct invocation passes `dg.build_asset_context()` first.
 
     Every keyword parameter not listed below is `@dg.asset`'s, passed to it unchanged.
 
@@ -111,7 +112,7 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
     schema
         The schema the returned frame is validated against. It also fills the Columns tab, declares one check spec per rule set and sets the code version. A `dy.Collection` raises.
     filter
-        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing, including the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-error`). `True` also adds a `context` parameter to the asset, whether or not the decorated function declares one.
+        Whether a run writes the other rows when some rows fail an `"error"` rule. With `True`, the run writes the rows that failed an `"error"` rule, the error rows, under the error-rows key, and no rule's check is blocking. A run fails with `ErrorRowsKeyCollisionError` if another asset already materializes that key. With `False`, a row that fails an `"error"` rule fails the run, and the asset writes nothing, including the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-error`).
     error_rows_key
         The error-rows key, which needs `filter=True`. `None` uses `<name>__error_rows` with the asset's key prefix. A string is one key part, as in `dg.AssetKey`.
     error_rows_io_manager_key
@@ -254,64 +255,51 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
         parameters = list(inspect.signature(fn).parameters.values())
         declares_context: bool = is_context_provided(parameters)
 
-        def stream_from(
-            returned: DecoratedReturn, writer: ErrorRowsWriter | None
+        @functools.wraps(fn)
+        def compute(
+            context: dg.AssetExecutionContext, *args: object, **kwargs: object
         ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-            _write_column_schema(column_schema_metadata)
-            yield from stream_results(
-                schema,
-                returned,
-                asset_key=key,
-                error_rows_writer=writer,
-                check_granularity=granularity,
-                max_failure_examples=failure_examples,
-                statistics=emit_statistics,
-                row_sample=sampled_rows,
-                partitioned=partitions_def is not None,
-            )
-
-        if filter:
-
-            @functools.wraps(fn)
-            def compute(
-                context: dg.AssetExecutionContext, *args: object, **kwargs: object
-            ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+            writer: ErrorRowsWriter | None = None
+            if filter:
                 validate_error_rows_key(context, resolved_error_rows_key)
                 writer = build_error_rows_writer(
                     context,
                     resolved_error_rows_key,
                     error_rows_io_manager_key=error_rows_io_manager_key,
                 )
-                returned: DecoratedReturn = (
-                    fn(context, *args, **kwargs)
-                    if declares_context
-                    else fn(*args, **kwargs)
-                )
-                yield from stream_from(returned, writer)
+            returned: DecoratedReturn = (
+                fn(context, *args, **kwargs)
+                if declares_context
+                else fn(*args, **kwargs)
+            )
+            _write_column_schema(column_schema_metadata)
+            yield from stream_results(
+                schema,
+                returned,
+                context=context,
+                error_rows_writer=writer,
+                check_granularity=granularity,
+                max_failure_examples=failure_examples,
+                statistics=emit_statistics,
+                row_sample=sampled_rows,
+            )
 
-            if not declares_context:
-                # Positional-only if the first parameter is, as `inspect.Signature` requires.
-                leading = (
-                    parameters[0].kind
-                    if parameters
-                    and parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
-                    else inspect.Parameter.POSITIONAL_OR_KEYWORD
-                )
-                compute.__signature__ = inspect.Signature(  # pyrefly: ignore[missing-attribute]
-                    [
-                        inspect.Parameter(
-                            "context", leading, annotation=dg.AssetExecutionContext
-                        ),
-                        *parameters,
-                    ]
-                )
-        else:
-
-            @functools.wraps(fn)
-            def compute(
-                *args: object, **kwargs: object
-            ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-                yield from stream_from(fn(*args, **kwargs), None)
+        if not declares_context:
+            # Positional-only if the first parameter is, as `inspect.Signature` requires.
+            leading = (
+                parameters[0].kind
+                if parameters
+                and parameters[0].kind is inspect.Parameter.POSITIONAL_ONLY
+                else inspect.Parameter.POSITIONAL_OR_KEYWORD
+            )
+            compute.__signature__ = inspect.Signature(  # pyrefly: ignore[missing-attribute]
+                [
+                    inspect.Parameter(
+                        "context", leading, annotation=dg.AssetExecutionContext
+                    ),
+                    *parameters,
+                ]
+            )
 
         return dg.asset(
             name=asset_name,

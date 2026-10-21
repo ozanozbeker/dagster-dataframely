@@ -33,6 +33,7 @@ from tests.scenario import (
     check_evaluations,
     clean_orders,
     cooccurring_orders,
+    invoke_stream_results,
     materializations,
     materialize,
     mixed_orders,
@@ -63,7 +64,7 @@ class TestCleanFrame:
 
     def test_a_clean_run_emits_row_count(self):
         materialization = dd.testing.DirectInvocationResult.from_invocation(
-            orders(clean_orders())
+            orders(dg.build_asset_context(), clean_orders())
         ).materialization
         assert materialization is not None
         metadata = materialization.metadata or {}
@@ -674,7 +675,7 @@ class TestSkip:
         def orders_by_hand(
             context: dg.AssetExecutionContext,
         ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-            yield from stream_results(OrdersSchema, None, asset_key=context.asset_key)
+            yield from stream_results(OrdersSchema, None, context=context)
 
         result = materialize(tmp_path, orders_by_hand)
 
@@ -919,7 +920,7 @@ def _drained(
         return _ADDRESS
 
     yielded: Yielded = []
-    results = stream_results(
+    results = invoke_stream_results(
         OrdersSchema,
         frame,
         asset_key=_ORDERS_KEY,
@@ -1019,7 +1020,7 @@ class TestOutcomeSelection:
         sample = _metadata(yielded)["dataframely/error_rows_sample"]
         assert isinstance(sample, dg.TableMetadataValue)
 
-        bounded = stream_results(
+        bounded = invoke_stream_results(
             OrdersSchema,
             mixed_orders(),
             asset_key=_ORDERS_KEY,

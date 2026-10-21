@@ -19,11 +19,11 @@ from dagster_dataframely.errors import (
     NoValidRowsError,
     ValidationAbortError,
 )
-from dagster_dataframely.wiring import stream_results
 from tests.scenario import (
     OrdersSchema,
     clean_orders,
     cooccurring_orders,
+    invoke_stream_results,
     materializations,
     materialize,
     mixed_orders,
@@ -39,9 +39,7 @@ def _stream(
     returned: object,
 ) -> list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
     """Return what `stream_results` yields for `returned` as the `orders` asset."""
-    return list(
-        stream_results(OrdersSchema, returned, asset_key=_ORDERS)  # pyrefly: ignore[bad-argument-type]
-    )
+    return list(invoke_stream_results(OrdersSchema, returned, asset_key=_ORDERS))
 
 
 def _materialization(returned: object) -> dg.MaterializeResult[pl.DataFrame]:

@@ -73,13 +73,13 @@ Dagster matches each result to its spec by name, so different values fail the st
 
 ### Validation and the write
 
-An asset built with `dd.asset` passes what its decorated function returns to `stream_results(schema, returned, asset_key=key, error_rows_writer=...)`.
+An asset built with `dd.asset` passes what its decorated function returns to `stream_results(schema, returned, context=context, error_rows_writer=...)`.
 It runs the column-schema check and `Schema.filter`, writes the error rows, and yields the materialization and every check result.
 `returned` is the frame, a `dg.MaterializeResult` whose `value` is the frame, or `None` to skip.
 `stream_results` copies a returned result's `metadata`, `data_version` and `tags` onto the materialization.
 Its return type is `Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]`, so annotate a hand-wired asset's function with the same type.
 The writer writes the error rows, and `stream_results` yields no result for them.
-For a partitioned asset, also pass `partitioned=True`, so the row count is under `dagster/partition_row_count` instead of `dagster/row_count`.
+`stream_results` reads the asset key and the run's partition from `context`, so the row count is under `dagster/partition_row_count` in a run of a partition.
 You make one choice that changes what a run writes: whether to pass `error_rows_writer`.
 The data determines the rest.
 
@@ -163,7 +163,7 @@ def orders(
     yield from dd.wiring.stream_results(
         OrdersSchema,
         orders_frame(),
-        asset_key=context.asset_key,
+        context=context,
         error_rows_writer=dd.wiring.build_io_manager_writer(context, error_rows_key),
     )
 ```
@@ -181,7 +181,7 @@ sequenceDiagram
     participant V as stream_results
     participant W as the writer
     participant D as Dagster
-    A->>V: OrdersSchema, frame, asset_key, error_rows_writer
+    A->>V: OrdersSchema, frame, context, error_rows_writer
     V->>V: column-schema check
     V->>V: Schema.filter
     opt a writer was passed

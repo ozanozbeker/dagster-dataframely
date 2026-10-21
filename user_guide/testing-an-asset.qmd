@@ -70,17 +70,16 @@ with tempfile.TemporaryDirectory() as tmp:
     test_orders_filters_the_failing_lines(Path(tmp))
 ```
 
-## An asset with `filter=True` takes a context
+## Every `dd.asset` takes a context
 
-**An asset with `filter=True` takes a `context` parameter**, even when the decorated function does not declare one.
-The package needs the context to write the error rows.
+**An asset built with `dd.asset` takes a `context` parameter**, even when the decorated function does not declare one.
 Pass the context first and the upstream frames after it, as Dagster does.
-A call has no IO manager, so it writes the error rows to the directory in `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` instead.
+A call has no IO manager, so an asset with `filter=True` writes the error rows to the directory in `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR` instead.
 [Where a call writes the error rows](#where-a-call-writes-the-error-rows) covers that directory.
 An asset with `error_rows_io_manager_key` still requires that resource.
 Pass any value for it in `dg.build_asset_context(resources=...)`, because the call does not use it.
 
-An asset without `filter=True` needs neither the context nor the directory:
+An asset without `filter=True` needs no directory:
 
 ```{python}
 #| label: testing-an-asset-2
@@ -90,10 +89,12 @@ def plain_orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 
 clean = storefront_orders
-result = dd.testing.DirectInvocationResult.from_invocation(plain_orders(clean))
+result = dd.testing.DirectInvocationResult.from_invocation(
+    plain_orders(dg.build_asset_context(), clean)
+)
 ```
 
-If the decorated function declares a `context` of its own, build one with `dg.build_asset_context()`.
+A decorated function that declares a `context` of its own receives the one you pass.
 A partitioned root asset has no upstream inputs, so its call passes only a context with the partition key.
 [Partitioning](partitioning.qmd), the next page, covers partitioned assets.
 The setup cell above declares `daily`, a `dg.DailyPartitionsDefinition`:
@@ -138,7 +139,7 @@ The call returns a generator, so neither the decorated function nor the validati
 def test_plain_orders_stops_at_a_failing_line():
     with pytest.raises(dd.errors.ValidationAbortError):
         dd.testing.DirectInvocationResult.from_invocation(
-            plain_orders(marketplace_orders)
+            plain_orders(dg.build_asset_context(), marketplace_orders)
         )
 ```
 

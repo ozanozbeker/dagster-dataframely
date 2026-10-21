@@ -28,8 +28,8 @@ It writes every other row to the asset's table, and the run succeeds.
 - **The run succeeds** when some rows fail an `"error"` rule, and fails with `NoValidRowsError` when every row does.
 - **No rule's check is blocking**, but a failing `"error"` rule's check still fails at `ERROR`, so the asset shows "Degraded".
 - **The materialization** reports the error-rows address, count, sample and the sets of rules the rows failed together.
-- **The asset gets a `context` parameter**, and a direct invocation with error rows needs `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`.
-  [Testing an asset](testing-an-asset.qmd) covers both.
+- **A direct invocation with error rows needs `DAGSTER_DATAFRAMELY_ERROR_ROWS_DIR`.**
+  [Testing an asset](testing-an-asset.qmd) covers it.
 
 <!-- rumdl-disable-next-line MD078 -->
 ```{mermaid}

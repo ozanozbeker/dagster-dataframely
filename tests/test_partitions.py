@@ -4,7 +4,7 @@ Some tests pin Dagster's own behaviour, so a Dagster release that changes it fai
 Most tests use static partitions, whose keys name the frame the asset returns for each partition.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import dagster as dg
@@ -313,14 +313,71 @@ def _pluralize() -> pl.DataFrame:
     return clean_orders()
 
 
+@dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_PARTITIONS)
+def _mixed() -> pl.DataFrame:
+    return mixed_orders()
+
+
+@dg.asset(
+    name="orders",
+    partitions_def=_PARTITIONS,
+    check_specs=dd.wiring.build_asset_check_specs(
+        OrdersSchema, asset="orders", partitions_def=_PARTITIONS, filter=True
+    ),
+    output_required=False,
+)
+def _wired_mixed(
+    context: dg.AssetExecutionContext,
+) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+    yield from stream_results(
+        OrdersSchema,
+        mixed_orders(),
+        context=context,
+        error_rows_writer=dd.wiring.build_io_manager_writer(context, _ERROR_ROWS_KEY),
+    )
+
+
+_ROW_COUNT_KEYS = pytest.mark.parametrize(
+    ("partition_key", "key", "absent"),
+    [
+        ("mixed", "dagster/partition_row_count", "dagster/row_count"),
+        (None, "dagster/row_count", "dagster/partition_row_count"),
+    ],
+    ids=["partition", "no partition"],
+)
+"""Each param holds a partition key or `None`, then the row count's key and the other key."""
+
+
 class TestRowCount:
     """The key the materialization files the row count under."""
 
-    def test_a_partitioned_asset_counts_the_partitions_rows(self):
-        metadata = _materialization(_pluralize()).metadata or {}
+    @_ROW_COUNT_KEYS
+    def test_a_direct_invocation_counts_under_the_key_its_partition_selects(
+        self, partition_key: str | None, key: str, absent: str
+    ):
+        called = _pluralize(dg.build_asset_context(partition_key=partition_key))
+        metadata = _materialization(called).metadata or {}
 
-        assert metadata["dagster/partition_row_count"] == 3
-        assert "dagster/row_count" not in metadata
+        assert metadata[key] == 3
+        assert absent not in metadata
+
+    @_ROW_COUNT_KEYS
+    @pytest.mark.parametrize("asset", [_mixed, _wired_mixed], ids=["dd", "wired"])
+    def test_the_table_and_its_error_rows_count_under_one_key(
+        self,
+        tmp_path: Path,
+        asset: dg.AssetsDefinition,
+        partition_key: str | None,
+        key: str,
+        absent: str,
+    ):
+        recorded = materializations(
+            materialize(tmp_path, asset, partition_key=partition_key)
+        )
+
+        assert recorded[_ORDERS_KEY].metadata[key] == dg.MetadataValue.int(3)
+        assert recorded[_ERROR_ROWS_KEY].metadata[key] == dg.MetadataValue.int(3)
+        assert all(absent not in m.metadata for m in recorded.values())
 
     def test_the_package_replaces_only_a_returned_partition_row_count(self):
         @dd.asset(OrdersSchema, name="orders", partitions_def=_PARTITIONS)
@@ -333,35 +390,11 @@ class TestRowCount:
                 },
             )
 
-        metadata = _materialization(orders()).metadata or {}
+        called = orders(dg.build_asset_context(partition_key="clean"))
+        metadata = _materialization(called).metadata or {}
 
         assert metadata["dagster/partition_row_count"] == 3
         assert metadata["dagster/row_count"] == 12
-
-    @pytest.mark.parametrize(
-        ("partitioned", "key", "absent"),
-        [
-            (False, "dagster/row_count", "dagster/partition_row_count"),
-            (True, "dagster/partition_row_count", "dagster/row_count"),
-        ],
-    )
-    def test_a_hand_wired_asset_counts_under_the_key_partitioned_selects(
-        self, partitioned: bool, key: str, absent: str
-    ):
-        (materialization,) = [
-            r
-            for r in stream_results(
-                OrdersSchema,
-                clean_orders(),
-                asset_key=_ORDERS_KEY,
-                partitioned=partitioned,
-            )
-            if isinstance(r, dg.MaterializeResult)
-        ]
-        metadata = materialization.metadata or {}
-
-        assert metadata[key] == 3
-        assert absent not in metadata
 
 
 # A distributor that left: `departed` has source data for 2026-01 and none for 2026-02.

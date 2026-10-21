@@ -229,7 +229,7 @@ def validate_error_rows_key(
         yield from dd.wiring.stream_results(
             OrdersSchema,
             storefront_orders,
-            asset_key=context.asset_key,
+            context=context,
             error_rows_writer=dd.wiring.build_io_manager_writer(
                 context, error_rows_key
             ),
@@ -305,6 +305,14 @@ def get_error_rows_path(
     return path.with_suffix(f"{path.suffix}{_EXTENSION}")
 
 
+def get_row_count_key(context: dg.AssetExecutionContext) -> str:
+    """Return the key Dagster defines for the row count of what the step materializes."""
+    # A run of one partition has a key and no range, and a single-run backfill the reverse.
+    partitioned = context.has_partition_key or context.has_partition_key_range
+    # Dagster defines `dagster/row_count` as the whole table's count.
+    return "dagster/partition_row_count" if partitioned else "dagster/row_count"
+
+
 def build_io_manager_writer(
     context: dg.AssetExecutionContext,
     error_rows_key: dg.AssetKey,
@@ -363,7 +371,7 @@ def build_io_manager_writer(
         yield from dd.wiring.stream_results(
             OrdersSchema,
             marketplace_orders,
-            asset_key=context.asset_key,
+            context=context,
             error_rows_writer=dd.wiring.build_io_manager_writer(
                 context, dd.wiring.get_error_rows_key(context.asset_key)
             ),
@@ -386,12 +394,13 @@ def build_io_manager_writer(
         # Dagster's own `get_output_context` reads a manager's config the same way.
         resources = step.resolved_run_config.resources
         resource_config = resources[error_rows_io_manager_key].config
-    # A run of one partition has a key and no range, and a single-run backfill the reverse.
-    partitioned = context.has_partition_key or context.has_partition_key_range
+    count_key = get_row_count_key(context)
     # Dagster logs one materialization per partition in a range, so the writer does too.
-    partitions = list(context.partition_keys) if partitioned else [None]
-    # Dagster defines `dagster/row_count` as the whole table's count.
-    count_key = "dagster/partition_row_count" if partitioned else "dagster/row_count"
+    partitions = (
+        list(context.partition_keys)
+        if count_key == "dagster/partition_row_count"
+        else [None]
+    )
     # A `dg.materialize` run has no code location to read the spec from, so the writer always logs the materialization.
     try:
         logs_event = (

@@ -1,7 +1,7 @@
 """The `OrdersSchema` schema, the frames the tests validate, and the helpers several test modules share."""
 
 import datetime as dt
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -118,6 +118,42 @@ def check_evaluations(
 ) -> dict[str, dg.AssetCheckEvaluation]:
     """Index every check evaluation a run recorded by check name."""
     return {e.check_name: e for e in result.get_asset_check_evaluations()}
+
+
+def invoke_stream_results(
+    schema: type[dy.Schema],
+    returned: object,
+    *,
+    asset_key: dg.AssetKey,
+    error_rows_writer: Callable[[pl.DataFrame], str] | None = None,
+    check_granularity: dd.Granularity | None = None,
+    **kwargs: Any,
+) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+    """Call `stream_results` from a direct invocation of a one-asset `@dg.asset`, which binds the context it reads."""
+
+    @dg.asset(
+        key=asset_key,
+        check_specs=dd.wiring.build_asset_check_specs(
+            schema,
+            asset=asset_key,
+            check_granularity=check_granularity,
+            filter=error_rows_writer is not None,
+        ),
+        output_required=False,
+    )
+    def hand_wired(
+        context: dg.AssetExecutionContext,
+    ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+        yield from dd.wiring.stream_results(
+            schema,
+            returned,  # pyrefly: ignore[bad-argument-type]
+            context=context,
+            error_rows_writer=error_rows_writer,
+            check_granularity=check_granularity,
+            **kwargs,
+        )
+
+    return hand_wired(dg.build_asset_context())  # pyrefly: ignore[bad-return]
 
 
 def records(value: dg.MetadataValue[Any]) -> list[dict[str, Any]]:
@@ -301,7 +337,9 @@ SCHEMA_TAKERS: dict[str, Callable[[type[dy.Schema]], object]] = {
     "wiring.get_column_schema_metadata": dd.wiring.get_column_schema_metadata,
     "wiring.get_table_schema": dd.wiring.get_table_schema,
     "wiring.stream_results": lambda schema: list(
-        dd.wiring.stream_results(schema, pl.DataFrame(), asset_key=_TAKER_KEY)
+        dd.wiring.stream_results(
+            schema, pl.DataFrame(), context=dg.build_asset_context()
+        )
     ),
 }
 """Every public function that takes a schema, except `get_code_version`, which builds no names, with placeholders for its other arguments, so a test fails when a function uses them before it validates the schema (ADR-0008)."""

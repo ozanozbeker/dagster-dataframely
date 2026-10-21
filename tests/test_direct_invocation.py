@@ -39,10 +39,10 @@ def _orders(frame: Callable[[], pl.DataFrame], **settings: Any) -> dg.AssetsDefi
     return orders
 
 
-def _called(asset: dg.AssetsDefinition, *, filtering: bool) -> DirectInvocationResult:
-    """Call the asset, passing a context when `filter=True` adds a `context` parameter."""
+def _call(asset: dg.AssetsDefinition) -> DirectInvocationResult:
+    """Call the asset with a built context."""
     return dd.testing.DirectInvocationResult.from_invocation(
-        asset(*((dg.build_asset_context(),) if filtering else ()))
+        asset(dg.build_asset_context())
     )
 
 
@@ -84,7 +84,7 @@ def test_calling_the_asset_returns_its_frame(
 ):
     asset = _orders(frame, filter=filtering)
 
-    materialization = _materialization(_called(asset, filtering=filtering))
+    materialization = _materialization(_call(asset))
 
     assert_frame_equal(materialization.value, clean_orders())
 
@@ -95,7 +95,7 @@ def test_calling_the_asset_reports_every_check_it_declares(
 ):
     asset = _orders(frame, filter=filtering)
 
-    checks = _checks(_called(asset, filtering=filtering))
+    checks = _checks(_call(asset))
 
     assert set(checks) == {spec.key for spec in asset.check_specs}
 
@@ -109,7 +109,7 @@ def test_the_key_a_call_yields_is_the_key_a_run_writes_under(
 ):
     asset = _orders(frame, filter=filtering)
     result = materialize(tmp_path, asset)
-    called = _materialization(_called(asset, filtering=filtering))
+    called = _materialization(_call(asset))
 
     assert result.success
     assert {called.asset_key: len(called.value)} == {
@@ -132,7 +132,7 @@ def test_the_checks_a_call_yields_are_the_checks_a_run_evaluates(
     asset = _orders(frame, filter=filtering)
     result = materialize(tmp_path, asset)
 
-    assert _checks(_called(asset, filtering=filtering)) == {
+    assert _checks(_call(asset)) == {
         evaluation.asset_check_key: evaluation.passed
         for evaluation in result.get_asset_check_evaluations()
     }
@@ -142,7 +142,7 @@ def test_a_column_schema_drift_raises_out_of_the_call():
     asset = _orders(wrong_dtype_orders)
 
     with pytest.raises(ColumnSchemaError) as raised:
-        dd.testing.DirectInvocationResult.from_invocation(asset())
+        _call(asset)
 
     assert "Column 'quantity' (expected Int32, got Int64)" in str(raised.value)
 
@@ -152,7 +152,7 @@ def test_a_call_writes_the_error_rows_to_a_file_under_error_rows_dir(
 ):
     asset = _orders(mixed_orders, filter=True)
 
-    materialization = _materialization(_called(asset, filtering=True))
+    materialization = _materialization(_call(asset))
     written = pl.read_parquet(error_rows_dir / "orders__error_rows.parquet")
 
     assert materialization.asset_key == dg.AssetKey(["orders"])
@@ -187,7 +187,7 @@ def test_a_call_with_error_rows_and_no_error_rows_dir_raises():
     asset = _orders(mixed_orders, filter=True)
 
     with pytest.raises(ErrorRowsDirError) as raised:
-        _called(asset, filtering=True)
+        _call(asset)
 
     assert _ERROR_ROWS_DIR_ENV in str(raised.value)
     assert "orders" in str(raised.value)
@@ -196,7 +196,7 @@ def test_a_call_with_error_rows_and_no_error_rows_dir_raises():
 def test_a_call_with_every_row_valid_needs_no_error_rows_dir():
     asset = _orders(clean_orders, filter=True)
 
-    materialization = _materialization(_called(asset, filtering=True))
+    materialization = _materialization(_call(asset))
 
     assert_frame_equal(materialization.value, clean_orders())
 
@@ -206,7 +206,7 @@ def test_a_call_with_every_row_valid_writes_nothing_under_error_rows_dir(
 ):
     asset = _orders(clean_orders, filter=True)
 
-    _called(asset, filtering=True)
+    _call(asset)
 
     assert not error_rows_dir.exists()
 
@@ -218,7 +218,7 @@ def test_an_error_rows_dir_set_after_the_asset_is_declared_is_the_one_written_to
     directory = tmp_path / "named-late"
     monkeypatch.setenv(_ERROR_ROWS_DIR_ENV, str(directory))
 
-    _called(asset, filtering=True)
+    _call(asset)
 
     assert pl.read_parquet(directory / "orders__error_rows.parquet").height == 3
 

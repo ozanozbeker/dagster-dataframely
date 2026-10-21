@@ -219,14 +219,14 @@ def test_apac_skips_the_days_before_it_opened():
 def test_finance_stops_the_load_on_one_invalid_line():
     with pytest.raises(dd.errors.ValidationAbortError):
         dd.testing.DirectInvocationResult.from_invocation(
-            finance_orders(marketplace_orders)
+            finance_orders(dg.build_asset_context(), marketplace_orders)
         )
 
 
 def test_the_partner_feed_stops_at_the_column_schema_check():
     with pytest.raises(dd.errors.ColumnSchemaError, match="quantity"):
         dd.testing.DirectInvocationResult.from_invocation(
-            partner_orders(_data.partner_orders())
+            partner_orders(dg.build_asset_context(), _data.partner_orders())
         )
 
 
@@ -255,7 +255,7 @@ def test_marketing_keeps_the_valid_lines_and_filters_the_rest(error_rows_dir: Pa
 
 def test_a_returned_result_is_inspectable_by_calling_the_asset():
     materialization = dd.testing.DirectInvocationResult.from_invocation(
-        orders_snapshot(storefront_orders)
+        orders_snapshot(dg.build_asset_context(), storefront_orders)
     ).materialization
     assert materialization is not None
     metadata = materialization.metadata or {}

@@ -28,6 +28,7 @@ class DirectInvocationResult:
     Examples
     --------
     ```python
+    import dagster as dg
     import polars as pl
 
     import dagster_dataframely as dd
@@ -40,7 +41,7 @@ class DirectInvocationResult:
 
 
     result = dd.testing.DirectInvocationResult.from_invocation(
-        orders(storefront_orders)
+        orders(dg.build_asset_context(), storefront_orders)
     )
     result.materialization.value.height, len(result.checks)
     ```
@@ -72,6 +73,7 @@ class DirectInvocationResult:
         Examples
         --------
         ```python
+        import dagster as dg
         import polars as pl
 
         import dagster_dataframely as dd
@@ -84,7 +86,7 @@ class DirectInvocationResult:
 
 
         result = dd.testing.DirectInvocationResult.from_invocation(
-            orders(storefront_orders)
+            orders(dg.build_asset_context(), storefront_orders)
         )
         [name for name, check in result.checks.items() if not check.passed]
         ```
