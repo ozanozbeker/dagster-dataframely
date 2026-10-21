@@ -211,6 +211,15 @@ def describe_rules(schema: type[dy.Schema]) -> dict[str, DescribedRule]:
     }
 
 
+def get_error_rule_names(schema: type[dy.Schema]) -> set[str]:
+    """Return the names of the schema's `"error"` rules."""
+    return {
+        name
+        for name, rule in describe_rules(schema).items()
+        if rule.severity == "error"
+    }
+
+
 def get_filter_severities(
     collection: type[dy.Collection],
 ) -> dict[str, Severity]:

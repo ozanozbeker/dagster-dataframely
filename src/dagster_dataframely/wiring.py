@@ -9,16 +9,14 @@ from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     build_file_writer,
     build_io_manager_writer,
+    get_error_rows,
     get_error_rows_key,
     get_error_rows_path,
     validate_error_rows_key,
 )
 from dagster_dataframely._metadata import get_column_schema_metadata, get_table_schema
 from dagster_dataframely._naming import get_check_name_for_rule
-from dagster_dataframely._runtime import (
-    get_error_rows,
-    stream_results,
-)
+from dagster_dataframely._runtime import stream_results
 
 __all__ = [
     "ErrorRowsWriter",

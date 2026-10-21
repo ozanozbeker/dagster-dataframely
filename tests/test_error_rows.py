@@ -314,35 +314,25 @@ class TestSpec:
             for column in table.columns
         )
 
-    def test_the_columns_tab_has_a_column_for_every_rule(self):
-        table = build_error_rows_spec(OrdersSchema, orders).metadata[_COLUMN_SCHEMA_KEY]
-        names = [column.name for column in table.columns]
-
-        assert names[: len(OrdersSchema.columns())] == list(OrdersSchema.columns())
-        assert "dy_rule__amount__min" in names
-        assert "dy_rule__paid_orders_have_amount" in names
-
-    def test_the_rule_columns_are_written_in_the_order_the_columns_tab_declares(self):
-        """The written rule columns match the Columns tab and the check specs in order."""
-        written = [
-            name for name in _mixed_error_rows().columns if name.startswith("dy_rule__")
-        ]
+    @pytest.mark.parametrize("cast", [False, True])
+    def test_the_error_rows_have_the_columns_their_spec_declares(self, cast: bool):
+        """The error rows have the names, order and dtypes of their spec's Columns tab, and the check specs' rule names."""
+        _, failure = OrdersSchema.filter(mixed_orders(), cast=cast)
+        error_rows = get_error_rows(OrdersSchema, failure)
         table = build_error_rows_spec(OrdersSchema, orders).metadata[_COLUMN_SCHEMA_KEY]
         assert isinstance(table, dg.TableSchema)
-
-        declared = [
-            column.name
-            for column in table.columns
-            if column.name.startswith("dy_rule__")
-        ]
         checks = [
             spec.name
             for spec in build_asset_check_specs(OrdersSchema, asset=_ORDERS)
             if spec.name.startswith("dy_rule__")
         ]
 
-        assert written == declared
-        assert written == checks
+        assert [(column.name, column.type) for column in table.columns] == [
+            (name, str(dtype)) for name, dtype in error_rows.schema.items()
+        ]
+        assert [
+            name for name in error_rows.columns if name.startswith("dy_rule__")
+        ] == checks
 
     @pytest.mark.parametrize(
         "form",

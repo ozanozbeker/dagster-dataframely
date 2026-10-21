@@ -253,7 +253,7 @@ class TestDataframely:
             lazy_result.collect_all(engine="nonsense")
 
     def test_details_returns_invalid_rows_plus_one_column_per_rule(self):
-        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_runtime.get_error_rows` and `_checks._read_failure_examples` both read."""
+        """`FailureInfo.details()` returns the invalid rows plus one rule column per rule, which `_error_rows.get_error_rows` and `_checks._read_failure_examples` both read."""
         _, failure = OrdersSchema.filter(_MIXED_ORDERS)
         details = failure.details()
 

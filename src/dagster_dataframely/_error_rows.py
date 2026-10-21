@@ -1,7 +1,7 @@
-"""The functions in this module return the error-rows key, the error rows' file path, the writers and the error rows' spec.
+"""The functions in this module return the error rows, the error-rows key, the error rows' file path, the writers and the error rows' spec.
 
 `dd.asset` records where its writer writes in the definition metadata, and `build_error_rows_spec` reads it back.
-`get_error_rows_path` escapes partition keys as `FilesystemIOManager` does, not as `UPathIOManager` does, so the path for `../../etc/x` is still under `error_rows_dir`.
+`get_error_rows` and `build_error_rows_spec` both build their columns from the schema's columns, `_get_rule_column_names` and `_RULE_COLUMN_DTYPE`, so the written error rows and the declared ones have the same names, order and dtypes.
 """
 
 import copy
@@ -24,8 +24,12 @@ from dagster._core.storage.upath_io_manager import (
 )
 from upath import UPath
 
-from dagster_dataframely._metadata import build_error_rows_metadata
-from dagster_dataframely._rules import validate_namespace
+from dagster_dataframely._metadata import COLUMN_SCHEMA_KEY, get_column_tags
+from dagster_dataframely._rules import (
+    describe_rules,
+    get_error_rule_names,
+    validate_namespace,
+)
 from dagster_dataframely._settings import ERROR_ROWS_DIR
 from dagster_dataframely.errors import ErrorRowsDirError, ErrorRowsKeyCollisionError
 
@@ -40,6 +44,92 @@ _EXTENSION = ".parquet"
 _KEY_ENTRY = "dataframely/error_rows_key"
 
 _IO_MANAGER_KEY_ENTRY = "dataframely/error_rows_io_manager_key"
+
+_VALID = "valid"
+
+# The Delta writer panics on an `Enum` column, the dtype `FailureInfo.details()` gives a rule column.
+_RULE_COLUMN_DTYPE = pl.String
+
+
+def _get_rule_column_names(schema: type[dy.Schema]) -> dict[str, str]:
+    """Return each rule's name in `FailureInfo.details()`, mapped to its rule column's name, in rule order."""
+    return {rule.name: rule.check_name for rule in describe_rules(schema).values()}
+
+
+def _with_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> pl.DataFrame:
+    """Select the schema's columns, then each rule column under its check name as `_RULE_COLUMN_DTYPE`.
+
+    The `select` drops the `<column>|dtype` columns of a `FailureInfo` from `cast=True`, which the spec does not declare.
+    """
+    return details.select(
+        *schema.column_names(),
+        *(
+            pl.col(rule).cast(_RULE_COLUMN_DTYPE).alias(name)
+            for rule, name in _get_rule_column_names(schema).items()
+        ),
+    )
+
+
+def separate_warned_and_error_rows(
+    schema: type[dy.Schema], failure: dy.FailureInfo, errors: AbstractSet[str]
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Return the invalid rows that failed only `"warn"` rules, with the schema's columns, and the error rows as a writer receives them.
+
+    `unknown` counts as failed; Dataframely reports it only with `cast=True` or for a `Collection`.
+    """
+    # Bound once: `details()` rebuilds the frame on every call.
+    details: pl.DataFrame = failure.details()
+    failed: pl.Expr = pl.any_horizontal(
+        pl.lit(value=False), *(pl.col(rule) != _VALID for rule in errors)
+    )
+    return (
+        details.filter(~failed).select(schema.column_names()),
+        _with_rule_columns(schema, details.filter(failed)),
+    )
+
+
+def get_error_rows(schema: type[dy.Schema], failure: dy.FailureInfo) -> pl.DataFrame:
+    """Return the rows that failed an `"error"` rule, as a writer receives them, with one rule column per rule.
+
+    Parameters
+    ----------
+    schema
+        The schema the rows were validated against, which sets each rule's severity.
+    failure
+        What `Schema.filter` returned beside the valid rows.
+
+    Returns
+    -------
+    :
+        The original columns in their own order, then a `String` rule column for every rule, named by `get_check_name_for_rule`. A rule column's value is `valid`, `invalid` or `unknown`.
+
+    Raises
+    ------
+    ReservedColumnError
+        A column name is in the reserved `dy_` namespace.
+    InvalidColumnNameError
+        A column name has a character Dagster does not allow in an asset check name.
+    CheckNameCollisionError
+        Two rules produce the same asset check name.
+    InvalidSeverityError
+        The schema declares a severity this package cannot read.
+
+    Examples
+    --------
+    ```python
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import OrdersSchema, marketplace_orders
+
+    _, failure = OrdersSchema.filter(marketplace_orders, cast=False)
+    error_rows = dd.wiring.get_error_rows(OrdersSchema, failure)
+    error_rows.select("order_id", "amount", "dy_rule__amount__min")
+    ```
+    """
+    validate_namespace(schema)
+    _, error_rows = separate_warned_and_error_rows(
+        schema, failure, get_error_rule_names(schema)
+    )
+    return error_rows
 
 
 def get_error_rows_key(asset_key: dg.AssetKey) -> dg.AssetKey:
@@ -208,6 +298,7 @@ def get_error_rows_path(
         *coerce_to_relative_parts(UPath(*error_rows_key.path))
     )
     if partition_key is not None:
+        # Both escapes match `FilesystemIOManager`, not `UPathIOManager`, so `../../etc/x` stays under `error_rows_dir`.
         path = path / escape_dotdot_segments(
             escape_leading_slash(_format_partition_key(partition_key))
         )
@@ -419,6 +510,31 @@ def build_error_rows_writer(
     return write
 
 
+def _build_error_rows_table_schema(schema: type[dy.Schema]) -> dg.TableSchema:
+    """Return the error rows' column schema, without the constraints its rows fail."""
+    return dg.TableSchema(
+        columns=[
+            dg.TableColumn(
+                name=name,
+                type=str(column.dtype),
+                description=column.description,
+                tags=get_column_tags(column),
+            )
+            for name, column in schema.columns().items()
+        ]
+        + [
+            dg.TableColumn(
+                name=check_name,
+                type=str(_RULE_COLUMN_DTYPE),
+                description=(
+                    f"Whether the row is 'valid', 'invalid' or 'unknown' under rule '{rule}'."
+                ),
+            )
+            for rule, check_name in _get_rule_column_names(schema).items()
+        ]
+    )
+
+
 def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
     schema: type[dy.Schema],
     asset: dg.AssetsDefinition | dg.AssetKey | str | Sequence[str],
@@ -527,7 +643,10 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
         key=key,
         deps=[parent],
         description=f"Rows from {rendered} that failed an 'error' rule, with one column per rule.",
-        metadata={**definition_metadata, **build_error_rows_metadata(schema)},
+        metadata={
+            **definition_metadata,
+            COLUMN_SCHEMA_KEY: _build_error_rows_table_schema(schema),
+        },
         partitions_def=partitions_def,
         group_name=group_name,
         owners=owners,

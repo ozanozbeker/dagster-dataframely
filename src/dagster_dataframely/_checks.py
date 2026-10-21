@@ -230,12 +230,6 @@ def check_and_filter(
 _INVALID = "invalid"
 
 
-def get_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> list[str]:
-    """Return the rule columns in `details`, in the schema's rule order."""
-    present: pl.Schema = details.collect_schema()
-    return [rule for rule in describe_rules(schema) if rule in present]
-
-
 def _read_failure_examples(
     schema: type[dy.Schema],
     failure: dy.FailureInfo,
@@ -248,9 +242,11 @@ def _read_failure_examples(
     # `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     # The examples omit the rule columns, because the check already shows the rule.
-    columns: list[str] = get_rule_columns(schema, details)
+    columns: list[str] = schema.column_names()
     return {
-        rule: sample_rows(details.filter(pl.col(rule) == _INVALID).drop(columns), limit)
+        rule: sample_rows(
+            details.filter(pl.col(rule) == _INVALID).select(columns), limit
+        )
         for rule in counts
     }
 

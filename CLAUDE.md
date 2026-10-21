@@ -96,7 +96,7 @@ This holds in `src/`, `tests/`, `demo/` and the guide.
 ### Change part of a value with `with_*`
 
 A function that returns the same value with part of it changed uses Polars' prefix: `with_returned_fields` returns the same results with three fields set on one of them.
-Everything else that transforms a value takes the verb of the change: `_add_address`, `_separate_warned_and_error_rows`, `_to_snake_case`.
+Everything else that transforms a value takes the verb of the change: `_add_address`, `separate_warned_and_error_rows`, `_to_snake_case`.
 
 Avoid a participle as a function name (`_addressed`, `_suffixed`), and avoid `apply_*`, `enrich_*`, `make_*`, `compute_*`.
 

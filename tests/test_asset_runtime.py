@@ -460,7 +460,7 @@ class TestFilterWithValidRows:
     ):
         materialize(tmp_path, _filtered)
         error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
-        get_rule_columns = [
+        rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
         checks = {spec.name for spec in _filtered.check_specs} - {"dy_schema__columns"}
@@ -469,20 +469,20 @@ class TestFilterWithValidRows:
             OrdersSchema.columns()
         )
         assert set(error_rows.columns) == set(OrdersSchema.columns()) | set(
-            get_rule_columns
+            rule_columns
         )
         # A rule column has the name of its rule's check.
-        assert set(get_rule_columns) == checks
+        assert set(rule_columns) == checks
 
     def test_the_rule_columns_are_cast_from_enum_to_string(self, tmp_path: Path):
-        """Rule columns are strings, because the Delta writer panics on an `Enum` column."""
+        """The rule columns are `String`, not the `Enum` that `FailureInfo.details()` returns."""
         materialize(tmp_path, _filtered)
         error_rows = pl.read_parquet(tmp_path / "orders__error_rows.parquet")
-        get_rule_columns = [
+        rule_columns = [
             name for name in error_rows.columns if name.startswith("dy_rule__")
         ]
 
-        assert all(error_rows.schema[name] == pl.String for name in get_rule_columns)
+        assert all(error_rows.schema[name] == pl.String for name in rule_columns)
 
     def test_a_rule_column_shows_which_rows_failed_its_rule(self, tmp_path: Path):
         materialize(tmp_path, _filtered)
