@@ -1,0 +1,75 @@
+name: Upstream
+
+# These jobs test the package against newer releases than `uv.lock` pins. They are separate from
+# `ci.yml`, so an upstream release that breaks the package does not mark CI or its badge as failing.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Each run upgrades one direct dependency to its newest release and keeps the rest at the lock,
+  # so a failure names the release that caused it. `tests/test_upstream_characterization.py`
+  # fails when an upstream release changes behaviour this package depends on.
+  latest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [dagster, dataframely, polars, universal-pathlib]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: latest-${{ matrix.package }}
+      - run: uv sync --upgrade-package ${{ matrix.package }}
+      # Fails on Dagster's deprecation warnings, which come before a removal. They are plain
+      # `DeprecationWarning`s, so the filter matches their message. The filter uses `-o`, not
+      # `-W`, because pytest escapes a `-W` message, so it cannot be a regex.
+      - run: >
+          uv run --no-sync pytest
+          -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"
+
+  # This job upgrades every package, transitive ones too, on each supported Python.
+  latest-all:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: latest-all-${{ matrix.python-version }}
+          python-version: ${{ matrix.python-version }}
+      - run: uv sync --upgrade
+      # The same filter as `latest`.
+      - run: >
+          uv run --no-sync pytest
+          -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"
+
+  integration-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: integration-latest
+      - run: uv sync --upgrade --group integration
+      - run: uv run --no-sync pytest tests/test_dagster_polars.py
