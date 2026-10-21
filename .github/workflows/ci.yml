@@ -100,3 +100,34 @@ jobs:
       - run: >
           uv run --no-sync pytest
           -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"
+
+  # `dagster-polars` is in the `integration` group, not `dev`, so a release of it that breaks on
+  # new Polars fails only these two jobs. They run only `tests/test_dagster_polars.py`.
+  integration-lowest:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --group integration
+      - run: uv run --no-sync pytest tests/test_dagster_polars.py
+
+  integration-latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: integration-latest
+      - run: uv sync --upgrade --group integration
+      - run: uv run --no-sync pytest tests/test_dagster_polars.py

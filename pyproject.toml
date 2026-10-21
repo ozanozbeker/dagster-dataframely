@@ -50,6 +50,7 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 [dependency-groups]
 dev = [
   # A `DbIOManager` subclass beside `dd.data.ParquetIOManager`'s `UPathIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
+  # It is in `dev`, not `integration`, because it is a Dagster-supported integration: Dagster builds it in dagster-io/dagster and releases it with each Dagster version.
   "dagster-duckdb-polars>=0.29.24",
   # An older bound, because `dagster-duckdb` already requires it. The tests import it directly.
   "duckdb>=1.1",
@@ -62,6 +63,9 @@ dev = [
 # Not in `dev`, so the test and lint jobs and a contributor running pytest skip the docs
 # packages. This group omits `ipykernel`, because `great-docs` requires it through `jupyter`.
 docs = ["great-docs>=0.17"]
+# Not in `dev`, so a dagster-polars release that breaks on new Polars fails only the integration
+# jobs. `tests/test_dagster_polars.py` skips itself when the group is not installed.
+integration = ["dagster-polars>=0.27.12"]
 
 [build-system]
 requires = ["uv_build>=0.12.0"]
