@@ -35,8 +35,8 @@ classifiers = [
 # lists `universal-pathlib` only because `src/` imports it. Its bound is 0.2.2, because 0.2.0 and
 # 0.2.1 raise on an S3 path when `s3fs` is not installed.
 dependencies = [
-  "dagster>=1.13.24",
-  "dataframely>=3.1.2",
+  "dagster>=1.13.6",
+  "dataframely>=3.0.0",
   "polars>=1.44.2",
   "universal-pathlib>=0.2.2",
 ]
@@ -51,7 +51,8 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 dev = [
   # A `DbIOManager` subclass beside `dd.data.ParquetIOManager`'s `UPathIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
   # It is in `dev`, not `integration`, because it is a Dagster-supported integration: Dagster builds it in dagster-io/dagster and releases it with each Dagster version.
-  "dagster-duckdb-polars>=0.29.24",
+  # Its floor follows the `dagster` floor, because each release pins `dagster` to one version.
+  "dagster-duckdb-polars>=0.29.6",
   # An older bound, because `dagster-duckdb` already requires it. The tests import it directly.
   "duckdb>=1.1",
   "prek>=0.5.3",
