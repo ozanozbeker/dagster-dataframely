@@ -23,6 +23,7 @@ from dagster_dataframely.errors import (
     InvalidColumnNameError,
     InvalidSeverityError,
     ReservedColumnError,
+    _quote,
 )
 
 DAGSTER_NAME = re.compile(r"[A-Za-z0-9_]+")
@@ -82,11 +83,6 @@ class DescribedRule:
         )
 
 
-def quote(names: Iterable[str]) -> str:
-    """Quote and join names for an error message."""
-    return ", ".join(f"'{name}'" for name in names)
-
-
 def _parse_severity(value: object, place: str) -> Severity:
     """Return `value` if it is a severity, else raise."""
     if value in _SEVERITIES:
@@ -114,7 +110,7 @@ def _resolve_named_rules(
     if written == "check" and checks:
         return checks
     listed: str = (
-        f"The {term}s of {owner} are {quote(rules)}."
+        f"The {term}s of {owner} are {_quote(rules)}."
         if rules
         else f"{owner} has no {term}s."
     )
@@ -138,7 +134,7 @@ def _read_declared_severities(
     if unknown:
         raise InvalidSeverityError(
             place,
-            f"has the key {quote(unknown)}, and this package reads only the key 'severity'.",
+            f"has the key {_quote(unknown)}, and this package reads only the key 'severity'.",
         )
     if "severity" not in entry:
         return {}

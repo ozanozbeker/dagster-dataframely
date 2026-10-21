@@ -27,7 +27,7 @@ from dagster_dataframely._settings import (
     MAX_FAILURE_EXAMPLES,
     Granularity,
 )
-from dagster_dataframely.errors import ColumnSchemaError
+from dagster_dataframely.errors import ColumnSchemaError, _pluralize
 
 
 @dataclass(frozen=True)
@@ -174,11 +174,6 @@ def _find_column_schema_problems(
         for name, column in schema.columns().items()
         if name not in actual or not column.validate_dtype(actual[name])
     ]
-
-
-def _pluralize(count: int, noun: str) -> str:
-    """Return `count` and `noun`, plural unless `count` is 1."""
-    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 def build_column_schema_result(

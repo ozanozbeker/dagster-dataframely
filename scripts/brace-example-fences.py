@@ -21,16 +21,6 @@ README = pathlib.Path("../README.md")
 REFERENCE = pathlib.Path("reference")
 
 
-def read(path: pathlib.Path) -> str:
-    """Read a generated page as UTF-8, whatever the process locale is."""
-    return path.read_text(encoding="utf-8")
-
-
-def write(path: pathlib.Path, text: str) -> None:
-    """Write a generated page as UTF-8, without translating its line endings."""
-    path.write_text(text, encoding="utf-8", newline="")
-
-
 def landing_page() -> int:
     """Add braces to the landing page's fences.
 
@@ -41,13 +31,14 @@ def landing_page() -> int:
     -------
     The number of `README.md` fences that are not executable cells on the page.
     """
-    braced, count = PLAIN.subn(r"\1```{python}", read(INDEX))
-    expected = len(PLAIN.findall(read(README)))
+    braced, count = PLAIN.subn(r"\1```{python}", INDEX.read_text(encoding="utf-8"))
+    expected = len(PLAIN.findall(README.read_text(encoding="utf-8")))
     total = len(BRACED.findall(braced))
     if total != expected:
         print(f"{INDEX}: {total} executable cells, {expected} fences in README.md")
         return expected - total
-    write(INDEX, braced)
+    # `newline=""` keeps the page's line endings.
+    INDEX.write_text(braced, encoding="utf-8", newline="")
     print(f"{INDEX}: braced {count} of {expected}")
     return 0
 
@@ -64,7 +55,7 @@ def reference_pages() -> int:
     """
     missed = 0
     for page in sorted(REFERENCE.glob("*.qmd")):
-        lines = read(page).split("\n")
+        lines = page.read_text(encoding="utf-8").split("\n")
         depth = 0  # the `Examples` heading's level while inside its section, else 0
         count = 0
         for i, line in enumerate(lines):
@@ -86,7 +77,7 @@ def reference_pages() -> int:
                     missed += 1
         if missed:
             continue
-        write(page, "\n".join(lines))
+        page.write_text("\n".join(lines), encoding="utf-8", newline="")
         if count:
             print(f"{page}: braced {count}")
     return missed

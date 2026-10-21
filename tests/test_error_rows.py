@@ -205,7 +205,7 @@ class TestSpec:
         spec = build_error_rows_spec(OrdersSchema, orders)
 
         assert spec.key == dg.AssetKey(["sales", "orders__error_rows"])
-        # Both assert against the literal, because `_add_error_rows_suffix` builds both names, so comparing them would pass for any `_LEAF_SUFFIX`.
+        # Both assert against the literal, because `_resolve_error_rows_key` builds both names, so comparing them would pass for any `_LEAF_SUFFIX`.
         assert (
             get_error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
         )

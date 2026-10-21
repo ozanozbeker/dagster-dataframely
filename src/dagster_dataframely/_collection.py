@@ -15,10 +15,14 @@ import polars as pl
 
 from dagster_dataframely._checks import describe_failed_rows
 from dagster_dataframely._naming import get_check_name_for_filter
-from dagster_dataframely._rules import Severity, get_filter_severities, quote
+from dagster_dataframely._rules import Severity, get_filter_severities
 from dagster_dataframely._samples import build_sample_metadata, sample_rows
 from dagster_dataframely._settings import MAX_FAILURE_EXAMPLES
-from dagster_dataframely.errors import FailurePropagationError, InvalidMembersError
+from dagster_dataframely.errors import (
+    FailurePropagationError,
+    InvalidMembersError,
+    _quote,
+)
 
 type Members = Mapping[str, dg.AssetsDefinition | dg.AssetSpec]
 
@@ -45,9 +49,9 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
     unknown: list[str] = [member for member in members if member not in names]
     if unknown:
         problem = (
-            f"names {quote(unknown)}, which is not a member of {owner}."
+            f"names {_quote(unknown)}, which is not a member of {owner}."
             if len(unknown) == 1
-            else f"names {quote(unknown)}, which are not members of {owner}."
+            else f"names {_quote(unknown)}, which are not members of {owner}."
         )
         raise InvalidMembersError(owner, problem, names)
     required: set[str] = collection.required_members()
@@ -58,7 +62,7 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
         plural: str = "" if len(missing) == 1 else "s"
         raise InvalidMembersError(
             owner,
-            f"lacks the required member{plural} {quote(missing)} of {owner}.",
+            f"lacks the required member{plural} {_quote(missing)} of {owner}.",
             names,
         )
     several: list[str] = [
@@ -69,7 +73,7 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
     if several:
         raise InvalidMembersError(
             owner,
-            f"maps {quote(several)} to a definition of several assets. Pass the member's `dg.AssetSpec` from its `specs`.",
+            f"maps {_quote(several)} to a definition of several assets. Pass the member's `dg.AssetSpec` from its `specs`.",
             names,
         )
     partitioned: list[str] = [
@@ -81,7 +85,7 @@ def _validate_members(collection: type[dy.Collection], members: Members) -> None
         )
         raise InvalidMembersError(
             owner,
-            f"maps {quote(partitioned)} to {assets}, and the checks read every member's whole table. Pass unpartitioned assets.",
+            f"maps {_quote(partitioned)} to {assets}, and the checks read every member's whole table. Pass unpartitioned assets.",
             names,
         )
 

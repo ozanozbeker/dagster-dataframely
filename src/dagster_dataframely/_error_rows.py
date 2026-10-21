@@ -42,17 +42,12 @@ _KEY_ENTRY = "dataframely/error_rows_key"
 _IO_MANAGER_KEY_ENTRY = "dataframely/error_rows_io_manager_key"
 
 
-def _add_error_rows_suffix(parts: Sequence[str]) -> tuple[str, ...]:
-    """Add `__error_rows` to the last part of a key."""
-    return (*parts[:-1], f"{parts[-1]}{_LEAF_SUFFIX}")
-
-
 def _resolve_error_rows_key(
     key: dg.AssetKey, error_rows_key: dg.AssetKey | str | Sequence[str] | None = None
 ) -> dg.AssetKey:
     """Return the error-rows key: `error_rows_key`, or else `key` with `__error_rows` added."""
     if error_rows_key is None:
-        return dg.AssetKey(list(_add_error_rows_suffix(key.path)))
+        return dg.AssetKey([*key.path[:-1], f"{key.path[-1]}{_LEAF_SUFFIX}"])
     if isinstance(error_rows_key, dg.AssetKey):
         return error_rows_key
     return dg.AssetKey(error_rows_key)

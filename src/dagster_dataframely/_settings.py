@@ -32,6 +32,13 @@ class _Setting[T]:
         """The setting's environment variable."""
         return f"DAGSTER_DATAFRAMELY_{self.name.upper()}"
 
+    @property
+    def sources(self) -> str:
+        """The sentence that names every source the setting reads, for `InvalidSettingError`."""
+        if self.takes_argument:
+            return f"The package reads it from three sources, each overriding the one before: the package default, then the environment variable {self.env_var}, then the `{self.name}=` argument."
+        return f"The package reads it from two sources, each overriding the one before: the package default, then the environment variable {self.env_var}. There is no `{self.name}=` argument."
+
     def resolve(self, argument: T | None) -> T:
         """Return the setting's value, validated."""
         if argument is not None:
@@ -58,8 +65,7 @@ class _Setting[T]:
                 value,
                 allowed or self.allowed,
                 source=source,
-                env_var=self.env_var,
-                takes_argument=self.takes_argument,
+                sources=self.sources,
             )
         return cast("T", value)
 

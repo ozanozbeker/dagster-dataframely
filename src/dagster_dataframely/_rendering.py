@@ -6,7 +6,6 @@ Both follow the fallback orders in the user guide's *Naming* page.
 
 import re
 from collections.abc import Sequence
-from typing import Any
 
 import dataframely as dy
 import polars as pl
@@ -44,14 +43,6 @@ _CHECK_RULE_NAME = re.compile(r"(?:inner_)*check(?:__.+)?")
 """Matches the names Dataframely gives the rules of a `check=` argument, on a column or on its elements."""
 
 
-def _get_value(column: dy.Column, rule_name: str) -> Any:  # noqa: ANN401 - the type varies by constraint
-    """Read the value of the constraint that generated a rule.
-
-    Dataframely stores the value in the column attribute named `rule_name`; `tests/test_upstream_characterization.py` asserts it.
-    """
-    return getattr(column, rule_name)
-
-
 def _get_length_unit(column: dy.Column) -> str:
     """Name what a length bound counts.
 
@@ -69,24 +60,23 @@ def _render_named_check(rule_name: str) -> str:
 
 def _render_column_constraint(column: dy.Column, rule_name: str) -> str | None:  # noqa: PLR0911 - one return per kind of constraint
     """Render one column rule, or `None` for a rule name this package does not render."""
+    # Dataframely stores a constraint's value in the column attribute named after its rule; `tests/test_upstream_characterization.py` asserts it.
     if rule_name in _PHRASES:
         return _PHRASES[rule_name]
     match rule_name:
         case "min" | "max" | "min_exclusive" | "max_exclusive":
-            return f"{_OPERATORS[rule_name]} {_get_value(column, rule_name)}"
+            return f"{_OPERATORS[rule_name]} {getattr(column, rule_name)}"
         case "min_length" | "max_length":
             return (
-                f"length {_OPERATORS[rule_name]} {_get_value(column, rule_name)}"
+                f"length {_OPERATORS[rule_name]} {getattr(column, rule_name)}"
                 f" {_get_length_unit(column)}"
             )
         case "regex":
-            return f"matches {_get_value(column, rule_name)}"
+            return f"matches {getattr(column, rule_name)}"
         case "resolution":
-            return f"aligned to {_get_value(column, rule_name)}"
+            return f"aligned to {getattr(column, rule_name)}"
         case "is_in":
-            values: str = ", ".join(
-                str(value) for value in _get_value(column, rule_name)
-            )
+            values: str = ", ".join(str(value) for value in getattr(column, rule_name))
             return f"in ({values})"
         case _ if rule_name.startswith("check__"):
             return _render_named_check(rule_name)

@@ -119,7 +119,7 @@ class TestDataframely:
         assert not isinstance(getattr(OrdersSchema, "primary_key", None), RuleFactory)
 
     def test_a_constraint_rule_is_named_after_the_parameter_that_declared_it(self):
-        """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering._get_value` reads with `getattr`."""
+        """Each constraint's rule has its parameter's name, and the column stores the value under that name, which `_rendering` reads with `getattr`."""
         declared: dict[str, dy.Column] = {
             "min": dy.Int64(min=1),
             "max": dy.Int64(max=9),

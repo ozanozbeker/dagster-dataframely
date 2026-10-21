@@ -26,6 +26,16 @@ __all__ = [
 ]
 
 
+def _quote(names: Sequence[str]) -> str:
+    """Quote and join names for an error message."""
+    return ", ".join(f"'{name}'" for name in names)
+
+
+def _pluralize(count: int, noun: str) -> str:
+    """Return `count` and `noun`, plural unless `count` is 1."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 class DagsterDataframelyError(Exception):
     """Base class for every error this package defines."""
 
@@ -36,15 +46,14 @@ class InvalidSettingError(DagsterDataframelyError):
     Raised when the setting resolves, so the message names the source of the value.
     """
 
-    def __init__(  # noqa: PLR0913 - the message names every argument
+    def __init__(
         self,
         setting: str,
         value: object,
         allowed: Sequence[str] | str,
         *,
         source: str,
-        env_var: str,
-        takes_argument: bool = True,
+        sources: str,
     ) -> None:
         """Name the setting, its value, the source of the value, and every source the setting reads.
 
@@ -54,19 +63,10 @@ class InvalidSettingError(DagsterDataframelyError):
             The allowed values, which the message quotes, or a phrase that describes a range.
         source
             Where the value came from, as a phrase.
-        takes_argument
-            Whether `dd.asset` has a parameter for this setting. `error_rows_dir` has none, so its message names no argument.
+        sources
+            The sentence that names every source the setting reads, which `_Setting.sources` builds.
         """
-        rendered: str = (
-            allowed
-            if isinstance(allowed, str)
-            else ", ".join(f"'{allowed_value}'" for allowed_value in allowed)
-        )
-        sources: str = (
-            f"The package reads it from three sources, each overriding the one before: the package default, then the environment variable {env_var}, then the `{setting}=` argument."
-            if takes_argument
-            else f"The package reads it from two sources, each overriding the one before: the package default, then the environment variable {env_var}. There is no `{setting}=` argument."
-        )
+        rendered: str = allowed if isinstance(allowed, str) else _quote(allowed)
         super().__init__(
             f"Setting `{setting}` got {value!r} ({type(value).__name__}) from {source}. Allowed values are {rendered}. {sources}"
         )
@@ -99,7 +99,7 @@ class ReservedColumnError(DagsterDataframelyError):
 
     def __init__(self, schema_name: str, columns: list[str]) -> None:
         """Name only the columns in the namespace."""
-        names: str = ", ".join(f"'{column}'" for column in columns)
+        names: str = _quote(columns)
         plural, verb, pronoun = (
             ("", "uses", "it") if len(columns) == 1 else ("s", "use", "them")
         )
@@ -116,7 +116,7 @@ class InvalidColumnNameError(DagsterDataframelyError):
 
     def __init__(self, schema_name: str, columns: list[str]) -> None:
         """Name only the columns whose names are invalid."""
-        names: str = ", ".join(f"'{column}'" for column in columns)
+        names: str = _quote(columns)
         plural, verb, pronoun = (
             ("", "contains", "it") if len(columns) == 1 else ("s", "contain", "them")
         )
@@ -167,7 +167,7 @@ class InvalidMembersError(DagsterDataframelyError):
         problem
             The rest of a sentence whose subject is `members`, and any fix.
         """
-        names: str = ", ".join(f"'{member}'" for member in members)
+        names: str = _quote(members)
         super().__init__(
             f"`members` {problem} The members of {collection_name} are {names}."
         )
@@ -181,7 +181,7 @@ class FailurePropagationError(DagsterDataframelyError):
 
     def __init__(self, collection_name: str, members: Sequence[str]) -> None:
         """Name the members that set it."""
-        names: str = ", ".join(f"'{member}'" for member in members)
+        names: str = _quote(members)
         plural, verb = ("", "sets") if len(members) == 1 else ("s", "set")
         super().__init__(
             f"Member{plural} {names} of {collection_name} {verb} `propagate_row_failures=True`, which `dd.build_collection_checks` cannot check. A row that fails its member's own rules is not in the member's table, so a check over the tables would always pass. Remove the setting, or write a collection filter that states the condition."
@@ -260,8 +260,7 @@ class ColumnSchemaError(DagsterDataframelyError):
 def _failure_counts(counts: Mapping[str, int]) -> str:
     """Render `FailureInfo.counts()` as text for the two errors that report failures."""
     return ", ".join(
-        f"{count} row{'' if count == 1 else 's'} failed '{rule}'"
-        for rule, count in counts.items()
+        f"{_pluralize(count, 'row')} failed '{rule}'" for rule, count in counts.items()
     )
 
 
@@ -281,9 +280,8 @@ class ValidationAbortError(DagsterDataframelyError):
         counts
             The failure count for each `"error"` rule that any row failed. The counts can add up to more than `error_count`, because one row can fail several rules.
         """
-        plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"{error_count} row{plural} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The asset wrote nothing, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
+            f"{_pluralize(error_count, 'row')} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The asset wrote nothing, so the last-known-good table is unchanged. Fix the rows upstream, write them under `<name>__error_rows` with `filter=True`, declare the rule 'warn' in the schema, or drop them in the asset body. This package never drops rows for you."
         )
 
 
@@ -307,9 +305,8 @@ class NoValidRowsError(DagsterDataframelyError):
         address
             The error-rows address, so the message says where the rows are.
         """
-        plural = "" if error_count == 1 else "s"
         super().__init__(
-            f"{error_count} of {error_count} row{plural} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The error rows are in {address}, with one rule column per rule. The asset wrote nothing to its table, so the last-known-good table is unchanged. Fix the rows upstream, or declare the rule 'warn' in the schema."
+            f"{error_count} of {_pluralize(error_count, 'row')} failed an 'error' rule of {schema_name}. Per rule, {_failure_counts(counts)}. The error rows are in {address}, with one rule column per rule. The asset wrote nothing to its table, so the last-known-good table is unchanged. Fix the rows upstream, or declare the rule 'warn' in the schema."
         )
 
 
