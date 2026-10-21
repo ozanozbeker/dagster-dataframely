@@ -1,4 +1,4 @@
-"""An asset built with `dd.asset` runs `stream_results` after its decorated function.
+"""An asset built with `dd.asset` passes what its decorated function returns to `stream_results`.
 
 Whether the run writes the table depends on both the valid and the invalid rows, so `check_and_filter` collects both (`docs/pre-1.0.md#validation-collects-both-sets-of-rows-so-nothing-streams-to-the-destination`).
 `Schema.filter` removes every invalid row, so `stream_results` reads the rows that failed only `"warn"` rules back from `FailureInfo` and appends them to the valid rows, not to the error rows (`docs/out-of-scope/dbt-test-configs.md#store_failures-on-a-test-with-severity-warn`).
@@ -32,7 +32,12 @@ from dagster_dataframely._settings import (
     Granularity,
 )
 from dagster_dataframely._statistics import build_statistics_metadata
-from dagster_dataframely.errors import NoValidRowsError, ValidationAbortError
+from dagster_dataframely.errors import (
+    MaterializeResultFieldError,
+    MaterializeResultValueError,
+    NoValidRowsError,
+    ValidationAbortError,
+)
 
 _ADDRESS_KEY = "dataframely/error_rows_address"
 _ERROR_ROWS_COUNT_KEY = "dataframely/error_rows_count"
@@ -42,6 +47,11 @@ _ERROR_ROWS_SAMPLE_KEY = "dataframely/error_rows_sample"
 _VALID = "valid"
 
 type ErrorRowsMetadata = Mapping[str, str | int | dg.TableMetadataValue]
+
+ReturnedResult = dg.MaterializeResult[pl.DataFrame] | dg.MaterializeResult[pl.LazyFrame]
+"""This union names both frame types, because `dg.MaterializeResult` is invariant in its value type."""
+
+DecoratedReturn = pl.DataFrame | pl.LazyFrame | ReturnedResult | None
 
 
 def _require_frame(frame: object, asset: str) -> None:
@@ -53,6 +63,26 @@ def _require_frame(frame: object, asset: str) -> None:
         return
     wrong_type: str = f"'{asset}' returned a {type(frame).__name__}. The decorated function of an asset built with `dd.asset` returns a Polars DataFrame or LazyFrame, a `dg.MaterializeResult` whose `value` is the frame, or `None` to skip. The column-schema check reads the frame's columns and dtypes before the asset writes anything. An asset that writes its own storage has no frame to validate, so write it as a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` to fill its Columns tab."
     raise dg.DagsterInvariantViolationError(wrong_type)
+
+
+def _unpack_return(
+    returned: DecoratedReturn, asset: str
+) -> tuple[pl.DataFrame | pl.LazyFrame | None, ReturnedResult | None]:
+    """Separate the frame to validate from a returned result.
+
+    `dg.MaterializeResult(value=None)` raises instead of skipping, because a skip has no materialization to copy the result's fields onto.
+    """
+    if not isinstance(returned, dg.MaterializeResult):
+        _require_frame(returned, asset)
+        return returned, None
+    if returned.asset_key is not None:
+        raise MaterializeResultFieldError(asset, "asset_key")
+    if returned.check_results:
+        raise MaterializeResultFieldError(asset, "check_results")
+    # The default `value` is a sentinel, not `None`; `tests/test_upstream_characterization.py` pins it.
+    if not isinstance(returned.value, (pl.DataFrame, pl.LazyFrame)):
+        raise MaterializeResultValueError(asset)
+    return returned.value, returned
 
 
 def _with_rule_columns(schema: type[dy.Schema], details: pl.DataFrame) -> pl.DataFrame:
@@ -175,7 +205,7 @@ def _tabulate_cooccurrence(
 
 def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     schema: type[dy.Schema],
-    frame: pl.DataFrame | pl.LazyFrame | None,
+    returned: DecoratedReturn,
     *,
     asset_key: dg.AssetKey,
     error_rows_writer: ErrorRowsWriter | None = None,
@@ -191,8 +221,8 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     ----------
     schema
         The schema to validate against.
-    frame
-        The frame to validate, or `None` to skip.
+    returned
+        The frame to validate, a `dg.MaterializeResult` whose `value` is the frame, or `None` to skip. The materialization has a returned result's `metadata`, `data_version` and `tags`, and the package's own metadata keys take precedence. `dg.MaterializeResult(value=None)` raises instead of skipping.
     asset_key
         The key the run materializes the table under: the asset's own key, such as `context.asset_key`. A key the asset does not have fails the step with `DagsterInvariantViolationError` on the first yield, and the asset writes nothing.
     error_rows_writer
@@ -226,7 +256,11 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     InvalidSettingError
         A setting's argument or environment variable has a value the setting does not allow.
     DagsterInvariantViolationError
-        `frame` is neither a Polars frame nor `None`.
+        `returned` is not a Polars frame, a `dg.MaterializeResult` or `None`.
+    MaterializeResultFieldError
+        `returned` is a `dg.MaterializeResult` that sets `asset_key` or `check_results`.
+    MaterializeResultValueError
+        `returned` is a `dg.MaterializeResult` whose `value` is not a Polars frame.
     ColumnSchemaError
         The frame's columns or dtypes do not match the schema. It yields the column-schema check's failing result first, and writes nothing.
     ValidationAbortError
@@ -264,7 +298,7 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     ```
     """
     validate_namespace(schema)
-    _require_frame(frame, asset_key.to_user_string())
+    frame, returned_result = _unpack_return(returned, asset_key.to_user_string())
     # Resolved before anything is written, so a malformed environment variable fails every run.
     emit_statistics: bool = STATISTICS.resolve(statistics)
     failure_examples: int = MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
@@ -301,11 +335,17 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
     def build_table_result(
         build_error_rows_metadata: ErrorRowsMetadata | None = None,
     ) -> dg.MaterializeResult[pl.DataFrame]:
-        """Return the asset's materialization."""
+        """Return the asset's materialization, with the returned result's fields."""
         return dg.MaterializeResult(
             asset_key=asset_key,
             value=table,
             metadata={
+                # First, so the package's own keys take precedence.
+                **(
+                    (returned_result.metadata or {})
+                    if returned_result is not None
+                    else {}
+                ),
                 count_key: len(table),
                 **build_statistics_metadata(table, enabled=emit_statistics),
                 **build_sample_metadata(
@@ -313,6 +353,10 @@ def stream_results(  # noqa: PLR0913 - hand-wiring passes all of these
                 ),
                 **(build_error_rows_metadata or {}),
             },
+            data_version=None
+            if returned_result is None
+            else returned_result.data_version,
+            tags=None if returned_result is None else returned_result.tags,
         )
 
     if error_rows.is_empty():

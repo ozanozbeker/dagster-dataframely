@@ -23,6 +23,9 @@ An asset built with `dd.asset` needs no change.
 
 A `str` or `Sequence[str]` passed as `error_rows_key=` becomes `dg.AssetKey(...)`, such as `dg.AssetKey(["audit", "orders"])`, passed as the positional argument in the table.
 
+**`stream_results` names its second parameter `returned`, not `frame`.**
+A call that passes the frame by keyword changes `frame=` to `returned=`.
+
 ## 0.11 {#v0.11}
 
 **Every function that returns something is named with a verb.**

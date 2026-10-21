@@ -27,13 +27,8 @@ from dagster_dataframely._error_rows import (
     validate_error_rows_key,
 )
 from dagster_dataframely._metadata import get_column_schema_metadata
-from dagster_dataframely._returns import (
-    DecoratedReturn,
-    unpack_return,
-    with_returned_fields,
-)
 from dagster_dataframely._rules import validate_namespace
-from dagster_dataframely._runtime import stream_results
+from dagster_dataframely._runtime import DecoratedReturn, stream_results
 from dagster_dataframely._settings import (
     CHECK_GRANULARITY,
     ERROR_ROWS_DIR,
@@ -263,21 +258,16 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
             returned: DecoratedReturn, writer: ErrorRowsWriter | None
         ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
             _write_column_schema(column_schema_metadata)
-            frame, result = unpack_return(returned, asset=key.to_user_string())
-            yield from with_returned_fields(
-                stream_results(
-                    schema,
-                    frame,
-                    asset_key=key,
-                    error_rows_writer=writer,
-                    check_granularity=granularity,
-                    max_failure_examples=failure_examples,
-                    statistics=emit_statistics,
-                    row_sample=sampled_rows,
-                    partitioned=partitions_def is not None,
-                ),
-                result,
+            yield from stream_results(
+                schema,
+                returned,
                 asset_key=key,
+                error_rows_writer=writer,
+                check_granularity=granularity,
+                max_failure_examples=failure_examples,
+                statistics=emit_statistics,
+                row_sample=sampled_rows,
+                partitioned=partitions_def is not None,
             )
 
         if filter:

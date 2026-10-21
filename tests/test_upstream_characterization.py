@@ -585,13 +585,13 @@ class TestDagster:
         assert not ran
 
     def test_materialize_result_value_still_defaults_to_a_sentinel(self):
-        """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_returns.unpack_return` covers a missing and a non-frame `value`."""
+        """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_runtime._unpack_return` covers a missing and a non-frame `value`."""
         assert dg.MaterializeResult().value is not None
 
     def test_replace_still_skips_the_constructors_normalization_and_keeps_every_other_field(
         self,
     ):
-        """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._add_address` and `_returns.with_returned_fields` call it."""
+        """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._add_address` calls it."""
         check = dg.AssetCheckResult(
             check_name="dy_schema__columns",
             asset_key=dg.AssetKey(["orders"]),

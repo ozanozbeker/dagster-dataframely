@@ -1,6 +1,6 @@
-"""A decorated function that returns a `dg.MaterializeResult` instead of a frame.
+"""`stream_results` receives a `dg.MaterializeResult` in place of a frame.
 
-`dd.asset` merges the result's metadata, data version and tags into the asset's materialization. A run turns the data version and tags into event tags, so these tests assert them on a call and in a run.
+It merges the result's metadata, data version and tags into the asset's materialization. A run turns the data version and tags into event tags, so these tests assert them on a direct call and in a run of `dd.asset`.
 """
 
 import re
@@ -19,6 +19,7 @@ from dagster_dataframely.errors import (
     NoValidRowsError,
     ValidationAbortError,
 )
+from dagster_dataframely.wiring import stream_results
 from tests.scenario import (
     OrdersSchema,
     clean_orders,
@@ -27,32 +28,36 @@ from tests.scenario import (
     materialize,
     mixed_orders,
     no_valid_orders,
+    results,
 )
 
 _ORDERS = dg.AssetKey(["orders"])
 _ERROR_ROWS_KEY = dg.AssetKey(["orders__error_rows"])
 
 
-def _materialization(called: object) -> dg.MaterializeResult[pl.DataFrame]:
-    """Return the materialization a call yielded."""
-    materialization = dd.testing.DirectInvocationResult.from_invocation(
-        called
-    ).materialization
-    assert materialization is not None
-    return materialization
+def _stream(
+    returned: object,
+) -> list[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
+    """Return what `stream_results` yields for `returned` as the `orders` asset."""
+    return list(
+        stream_results(OrdersSchema, returned, asset_key=_ORDERS)  # pyrefly: ignore[bad-argument-type]
+    )
+
+
+def _materialization(returned: object) -> dg.MaterializeResult[pl.DataFrame]:
+    """Return the materialization `stream_results` yields for `returned`."""
+    return results(_stream(returned))[_ORDERS]
 
 
 class TestMaterialization:
-    """The materialization of an asset that returns a `dg.MaterializeResult` or a bare frame."""
+    """The materialization `stream_results` builds from a returned `dg.MaterializeResult` or a bare frame."""
 
     def test_the_returned_metadata_is_merged_into_the_materialization(self):
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> dg.MaterializeResult[pl.DataFrame]:
-            return dg.MaterializeResult(
-                value=clean_orders(), metadata={"source": "stripe", "batch": 7}
-            )
+        returned = dg.MaterializeResult(
+            value=clean_orders(), metadata={"source": "stripe", "batch": 7}
+        )
 
-        metadata = _materialization(orders()).metadata or {}
+        metadata = _materialization(returned).metadata or {}
 
         assert metadata["source"] == "stripe"
         assert metadata["batch"] == 7
@@ -72,27 +77,23 @@ class TestMaterialization:
         assert metadata["dagster/row_count"].value == 3
 
     def test_the_packages_own_key_takes_precedence(self):
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> dg.MaterializeResult[pl.DataFrame]:
-            return dg.MaterializeResult(
-                value=clean_orders(), metadata={"dagster/row_count": 999}
-            )
+        returned = dg.MaterializeResult(
+            value=clean_orders(), metadata={"dagster/row_count": 999}
+        )
 
         # A call, not a run: in a run the IO manager writes `dagster/row_count` last.
-        called = _materialization(orders()).metadata or {}
+        called = _materialization(returned).metadata or {}
 
         assert called["dagster/row_count"] == 3
 
     def test_a_call_yields_the_returned_data_version_and_tags(self):
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> dg.MaterializeResult[pl.DataFrame]:
-            return dg.MaterializeResult(
-                value=clean_orders(),
-                data_version=dg.DataVersion("v1"),
-                tags={"run/flavour": "backfill"},
-            )
+        returned = dg.MaterializeResult(
+            value=clean_orders(),
+            data_version=dg.DataVersion("v1"),
+            tags={"run/flavour": "backfill"},
+        )
 
-        result = _materialization(orders())
+        result = _materialization(returned)
 
         assert result.data_version == dg.DataVersion("v1")
         assert result.tags == {"run/flavour": "backfill"}
@@ -114,13 +115,10 @@ class TestMaterialization:
         assert tags["run/flavour"] == "backfill"
 
     def test_a_lazy_return_folds_the_same_way(self):
-        """`dd.asset` merges a result with a `pl.LazyFrame` value like one with a `pl.DataFrame`."""
+        """`stream_results` merges a result with a `pl.LazyFrame` value like one with a `pl.DataFrame`."""
+        returned = dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
 
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> dg.MaterializeResult[pl.LazyFrame]:
-            return dg.MaterializeResult(value=clean_orders().lazy(), metadata={"m": 1})
-
-        result = _materialization(orders())
+        result = _materialization(returned)
 
         assert (result.metadata or {})["m"] == 1
         assert_frame_equal(result.value, clean_orders())
@@ -150,11 +148,7 @@ class TestMaterialization:
         assert "run/flavour" not in (recorded[_ERROR_ROWS_KEY].tags or {})
 
     def test_a_bare_frame_has_no_data_version_and_no_tags(self):
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> pl.DataFrame:
-            return clean_orders()
-
-        result = _materialization(orders())
+        result = _materialization(clean_orders())
 
         assert result.data_version is None
         assert result.tags is None
@@ -184,7 +178,7 @@ class TestMaterialization:
         )
 
 
-# Asserted on a call and in a run, so a run never writes a table that a call rejects.
+# Asserted on a direct call and in a run, so a run never writes a table that a call rejects.
 _REJECTED_RETURNS = [
     pytest.param(
         lambda: dg.MaterializeResult(metadata={"source": "stripe"}),
@@ -244,14 +238,14 @@ def _orders_asset(fn: Callable[[], object]) -> dg.AssetsDefinition:
 
 
 class TestErrors:
-    """The errors `dd.asset` raises for a rejected return, and for a returned result whose rows fail."""
+    """The errors `stream_results` raises for a rejected return, and for a returned result whose rows fail."""
 
     @pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
     def test_a_rejected_return_names_what_is_wrong(
         self, fn: Callable[[], object], error: type[Exception], message: str
     ):
         with pytest.raises(error, match=re.escape(message)):
-            dd.testing.DirectInvocationResult.from_invocation(_orders_asset(fn)())
+            _stream(fn())
 
     @pytest.mark.parametrize(("fn", "error", "message"), _REJECTED_RETURNS)
     def test_a_rejected_return_fails_the_run_and_writes_nothing(
@@ -269,7 +263,7 @@ class TestErrors:
     def test_a_run_that_writes_no_table_still_raises_its_own_error(
         self, tmp_path: Path
     ):
-        """With no valid rows, `with_returned_fields` receives no materialization and lets `NoValidRowsError` propagate."""
+        """With no valid rows, the returned result has no materialization to merge into, and `NoValidRowsError` propagates."""
 
         @dd.asset(OrdersSchema, name="orders", filter=True)
         def orders() -> dg.MaterializeResult[pl.DataFrame]:
@@ -281,23 +275,18 @@ class TestErrors:
             materialize(tmp_path, orders)
 
     def test_an_abort_with_no_error_rows_still_raises_its_own_error(self):
-        """With `filter=False`, `stream_results` raises before it yields a materialization, and `with_returned_fields` lets `ValidationAbortError` propagate."""
-
-        @dd.asset(OrdersSchema, name="orders")
-        def orders() -> dg.MaterializeResult[pl.DataFrame]:
-            return dg.MaterializeResult(
-                value=mixed_orders(), metadata={"source": "stripe"}
-            )
+        """With no writer, `stream_results` raises `ValidationAbortError` before it builds a materialization to merge into."""
+        returned = dg.MaterializeResult(
+            value=mixed_orders(), metadata={"source": "stripe"}
+        )
 
         with pytest.raises(ValidationAbortError):
-            dd.testing.DirectInvocationResult.from_invocation(orders())
+            _stream(returned)
 
     def test_the_frame_guard_names_every_route_out(self):
         """The error for a return that is not a frame names every accepted return and the hand-wired alternative."""
         with pytest.raises(dg.DagsterInvariantViolationError) as raised:
-            dd.testing.DirectInvocationResult.from_invocation(
-                _orders_asset(lambda: "orders")()
-            )
+            _stream("orders")
         message = str(raised.value)
 
         assert "Polars DataFrame or LazyFrame" in message
