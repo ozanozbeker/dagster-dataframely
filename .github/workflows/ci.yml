@@ -16,7 +16,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  # `uv.lock` pins dagster, dataframely and polars at their floors, so this job runs the oldest
+  # versions `pyproject.toml` allows.
+  lowest:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +33,7 @@ jobs:
       - run: uv run --no-sync pytest
 
   # Without this job only a local commit hook runs the `prek.toml` hooks, so nothing checks a
-  # fork's pull request or a `--no-verify` commit. It is separate from `test` so that a lint
+  # fork's pull request or a `--no-verify` commit. It is separate from `lowest` so that a lint
   # failure does not hide a test failure.
   lint:
     if: github.event_name != 'schedule'
@@ -48,9 +50,35 @@ jobs:
       # The commit-msg hook does not run here, because there is no commit message.
       - run: uv run --no-sync prek run --all-files --show-diff-on-failure
 
-  # This job runs the tests against unpinned releases. `tests/test_upstream_characterization.py`
+  # Each run upgrades one direct dependency to its newest release and keeps the rest at the lock,
+  # so a failure names the release that caused it. `tests/test_upstream_characterization.py`
   # fails when an upstream release changes behaviour this package depends on.
   latest:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [dagster, dataframely, polars, universal-pathlib]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-suffix: latest-${{ matrix.package }}
+      - run: uv sync --upgrade-package ${{ matrix.package }}
+      # Fails on Dagster's deprecation warnings, which come before a removal. They are plain
+      # `DeprecationWarning`s, so the filter matches their message. The filter uses `-o`, not
+      # `-W`, because pytest escapes a `-W` message, so it cannot be a regex.
+      - run: >
+          uv run --no-sync pytest
+          -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"
+
+  # This job upgrades every package, transitive ones too, on each supported Python.
+  latest-all:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
@@ -65,12 +93,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
-          cache-suffix: latest-${{ matrix.python-version }}
+          cache-suffix: latest-all-${{ matrix.python-version }}
           python-version: ${{ matrix.python-version }}
       - run: uv sync --upgrade
-      # Fails on Dagster's deprecation warnings, which come before a removal. They are plain
-      # `DeprecationWarning`s, so the filter matches their message. The filter uses `-o`, not
-      # `-W`, because pytest escapes a `-W` message, so it cannot be a regex.
+      # The same filter as `latest`.
       - run: >
           uv run --no-sync pytest
           -o "filterwarnings=error:.*is deprecated and will be removed in:DeprecationWarning"
