@@ -130,6 +130,7 @@ reference:
         - wiring.build_io_manager_writer
         - wiring.build_file_writer
         - wiring.get_error_rows
+        - wiring.get_error_rows_key
         - wiring.get_error_rows_path
         - wiring.validate_error_rows_key
 

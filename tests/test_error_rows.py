@@ -33,6 +33,7 @@ from dagster_dataframely.wiring import (
     build_asset_check_specs,
     build_file_writer,
     get_error_rows,
+    get_error_rows_key,
     get_error_rows_path,
     stream_results,
     validate_error_rows_key,
@@ -52,6 +53,7 @@ from tests.scenario import (
 
 _COLUMN_SCHEMA_KEY = "dagster/column_schema"
 _ORDERS = dg.AssetKey(["orders"])
+_ORDERS_ERROR_ROWS = dg.AssetKey(["orders__error_rows"])
 _TABLE_KEY = dg.AssetKey([WAREHOUSE_SCHEMA, "orders"])
 _ERROR_ROWS_KEY = dg.AssetKey([WAREHOUSE_SCHEMA, "orders__error_rows"])
 _DAYS = dg.StaticPartitionsDefinition(["2026-01-02", "2026-01-03"])
@@ -67,6 +69,23 @@ def _mixed_error_rows() -> pl.DataFrame:
     return get_error_rows(OrdersSchema, failure)
 
 
+class TestErrorRowsKey:
+    """The key `get_error_rows_key` returns."""
+
+    def test_the_name_gets_the_suffix(self):
+        assert get_error_rows_key(_ORDERS) == _ORDERS_ERROR_ROWS
+
+    def test_a_key_prefix_is_kept_and_only_the_name_is_suffixed(self):
+        key = get_error_rows_key(dg.AssetKey(["sales", "orders"]))
+
+        assert key == dg.AssetKey(["sales", "orders__error_rows"])
+
+    def test_an_asset_name_with_a_dot_keeps_it(self):
+        key = get_error_rows_key(dg.AssetKey(["orders.v2"]))
+
+        assert key == dg.AssetKey(["orders.v2__error_rows"])
+
+
 class TestPath:
     """The path `get_error_rows_path` returns."""
 
@@ -74,34 +93,27 @@ class TestPath:
         self, tmp_path: Path
     ):
         """`UPathIOManager` can write the asset's own `orders.parquet` to the same directory."""
-        path = get_error_rows_path(_ORDERS, tmp_path)
+        path = get_error_rows_path(_ORDERS_ERROR_ROWS, tmp_path)
 
         assert path == UPath(tmp_path) / "orders__error_rows.parquet"
 
     def test_a_path_is_a_upath_whatever_type_error_rows_dir_is(self, tmp_path: Path):
         paths = [
-            get_error_rows_path(_ORDERS, error_rows_dir)
+            get_error_rows_path(_ORDERS_ERROR_ROWS, error_rows_dir)
             for error_rows_dir in (tmp_path, str(tmp_path), UPath(tmp_path))
         ]
 
         assert all(isinstance(path, UPath) for path in paths)
         assert len(set(paths)) == 1
 
-    def test_a_key_prefix_becomes_directories_and_only_the_name_is_suffixed(
-        self, tmp_path: Path
-    ):
-        path = get_error_rows_path(dg.AssetKey(["sales", "orders"]), tmp_path)
-
-        assert path == UPath(tmp_path) / "sales" / "orders__error_rows.parquet"
-
     def test_an_asset_name_with_a_dot_keeps_it(self, tmp_path: Path):
         """`Path.with_suffix` would turn `orders.v2` into `orders.parquet`, which another asset writes."""
-        path = get_error_rows_path(dg.AssetKey(["orders.v2"]), tmp_path)
+        path = get_error_rows_path(dg.AssetKey(["orders.v2__error_rows"]), tmp_path)
 
         assert path == UPath(tmp_path) / "orders.v2__error_rows.parquet"
 
     def test_a_partition_becomes_a_file_under_the_leaf(self, tmp_path: Path):
-        path = get_error_rows_path(_ORDERS, tmp_path, "2026-01-02")
+        path = get_error_rows_path(_ORDERS_ERROR_ROWS, tmp_path, "2026-01-02")
 
         assert path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02.parquet"
 
@@ -110,7 +122,7 @@ class TestPath:
     ):
         key = dg.MultiPartitionKey({"region": "eu", "day": "2026-01-02"})
 
-        path = get_error_rows_path(_ORDERS, tmp_path, key)
+        path = get_error_rows_path(_ORDERS_ERROR_ROWS, tmp_path, key)
 
         assert (
             path == UPath(tmp_path) / "orders__error_rows" / "2026-01-02" / "eu.parquet"
@@ -133,7 +145,9 @@ class TestPath:
     ):
         """An `s3://` path could differ from a local one at a `/` in the tail, so the test covers each partition form."""
         path = get_error_rows_path(
-            dg.AssetKey(["sales", "orders"]), "s3://bucket/warehouse", partition_key
+            dg.AssetKey(["sales", "orders__error_rows"]),
+            "s3://bucket/warehouse",
+            partition_key,
         )
 
         assert str(path) == f"s3://bucket/warehouse/sales/{tail}"
@@ -151,29 +165,10 @@ class TestPath:
         self, tmp_path: Path, partition_key: str, tail: str
     ):
         """A partition key can come from data."""
-        path = get_error_rows_path(_ORDERS, tmp_path, partition_key)
+        path = get_error_rows_path(_ORDERS_ERROR_ROWS, tmp_path, partition_key)
 
         assert path == UPath(tmp_path) / f"orders__error_rows/{tail}.parquet"
         assert path.resolve().is_relative_to(UPath(tmp_path).resolve())
-
-    @pytest.mark.parametrize(
-        "error_rows_key",
-        [dg.AssetKey(["audit", "orders"]), ["audit", "orders"]],
-        ids=["asset_key", "sequence"],
-    )
-    def test_an_error_rows_key_replaces_the_suffixed_key(
-        self, tmp_path: Path, error_rows_key: dg.AssetKey | Sequence[str]
-    ):
-        path = get_error_rows_path(
-            _ORDERS, tmp_path, "2026-01-02", error_rows_key=error_rows_key
-        )
-
-        assert path == UPath(tmp_path) / "audit" / "orders" / "2026-01-02.parquet"
-
-    def test_a_bare_string_error_rows_key_is_a_single_key_part(self, tmp_path: Path):
-        path = get_error_rows_path(_ORDERS, tmp_path, error_rows_key="rejected_orders")
-
-        assert path == UPath(tmp_path) / "rejected_orders.parquet"
 
 
 # `get_error_rows_path` keeps a `..` inside a name, as in `my..backup`; `test_upstream_characterization.py` pins it.
@@ -205,10 +200,9 @@ class TestSpec:
         spec = build_error_rows_spec(OrdersSchema, orders)
 
         assert spec.key == dg.AssetKey(["sales", "orders__error_rows"])
-        # Both assert against the literal, because `_resolve_error_rows_key` builds both names, so comparing them would pass for any `_LEAF_SUFFIX`.
-        assert (
-            get_error_rows_path(orders.key, "/warehouse").stem == "orders__error_rows"
-        )
+        # Both assert against the literal, because `get_error_rows_key` builds both names, so comparing them would pass for any `_LEAF_SUFFIX`.
+        path = get_error_rows_path(get_error_rows_key(orders.key), "/warehouse")
+        assert path.stem == "orders__error_rows"
 
     def test_the_spec_depends_on_the_asset_the_error_rows_came_from(self):
         (dep,) = build_error_rows_spec(OrdersSchema, orders).deps
@@ -471,7 +465,7 @@ def _loaded(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Write an error-rows file at `get_error_rows_path`, then return what a downstream asset loads from it and the rows it holds."""
     error_rows = _mixed_error_rows()
-    path = get_error_rows_path(_ORDERS, tmp_path, partition_key)
+    path = get_error_rows_path(_ORDERS_ERROR_ROWS, tmp_path, partition_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as file:
         error_rows.write_parquet(file)
@@ -1122,7 +1116,7 @@ class TestFileWriter:
                 OrdersSchema,
                 mixed_orders(),
                 asset_key=_ORDERS,
-                error_rows_writer=build_file_writer(_ORDERS, tmp_path),
+                error_rows_writer=build_file_writer(_ORDERS_ERROR_ROWS, tmp_path),
             )
         )
         (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
@@ -1134,21 +1128,23 @@ class TestFileWriter:
         assert_frame_equal(pl.read_parquet(path), _mixed_error_rows())
 
     def test_the_file_writer_creates_the_directories_it_needs(self, tmp_path: Path):
-        key = dg.AssetKey(["sales", "eu", "orders"])
+        key = dg.AssetKey(["sales", "eu", "orders__error_rows"])
 
         build_file_writer(key, tmp_path)(_mixed_error_rows())
 
         assert (tmp_path / "sales" / "eu" / "orders__error_rows.parquet").exists()
 
     def test_the_file_writer_puts_a_partition_under_the_leaf(self, tmp_path: Path):
-        build_file_writer(_ORDERS, tmp_path, "2026-01-02")(_mixed_error_rows())
+        build_file_writer(_ORDERS_ERROR_ROWS, tmp_path, "2026-01-02")(
+            _mixed_error_rows()
+        )
 
         assert (tmp_path / "orders__error_rows" / "2026-01-02.parquet").exists()
 
     def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
-        address = build_file_writer(
-            _ORDERS, tmp_path, error_rows_key=["audit", "orders"]
-        )(_mixed_error_rows())
+        address = build_file_writer(dg.AssetKey(["audit", "orders"]), tmp_path)(
+            _mixed_error_rows()
+        )
 
         assert address == str(tmp_path / "audit" / "orders.parquet")
         assert_frame_equal(pl.read_parquet(address), _mixed_error_rows())
@@ -1156,7 +1152,7 @@ class TestFileWriter:
     def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(
         self, tmp_path: Path
     ):
-        build_file_writer(dg.AssetKey(["sales", "orders"]), tmp_path)
+        build_file_writer(dg.AssetKey(["sales", "orders__error_rows"]), tmp_path)
 
         assert list(tmp_path.iterdir()) == []
 
@@ -1261,7 +1257,8 @@ class TestReservedKey:
 
         with pytest.raises(ErrorRowsKeyCollisionError):
             validate_error_rows_key(
-                _Location(asset.key, defs.get_repository_def())  # pyrefly: ignore[bad-argument-type]
+                _Location(asset.key, defs.get_repository_def()),  # pyrefly: ignore[bad-argument-type]
+                _ERROR_ROWS_KEY,
             )
 
     def test_the_error_rows_key_is_the_key_checked(self):
@@ -1272,12 +1269,12 @@ class TestReservedKey:
 
         validate_error_rows_key(
             location,  # pyrefly: ignore[bad-argument-type]
-            error_rows_key=_AUDIT_KEY,
+            dg.AssetKey(_AUDIT_KEY),
         )
         with pytest.raises(ErrorRowsKeyCollisionError):
             validate_error_rows_key(
                 location,  # pyrefly: ignore[bad-argument-type]
-                error_rows_key=[WAREHOUSE_SCHEMA, "orders__error_rows"],
+                _ERROR_ROWS_KEY,
             )
 
     def test_an_error_rows_spec_does_not_collide(self):
@@ -1289,7 +1286,8 @@ class TestReservedKey:
         repository = defs.get_repository_def()
 
         validate_error_rows_key(
-            _Location(asset.key, repository)  # pyrefly: ignore[bad-argument-type]
+            _Location(asset.key, repository),  # pyrefly: ignore[bad-argument-type]
+            _ERROR_ROWS_KEY,
         )
 
         assert (

@@ -900,8 +900,9 @@ class TestErrorRows:
                 ["audit", "kept"],
                 "audit",
             ),
+            ({"error_rows_key": "rejected_orders"}, ["rejected_orders"], "io_manager"),
         ],
-        ids=["default", "the_assets_io_manager", "overridden"],
+        ids=["default", "the_assets_io_manager", "overridden", "bare_string"],
     )
     def test_the_definition_records_where_a_run_writes_the_error_rows(
         self,

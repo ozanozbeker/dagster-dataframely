@@ -68,6 +68,7 @@ _Avoid_: location, destination, and `path`, which assumes a filesystem
 
 **Error-rows key**: The asset key a writer writes the error rows under.
 It is `<name>__error_rows` with the asset's key prefix, unless `error_rows_key` sets another.
+`get_error_rows_key` returns the default.
 `build_io_manager_writer` passes it to the IO manager, and `build_file_writer` turns it into a path under `error_rows_dir`.
 _Avoid_: error-rows asset, because nothing executes the error rows; say _the error rows' spec_ for the `dg.AssetSpec`
 

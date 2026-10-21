@@ -42,29 +42,43 @@ _KEY_ENTRY = "dataframely/error_rows_key"
 _IO_MANAGER_KEY_ENTRY = "dataframely/error_rows_io_manager_key"
 
 
-def _resolve_error_rows_key(
-    key: dg.AssetKey, error_rows_key: dg.AssetKey | str | Sequence[str] | None = None
-) -> dg.AssetKey:
-    """Return the error-rows key: `error_rows_key`, or else `key` with `__error_rows` added."""
-    if error_rows_key is None:
-        return dg.AssetKey([*key.path[:-1], f"{key.path[-1]}{_LEAF_SUFFIX}"])
-    if isinstance(error_rows_key, dg.AssetKey):
-        return error_rows_key
-    return dg.AssetKey(error_rows_key)
+def get_error_rows_key(asset_key: dg.AssetKey) -> dg.AssetKey:
+    """Return the default error-rows key of an asset.
+
+    It takes no override, because an override is a `dg.AssetKey` to pass as it is.
+
+    Parameters
+    ----------
+    asset_key
+        The key of the asset whose rows fail validation.
+
+    Returns
+    -------
+    :
+        `asset_key` with `__error_rows` added to its last part. The key prefix stays.
+
+    Examples
+    --------
+    ```python
+    import dagster as dg
+
+    import dagster_dataframely as dd
+
+    dd.wiring.get_error_rows_key(dg.AssetKey(["sales", "orders"]))
+    ```
+    """
+    return dg.AssetKey([*asset_key.path[:-1], f"{asset_key.path[-1]}{_LEAF_SUFFIX}"])
 
 
 def build_writer_metadata(
-    key: dg.AssetKey,
-    io_manager_key: str | None,
+    error_rows_key: dg.AssetKey,
     *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None,
+    io_manager_key: str | None,
     error_rows_io_manager_key: str | None,
 ) -> dict[str, dg.DagsterAssetMetadataValue | dg.TextMetadataValue]:
     """Return the definition metadata that records where a run writes the error rows."""
     return {
-        _KEY_ENTRY: dg.MetadataValue.asset(
-            _resolve_error_rows_key(key, error_rows_key)
-        ),
+        _KEY_ENTRY: dg.MetadataValue.asset(error_rows_key),
         _IO_MANAGER_KEY_ENTRY: dg.MetadataValue.text(
             error_rows_io_manager_key or io_manager_key or "io_manager"
         ),
@@ -82,9 +96,7 @@ def _get_executable_keys(context: dg.AssetExecutionContext) -> AbstractSet[dg.As
 
 
 def validate_error_rows_key(
-    context: dg.AssetExecutionContext,
-    *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
+    context: dg.AssetExecutionContext, error_rows_key: dg.AssetKey
 ) -> None:
     """Raise if an asset already materializes the error-rows key.
 
@@ -95,7 +107,7 @@ def validate_error_rows_key(
     context
         The running asset's context, whose code location the check reads.
     error_rows_key
-        The value the asset's writer receives. `None` checks `<name>__error_rows`.
+        The key the asset's writer receives, such as the one `get_error_rows_key` returns.
 
     Raises
     ------
@@ -122,22 +134,24 @@ def validate_error_rows_key(
     def orders(
         context: dg.AssetExecutionContext,
     ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-        dd.wiring.validate_error_rows_key(context)
+        error_rows_key = dd.wiring.get_error_rows_key(context.asset_key)
+        dd.wiring.validate_error_rows_key(context, error_rows_key)
         yield from dd.wiring.stream_results(
             OrdersSchema,
             storefront_orders,
             asset_key=context.asset_key,
-            error_rows_writer=dd.wiring.build_io_manager_writer(context),
+            error_rows_writer=dd.wiring.build_io_manager_writer(
+                context, error_rows_key
+            ),
         )
 
 
     dg.materialize([orders]).success
     ```
     """
-    key: dg.AssetKey = _resolve_error_rows_key(context.asset_key, error_rows_key)
-    if key in _get_executable_keys(context):
+    if error_rows_key in _get_executable_keys(context):
         raise ErrorRowsKeyCollisionError(
-            context.asset_key.to_user_string(), key.to_user_string()
+            context.asset_key.to_user_string(), error_rows_key.to_user_string()
         )
 
 
@@ -154,11 +168,9 @@ def _format_partition_key(partition_key: str) -> str:
 
 
 def get_error_rows_path(
-    key: dg.AssetKey,
+    error_rows_key: dg.AssetKey,
     error_rows_dir: UPath | Path | str,
     partition_key: str | None = None,
-    *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
 ) -> UPath:
     """Return the path of the parquet file `build_file_writer` writes an asset's error rows to.
 
@@ -166,19 +178,17 @@ def get_error_rows_path(
 
     Parameters
     ----------
-    key
-        The asset key of the asset whose rows failed validation, not the error-rows key.
+    error_rows_key
+        The key the writer writes under, such as the one `get_error_rows_key` returns.
     error_rows_dir
         Any path `UPath` accepts, such as a local directory or `s3://bucket/prefix`. Credentials for a remote path come from the environment.
     partition_key
         The partition the rows belong to, or `None` for an unpartitioned asset. A `dg.MultiPartitionKey` becomes its dimension keys joined by `/`, in dimension-name order. Escaping a `..` and a leading `/` keeps the file under `error_rows_dir`.
-    error_rows_key
-        `None` uses `key` with `__error_rows` added to its last part.
 
     Returns
     -------
     :
-        `<error_rows_dir>/<key part>/.../<name>__error_rows.parquet`, or `<error_rows_dir>/<key part>/.../<name>__error_rows/<partition>.parquet` for a partition. With `error_rows_key`, its parts replace `<key part>/.../<name>__error_rows`. `get_error_rows_path` creates no parent directories.
+        `<error_rows_dir>/<key part>/.../<last part>.parquet`, or `<error_rows_dir>/<key part>/.../<last part>/<partition>.parquet` for a partition. `get_error_rows_path` creates no parent directories.
 
     Examples
     --------
@@ -188,14 +198,14 @@ def get_error_rows_path(
     import dagster_dataframely as dd
 
     dd.wiring.get_error_rows_path(
-        dg.AssetKey(["sales", "orders"]), "/data", "2026-08-01"
+        dd.wiring.get_error_rows_key(dg.AssetKey(["sales", "orders"])),
+        "/data",
+        "2026-08-01",
     )
     ```
     """
     path: UPath = UPath(error_rows_dir).joinpath(
-        *coerce_to_relative_parts(
-            UPath(*_resolve_error_rows_key(key, error_rows_key).path)
-        )
+        *coerce_to_relative_parts(UPath(*error_rows_key.path))
     )
     if partition_key is not None:
         path = path / escape_dotdot_segments(
@@ -206,8 +216,8 @@ def get_error_rows_path(
 
 def build_io_manager_writer(
     context: dg.AssetExecutionContext,
+    error_rows_key: dg.AssetKey,
     *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
     error_rows_io_manager_key: str | None = None,
 ) -> ErrorRowsWriter:
     """Return a writer that passes the error rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
@@ -222,7 +232,7 @@ def build_io_manager_writer(
     context
         The running asset's context. Its asset definition must have exactly one asset, as a `@dg.asset` does.
     error_rows_key
-        `None` uses `<name>__error_rows`, with the asset's key prefix.
+        The key the IO manager stores the rows under, such as the one `get_error_rows_key` returns.
     error_rows_io_manager_key
         The resource key of another IO manager, or `None` for the asset's own. The op must require this resource key, because `context.resources` holds only the resources its op requires. The writer passes that IO manager its own config, because a `DbIOManager` reads its connection from the context. It passes the asset's definition metadata unchanged.
 
@@ -263,7 +273,9 @@ def build_io_manager_writer(
             OrdersSchema,
             marketplace_orders,
             asset_key=context.asset_key,
-            error_rows_writer=dd.wiring.build_io_manager_writer(context),
+            error_rows_writer=dd.wiring.build_io_manager_writer(
+                context, dd.wiring.get_error_rows_key(context.asset_key)
+            ),
         )
 
 
@@ -283,7 +295,6 @@ def build_io_manager_writer(
         # Dagster's own `get_output_context` reads a manager's config the same way.
         resources = step.resolved_run_config.resources
         resource_config = resources[error_rows_io_manager_key].config
-    key = _resolve_error_rows_key(context.asset_key, error_rows_key)
     # A run of one partition has a key and no range, and a single-run backfill the reverse.
     partitioned = context.has_partition_key or context.has_partition_key_range
     # Dagster logs one materialization per partition in a range, so the writer does too.
@@ -292,14 +303,16 @@ def build_io_manager_writer(
     count_key = "dagster/partition_row_count" if partitioned else "dagster/row_count"
     # A `dg.materialize` run has no code location to read the spec from, so the writer always logs the materialization.
     try:
-        logs_event = key in context.repository_def.asset_graph.unexecutable_asset_keys
+        logs_event = (
+            error_rows_key in context.repository_def.asset_graph.unexecutable_asset_keys
+        )
     except CheckError:
         logs_event = True
 
     def write(frame: pl.DataFrame) -> str:
         # Copied per write, because `add_output_metadata` raises on a key an earlier write added.
         repointed = copy.copy(original)
-        repointed._asset_key = key  # noqa: SLF001 - no setter; a characterization test pins it
+        repointed._asset_key = error_rows_key  # noqa: SLF001 - no setter; a characterization test pins it
         repointed._resource_config = resource_config  # noqa: SLF001 - the same
         manager.handle_output(repointed, frame)
         if logs_event:
@@ -307,35 +320,33 @@ def build_io_manager_writer(
             for partition in partitions:
                 context.log_event(
                     dg.AssetMaterialization(
-                        asset_key=key, partition=partition, metadata=metadata
+                        asset_key=error_rows_key,
+                        partition=partition,
+                        metadata=metadata,
                     )
                 )
-        return key.to_user_string()
+        return error_rows_key.to_user_string()
 
     return write
 
 
 def build_file_writer(
-    key: dg.AssetKey,
+    error_rows_key: dg.AssetKey,
     error_rows_dir: UPath | Path | str,
     partition_key: str | None = None,
-    *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
 ) -> ErrorRowsWriter:
     """Return a writer that writes the error rows to a parquet file under `error_rows_dir`.
 
-    Use it in a direct invocation, where `build_io_manager_writer` raises because there is no step. The file is at `get_error_rows_path(key, error_rows_dir, partition_key, error_rows_key=error_rows_key)`.
+    Use it in a direct invocation, where `build_io_manager_writer` raises because there is no step. The file is at `get_error_rows_path(error_rows_key, error_rows_dir, partition_key)`.
 
     Parameters
     ----------
-    key
-        The asset key of the asset whose rows failed validation, not the error-rows key.
+    error_rows_key
+        The key the writer writes under, such as the one `get_error_rows_key` returns.
     error_rows_dir
         The directory the file goes under. Any path `UPath` accepts.
     partition_key
         The partition the rows belong to, or `None` for an unpartitioned asset.
-    error_rows_key
-        `None` uses `key` with `__error_rows` added to its last part.
 
     Returns
     -------
@@ -353,14 +364,14 @@ def build_file_writer(
     from dagster_dataframely.data import OrdersSchema, marketplace_orders
 
     error_rows_dir = tempfile.mkdtemp()
-    write = dd.wiring.build_file_writer(dg.AssetKey("orders"), error_rows_dir)
+    write = dd.wiring.build_file_writer(
+        dd.wiring.get_error_rows_key(dg.AssetKey("orders")), error_rows_dir
+    )
     _, failure = OrdersSchema.filter(marketplace_orders, cast=False)
     write(dd.wiring.get_error_rows(OrdersSchema, failure)).removeprefix(error_rows_dir)
     ```
     """
-    path: UPath = get_error_rows_path(
-        key, error_rows_dir, partition_key, error_rows_key=error_rows_key
-    )
+    path: UPath = get_error_rows_path(error_rows_key, error_rows_dir, partition_key)
 
     def write(frame: pl.DataFrame) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -374,8 +385,8 @@ def build_file_writer(
 
 def build_error_rows_writer(
     context: dg.AssetExecutionContext,
+    error_rows_key: dg.AssetKey,
     *,
-    error_rows_key: dg.AssetKey | str | Sequence[str] | None = None,
     error_rows_io_manager_key: str | None = None,
 ) -> ErrorRowsWriter:
     """Return a writer that calls `build_io_manager_writer` in a run and `build_file_writer` otherwise.
@@ -391,7 +402,7 @@ def build_error_rows_writer(
         else:
             return build_io_manager_writer(
                 context,
-                error_rows_key=error_rows_key,
+                error_rows_key,
                 error_rows_io_manager_key=error_rows_io_manager_key,
             )(frame)
         if frame.is_empty():
@@ -400,10 +411,9 @@ def build_error_rows_writer(
         if error_rows_dir is None:
             raise ErrorRowsDirError(context.asset_key.to_user_string())
         return build_file_writer(
-            context.asset_key,
+            error_rows_key,
             error_rows_dir,
             context.partition_key if context.has_partition_key else None,
-            error_rows_key=error_rows_key,
         )(frame)
 
     return write
@@ -501,7 +511,7 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
         key = (
             recorded_key.asset_key
             if isinstance(recorded_key, dg.DagsterAssetMetadataValue)
-            else _resolve_error_rows_key(parent)
+            else get_error_rows_key(parent)
         )
         io_manager_key = (
             recorded_io_manager_key.text
@@ -510,7 +520,7 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
         )
     else:
         parent = asset if isinstance(asset, dg.AssetKey) else dg.AssetKey(asset)
-        key = _resolve_error_rows_key(parent)
+        key = get_error_rows_key(parent)
 
     rendered: str = "/".join(parent.path)
     spec = dg.AssetSpec(

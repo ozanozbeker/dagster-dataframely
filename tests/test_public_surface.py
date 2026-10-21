@@ -29,6 +29,7 @@ _WIRING = {
     "build_file_writer",
     "stream_results",
     "get_error_rows",
+    "get_error_rows_key",
     "get_error_rows_path",
     "get_code_version",
     "get_column_schema_metadata",

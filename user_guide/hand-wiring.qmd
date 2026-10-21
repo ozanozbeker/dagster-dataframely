@@ -109,31 +109,33 @@ Every failing check has its rule's severity, in every kind of run.
 The address is a string, not a path, because it can name a database table.
 When no row fails an `"error"` rule, the writer receives a frame with zero rows and the same columns, so a writer that overwrites replaces the last run's error rows.
 
-In a run, `dd.asset` uses `build_io_manager_writer(context)`.
-It passes the rows to the asset's own IO manager, under the asset key `<name>__error_rows`.
+Every writer takes the error-rows key.
+`get_error_rows_key(context.asset_key)` returns the default, `<name>__error_rows` with the asset's key prefix.
+For another key, build a `dg.AssetKey` instead.
+Call `get_error_rows_key` once and pass the result to every function below, so the writer, the collision check and the path use one key.
+
+In a run, `dd.asset` uses `build_io_manager_writer(context, error_rows_key)`.
+It passes the rows to the asset's own IO manager, under the error-rows key.
 That IO manager writes them as it writes any asset with that key.
 The IO manager receives a copy of the step's output context with only the asset key changed, so a database IO manager still reads its connection settings from it.
-`build_io_manager_writer` takes `error_rows_key=` and `error_rows_io_manager_key=`, which mean what they mean on `dd.asset`.
+`build_io_manager_writer` also takes `error_rows_io_manager_key=`, which means what it means on `dd.asset`.
 With `error_rows_io_manager_key=`, list the key in your asset's `required_resource_keys`.
 After the write, the writer logs a materialization for the error-rows key with the metadata the IO manager added, as [Filtering error rows](filtering-error-rows.qmd) describes.
 It logs none when the run's code location has no spec for that key.
 When some rows fail an `"error"` rule, the table's materialization has the error-rows address under `dataframely/error_rows_address`, as [What a run produces](what-a-run-produces.qmd) lists.
 
-`build_file_writer(key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
+`build_file_writer(error_rows_key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
 It writes only parquet.
 
-`validate_error_rows_key(context)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes `<name>__error_rows`.
-
-`build_file_writer`, `validate_error_rows_key` and `get_error_rows_path` also take `error_rows_key=`.
-Pass each one the same value, so the writer, the check and the path use the same key.
+`validate_error_rows_key(context, error_rows_key)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes the error-rows key.
 
 `build_error_rows_spec(schema, definition)` reads the error-rows key and the IO manager key from two metadata entries that only `dd.asset` writes.
-So for a hand-wired asset that passes either keyword, set the same value on the spec with Dagster's own methods: `.replace_attributes(key=...)` for `error_rows_key=`, and `.with_io_manager_key(...)` for `error_rows_io_manager_key=`.
+So for a hand-wired asset with another error-rows key or IO manager, set the same value on the spec with Dagster's own methods: `.replace_attributes(key=error_rows_key)` for the key, and `.with_io_manager_key(...)` for `error_rows_io_manager_key=`.
 
 `dd.wiring` also exports three lower-level functions.
 `get_error_rows(schema, failure)` returns the frame every writer receives: the rows that failed an `"error"` rule, with their original columns and then one `String` rule column per rule, named in the reserved namespace.
 Use it in an asset that runs `Schema.filter` itself, to write the same frame `dd.asset` would.
-`get_error_rows_path(key, error_rows_dir, partition_key)` returns the path `build_file_writer` writes to, so a test can check the path without writing a file.
+`get_error_rows_path(error_rows_key, error_rows_dir, partition_key)` returns the path `build_file_writer` writes to, so a test can check the path without writing a file.
 `get_check_name_for_rule(rule_name)` returns a rule's check name at `rule` granularity, as [Naming](naming.qmd#the-reserved-namespaces) describes.
 
 ## The decorator is a `@dg.asset`, a writer and `stream_results`
@@ -153,13 +155,14 @@ Pass the schema's metadata and check specs to `@dg.asset`, and call `stream_resu
 def orders(
     context: dg.AssetExecutionContext,
 ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-    dd.wiring.validate_error_rows_key(context)
+    error_rows_key = dd.wiring.get_error_rows_key(context.asset_key)
+    dd.wiring.validate_error_rows_key(context, error_rows_key)
     context.add_asset_metadata(dd.wiring.get_column_schema_metadata(OrdersSchema))
     yield from dd.wiring.stream_results(
         OrdersSchema,
         orders_frame(),
         asset_key=context.asset_key,
-        error_rows_writer=dd.wiring.build_io_manager_writer(context),
+        error_rows_writer=dd.wiring.build_io_manager_writer(context, error_rows_key),
     )
 ```
 
@@ -204,11 +207,11 @@ Without it, a skip fails the step with `DagsterStepOutputNotFoundError`.
 Without an `error_rows_writer`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, as in an asset built with `dd.asset` and `filter=False`.
 
 `build_io_manager_writer` needs a step, so it raises `dagster._core.errors.DagsterInvalidPropertyError` under direct invocation.
-There, `dd.asset` uses `build_file_writer(context.asset_key, error_rows_dir, partition_key)`, and you can do the same.
+There, `dd.asset` uses `build_file_writer(error_rows_key, error_rows_dir, partition_key)`, and you can do the same.
 `context.add_asset_metadata` also fails under direct invocation, with `AttributeError`.
 `dd.asset` makes the call only when `dg.AssetExecutionContext.get()` returns a context, which happens only in a run.
 
-When the asset writes error rows, call `validate_error_rows_key(context)` before the rest of the body, as `dd.asset(filter=True)` does.
+When the asset writes error rows, call `validate_error_rows_key(context, error_rows_key)` before the rest of the body, as `dd.asset(filter=True)` does.
 Under direct invocation it does nothing, because there is no asset graph to check.
 
 ## Split the checks off entirely

@@ -7,6 +7,22 @@ Before 1.0, only a minor release, such as 0.11.0, has breaking changes.
 The [changelog](https://ozanozbeker.com/dagster-dataframely/changelog.html) lists each release's changes.
 Pin to one minor version if that matters to you: `>=` the version you installed, `<` the next minor.
 
+## 0.12 {#v0.12}
+
+**Every `dd.wiring` function that reads the error-rows key requires it as a positional `dg.AssetKey`.**
+Call `dd.wiring.get_error_rows_key(context.asset_key)` once and pass the result to each function, so the writer, the collision check and the path cannot use different keys.
+`build_file_writer` and `get_error_rows_path` no longer take the asset key.
+An asset built with `dd.asset` needs no change.
+
+| 0.11 | 0.12 |
+| --- | --- |
+| `validate_error_rows_key(context)` | `validate_error_rows_key(context, error_rows_key)` |
+| `build_io_manager_writer(context)` | `build_io_manager_writer(context, error_rows_key)` |
+| `build_file_writer(key, error_rows_dir, partition_key)` | `build_file_writer(error_rows_key, error_rows_dir, partition_key)` |
+| `get_error_rows_path(key, error_rows_dir, partition_key)` | `get_error_rows_path(error_rows_key, error_rows_dir, partition_key)` |
+
+A `str` or `Sequence[str]` passed as `error_rows_key=` becomes `dg.AssetKey(...)`, such as `dg.AssetKey(["audit", "orders"])`, passed as the positional argument in the table.
+
 ## 0.11 {#v0.11}
 
 **Every function that returns something is named with a verb.**

@@ -767,7 +767,9 @@ class TestDagster:
             partition_key=key,
             resources={"io_manager": Probe(base_path=UPath(tmp_path))},
         )
-        check_and_filter = get_error_rows_path(dg.AssetKey(["orders"]), tmp_path, key)
+        check_and_filter = get_error_rows_path(
+            dg.AssetKey(["orders__error_rows"]), tmp_path, key
+        )
 
         assert result.success
         base = UPath(tmp_path)

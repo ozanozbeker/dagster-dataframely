@@ -23,6 +23,7 @@ from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     build_error_rows_writer,
     build_writer_metadata,
+    get_error_rows_key,
     validate_error_rows_key,
 )
 from dagster_dataframely._metadata import get_column_schema_metadata
@@ -61,6 +62,12 @@ def _write_column_schema(metadata: dict[str, dg.TableSchema]) -> None:
     except dg.DagsterInvariantViolationError:
         return
     context.add_asset_metadata(metadata)
+
+
+def _to_asset_key(key: dg.AssetKey | str | Sequence[str]) -> dg.AssetKey:
+    """Convert a key as `dd.asset` receives it to a `dg.AssetKey`."""
+    # Not `dg.AssetKey.from_coercible`, which raises for a `Sequence` that is not a list or a tuple.
+    return key if isinstance(key, dg.AssetKey) else dg.AssetKey(key)
 
 
 def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc ignore=PR01
@@ -243,6 +250,11 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
         if key_prefix is not None:
             prefix = [key_prefix] if isinstance(key_prefix, str) else list(key_prefix)
         key = dg.AssetKey([*prefix, asset_name])
+        resolved_error_rows_key: dg.AssetKey = (
+            get_error_rows_key(key)
+            if error_rows_key is None
+            else _to_asset_key(error_rows_key)
+        )
 
         parameters = list(inspect.signature(fn).parameters.values())
         declares_context: bool = is_context_provided(parameters)
@@ -274,10 +286,10 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
             def compute(
                 context: dg.AssetExecutionContext, *args: object, **kwargs: object
             ) -> Iterator[dg.MaterializeResult[pl.DataFrame] | dg.AssetCheckResult]:
-                validate_error_rows_key(context, error_rows_key=error_rows_key)
+                validate_error_rows_key(context, resolved_error_rows_key)
                 writer = build_error_rows_writer(
                     context,
-                    error_rows_key=error_rows_key,
+                    resolved_error_rows_key,
                     error_rows_io_manager_key=error_rows_io_manager_key,
                 )
                 returned: DecoratedReturn = (
@@ -320,9 +332,8 @@ def asset(  # noqa: PLR0913 - forwards `@dg.asset`'s parameters  # numpydoc igno
                 **column_schema_metadata,
                 **(
                     build_writer_metadata(
-                        key,
-                        io_manager_key,
-                        error_rows_key=error_rows_key,
+                        resolved_error_rows_key,
+                        io_manager_key=io_manager_key,
                         error_rows_io_manager_key=error_rows_io_manager_key,
                     )
                     if filter

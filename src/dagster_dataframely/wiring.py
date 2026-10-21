@@ -9,6 +9,7 @@ from dagster_dataframely._error_rows import (
     ErrorRowsWriter,
     build_file_writer,
     build_io_manager_writer,
+    get_error_rows_key,
     get_error_rows_path,
     validate_error_rows_key,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "get_code_version",
     "get_column_schema_metadata",
     "get_error_rows",
+    "get_error_rows_key",
     "get_error_rows_path",
     "get_table_schema",
     "stream_results",
