@@ -32,12 +32,13 @@ classifiers = [
 ]
 # Each lower bound is the version `uv.lock` resolves, because no test runs an older one.
 # `universal-pathlib` keeps an older bound, because `dagster` already requires it. This package
-# lists `universal-pathlib` only because `src/` imports it.
+# lists `universal-pathlib` only because `src/` imports it. Its bound is 0.2.2, because 0.2.0 and
+# 0.2.1 raise on an S3 path when `s3fs` is not installed.
 dependencies = [
   "dagster>=1.13.24",
   "dataframely>=3.1.2",
   "polars>=1.44.2",
-  "universal-pathlib>=0.2.0",
+  "universal-pathlib>=0.2.2",
 ]
 
 [project.urls]

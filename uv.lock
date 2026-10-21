@@ -637,7 +637,7 @@ requires-dist = [
     { name = "dagster", specifier = ">=1.13.24" },
     { name = "dataframely", specifier = ">=3.1.2" },
     { name = "polars", specifier = ">=1.44.2" },
-    { name = "universal-pathlib", specifier = ">=0.2.0" },
+    { name = "universal-pathlib", specifier = ">=0.2.2" },
 ]
 
 [package.metadata.requires-dev]
