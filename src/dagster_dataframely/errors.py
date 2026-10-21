@@ -197,7 +197,7 @@ class MaterializeResultValueError(DagsterDataframelyError):
     def __init__(self, asset: str) -> None:
         """Name the asset and the three ways to fix the return."""
         super().__init__(
-            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame, declare a `context` parameter and call `context.add_asset_metadata({{...}})`. If the asset writes its own storage, there is no frame to validate, so write it as a plain `@dg.asset` and call `dd.wiring.get_column_schema_metadata` to fill its Columns tab."
+            f"The `dg.MaterializeResult` returned by '{asset}' has no frame in `value`. Set `value` to the Polars DataFrame or LazyFrame this asset produces. To add metadata to the table, return the frame, declare a `context` parameter and call `context.add_asset_metadata({{...}})`. If the asset writes its own storage, there is no frame to validate, so fill its Columns tab with `dd.wiring.get_column_schema_metadata` instead of `dd.asset` or `stream_results`."
         )
 
 
