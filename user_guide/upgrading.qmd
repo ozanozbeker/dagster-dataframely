@@ -18,10 +18,15 @@ An asset built with `dd.asset` needs no change.
 | --- | --- |
 | `validate_error_rows_key(context)` | `validate_error_rows_key(context, error_rows_key)` |
 | `build_io_manager_writer(context)` | `build_io_manager_writer(context, error_rows_key)` |
-| `build_file_writer(key, error_rows_dir, partition_key)` | `build_file_writer(error_rows_key, error_rows_dir, partition_key)` |
+| `build_file_writer(key, error_rows_dir, partition_key)` | `build_file_writer(context, error_rows_key, error_rows_dir)` |
 | `get_error_rows_path(key, error_rows_dir, partition_key)` | `get_error_rows_path(error_rows_key, error_rows_dir, partition_key)` |
 
 A `str` or `Sequence[str]` passed as `error_rows_key=` becomes `dg.AssetKey(...)`, such as `dg.AssetKey(["audit", "orders"])`, passed as the positional argument in the table.
+
+**`build_file_writer` takes the asset's `context` in place of `partition_key`.**
+It reads the partition from the context, so the file goes under the partition the call was invoked with.
+A context with a partition range raises `dg.DagsterInvariantViolationError`, because the error rows do not record which partition each row came from.
+Invoke the asset once for each partition instead.
 
 **`stream_results` names its second parameter `returned`, not `frame`.**
 A call that passes the frame by keyword changes `frame=` to `returned=`.

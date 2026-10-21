@@ -126,7 +126,8 @@ After the write, the writer logs a materialization for the error-rows key with t
 It logs none when the run's code location has no spec for that key.
 When some rows fail an `"error"` rule, the table's materialization has the error-rows address under `dataframely/error_rows_address`, as [What a run produces](what-a-run-produces.qmd) lists.
 
-`build_file_writer(error_rows_key, error_rows_dir, partition_key)` is for direct invocation, which has no step and so no IO manager.
+`build_file_writer(context, error_rows_key, error_rows_dir)` is for direct invocation, which has no step and so no IO manager.
+It reads the partition from the context, and raises `dg.DagsterInvariantViolationError` for a partition range, because the error rows do not record which partition each row came from.
 It writes only parquet.
 
 `validate_error_rows_key(context, error_rows_key)` fails the run with `ErrorRowsKeyCollisionError` when another asset in the code location already materializes the error-rows key.
@@ -209,7 +210,7 @@ Without it, a skip fails the step with `DagsterStepOutputNotFoundError`.
 Without an `error_rows_writer`, a row that fails an `"error"` rule fails the run with `ValidationAbortError`, as in an asset built with `dd.asset` and `filter=False`.
 
 `build_io_manager_writer` needs a step, so it raises `dagster._core.errors.DagsterInvalidPropertyError` under direct invocation.
-There, `dd.asset` uses `build_file_writer(error_rows_key, error_rows_dir, partition_key)`, and you can do the same.
+There, `dd.asset` uses `build_file_writer(context, error_rows_key, error_rows_dir)`, and you can do the same.
 `context.add_asset_metadata` also fails under direct invocation, with `AttributeError`.
 `dd.asset` makes the call only when `dg.AssetExecutionContext.get()` returns a context, which happens only in a run.
 

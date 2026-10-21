@@ -1106,7 +1106,9 @@ class TestFileWriter:
                 OrdersSchema,
                 mixed_orders(),
                 asset_key=_ORDERS,
-                error_rows_writer=build_file_writer(_ORDERS_ERROR_ROWS, tmp_path),
+                error_rows_writer=build_file_writer(
+                    dg.build_asset_context(), _ORDERS_ERROR_ROWS, tmp_path
+                ),
             )
         )
         (materialization,) = [e for e in events if isinstance(e, dg.MaterializeResult)]
@@ -1120,21 +1122,35 @@ class TestFileWriter:
     def test_the_file_writer_creates_the_directories_it_needs(self, tmp_path: Path):
         key = dg.AssetKey(["sales", "eu", "orders__error_rows"])
 
-        build_file_writer(key, tmp_path)(_mixed_error_rows())
+        build_file_writer(dg.build_asset_context(), key, tmp_path)(_mixed_error_rows())
 
         assert (tmp_path / "sales" / "eu" / "orders__error_rows.parquet").exists()
 
     def test_the_file_writer_puts_a_partition_under_the_leaf(self, tmp_path: Path):
-        build_file_writer(_ORDERS_ERROR_ROWS, tmp_path, "2026-01-02")(
-            _mixed_error_rows()
-        )
+        build_file_writer(
+            dg.build_asset_context(partition_key="2026-01-02"),
+            _ORDERS_ERROR_ROWS,
+            tmp_path,
+        )(_mixed_error_rows())
 
         assert (tmp_path / "orders__error_rows" / "2026-01-02.parquet").exists()
 
-    def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
-        address = build_file_writer(dg.AssetKey(["audit", "orders"]), tmp_path)(
-            _mixed_error_rows()
+    def test_the_file_writer_raises_on_a_partition_range(self, tmp_path: Path):
+        context = dg.build_asset_context(
+            partition_key_range=dg.PartitionKeyRange("2026-01-02", "2026-01-03")
         )
+
+        with pytest.raises(
+            dg.DagsterInvariantViolationError, match="'2026-01-02' to '2026-01-03'"
+        ):
+            build_file_writer(context, _ORDERS_ERROR_ROWS, tmp_path)
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_the_file_writer_writes_under_the_error_rows_key(self, tmp_path: Path):
+        address = build_file_writer(
+            dg.build_asset_context(), dg.AssetKey(["audit", "orders"]), tmp_path
+        )(_mixed_error_rows())
 
         assert address == str(tmp_path / "audit" / "orders.parquet")
         assert_frame_equal(pl.read_parquet(address), _mixed_error_rows())
@@ -1142,7 +1158,11 @@ class TestFileWriter:
     def test_the_file_writer_leaves_nothing_behind_when_nothing_calls_it(
         self, tmp_path: Path
     ):
-        build_file_writer(dg.AssetKey(["sales", "orders__error_rows"]), tmp_path)
+        build_file_writer(
+            dg.build_asset_context(),
+            dg.AssetKey(["sales", "orders__error_rows"]),
+            tmp_path,
+        )
 
         assert list(tmp_path.iterdir()) == []
 

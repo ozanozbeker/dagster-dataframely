@@ -237,6 +237,20 @@ def test_a_call_writes_partitioned_error_rows_under_their_partition(
     assert (error_rows_dir / "orders__error_rows" / "2026-01-02.parquet").exists()
 
 
+def test_a_call_with_a_partition_range_and_error_rows_raises(error_rows_dir: Path):
+    @dd.asset(OrdersSchema, name="orders", filter=True, partitions_def=_DAYS)
+    def orders() -> pl.DataFrame:
+        return mixed_orders()
+
+    days = dg.PartitionKeyRange("2026-01-02", "2026-01-03")
+    with pytest.raises(dg.DagsterInvariantViolationError, match="partition range"):
+        dd.testing.DirectInvocationResult.from_invocation(
+            orders(dg.build_asset_context(partition_key_range=days))
+        )
+
+    assert not error_rows_dir.exists()
+
+
 def test_a_decorated_function_taking_context_reads_its_partition_key_from_a_built_one():
     """`dg.build_asset_context` does not set the ContextVar that `AssetExecutionContext.get()` reads."""
     seen: dict[str, str] = {}

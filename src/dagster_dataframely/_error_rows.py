@@ -431,27 +431,32 @@ def build_io_manager_writer(
 
 
 def build_file_writer(
+    context: dg.AssetExecutionContext,
     error_rows_key: dg.AssetKey,
     error_rows_dir: UPath | Path | str,
-    partition_key: str | None = None,
 ) -> ErrorRowsWriter:
     """Return a writer that writes the error rows to a parquet file under `error_rows_dir`.
 
-    Use it in a direct invocation, where `build_io_manager_writer` raises because there is no step. The file is at `get_error_rows_path(error_rows_key, error_rows_dir, partition_key)`.
+    Use it in a direct invocation, where `build_io_manager_writer` raises because there is no step. The file is at `get_error_rows_path(error_rows_key, error_rows_dir, context.partition_key)`.
 
     Parameters
     ----------
+    context
+        The context the asset was invoked with. The writer reads only its partition key, so a context from `dg.build_asset_context()` works unbound. Without a partition key, the rows go to the unpartitioned path.
     error_rows_key
         The key the writer writes under, such as the one `get_error_rows_key` returns.
     error_rows_dir
         The directory the file goes under. Any path `UPath` accepts.
-    partition_key
-        The partition the rows belong to, or `None` for an unpartitioned asset.
 
     Returns
     -------
     :
         A writer that takes the error rows and returns the file's path as a string.
+
+    Raises
+    ------
+    dg.DagsterInvariantViolationError
+        The context has a partition range and no partition key. The error rows do not record which partition each row came from, so they cannot be split into one file per partition.
 
     Examples
     --------
@@ -465,13 +470,24 @@ def build_file_writer(
 
     error_rows_dir = tempfile.mkdtemp()
     write = dd.wiring.build_file_writer(
-        dd.wiring.get_error_rows_key(dg.AssetKey("orders")), error_rows_dir
+        dg.build_asset_context(),
+        dd.wiring.get_error_rows_key(dg.AssetKey("orders")),
+        error_rows_dir,
     )
     _, failure = OrdersSchema.filter(marketplace_orders, cast=False)
     write(dd.wiring.get_error_rows(OrdersSchema, failure)).removeprefix(error_rows_dir)
     ```
     """
-    path: UPath = get_error_rows_path(error_rows_key, error_rows_dir, partition_key)
+    # `UPathIOManager` raises on a range in a run too, and the rows do not record their partition.
+    if context.has_partition_key_range and not context.has_partition_key:
+        span = context.partition_key_range
+        ranged = f"The context has the partition range '{span.start}' to '{span.end}', and `build_file_writer` writes the error rows under '{error_rows_key.to_user_string()}' to one partition's file. Invoke the asset once for each partition, with `dg.build_asset_context(partition_key=...)`."
+        raise dg.DagsterInvariantViolationError(ranged)
+    path: UPath = get_error_rows_path(
+        error_rows_key,
+        error_rows_dir,
+        context.partition_key if context.has_partition_key else None,
+    )
 
     def write(frame: pl.DataFrame) -> str:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -510,11 +526,7 @@ def build_error_rows_writer(
         error_rows_dir: str | None = ERROR_ROWS_DIR.resolve(None)
         if error_rows_dir is None:
             raise ErrorRowsDirError(context.asset_key.to_user_string())
-        return build_file_writer(
-            error_rows_key,
-            error_rows_dir,
-            context.partition_key if context.has_partition_key else None,
-        )(frame)
+        return build_file_writer(context, error_rows_key, error_rows_dir)(frame)
 
     return write
 
