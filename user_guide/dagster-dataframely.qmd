@@ -105,16 +105,20 @@ In a `dg` project, Dagster loads every module under `defs/` automatically, so th
 ```{python}
 #| label: get-started-resources
 import dagster as dg
-from dagster_polars import PolarsParquetIOManager
+
+from dagster_dataframely.data import ParquetIOManager
 
 
 @dg.definitions
 def resources() -> dg.Definitions:
     """Bind the Parquet IO manager the pipeline writes through."""
     return dg.Definitions(
-        resources={"io_manager": PolarsParquetIOManager(base_dir="storage")}
+        resources={"io_manager": ParquetIOManager(base_dir="storage")}
     )
 ```
+
+The package ships `ParquetIOManager` for its examples, so they need no IO manager library.
+In your own project, bind a library IO manager such as [`dagster-polars`](https://docs.dagster.io/integrations/libraries/polars)' `PolarsParquetIOManager`.
 
 `customers` reads `raw_customers`, so the asset that produces `raw_customers` goes under `defs/` too.
 Run `dg dev` and materialize both from the UI.

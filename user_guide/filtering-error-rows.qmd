@@ -9,11 +9,9 @@ title: "Filtering error rows"
 #| output: false
 import dagster as dg
 import polars as pl
-from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
-from dagster_dataframely.data import storefront_orders
-from dagster_dataframely.data import OrdersSchema
+from dagster_dataframely.data import OrdersSchema, ParquetIOManager, storefront_orders
 
 
 @dg.asset
@@ -88,7 +86,7 @@ def orders(raw_orders: pl.DataFrame) -> pl.DataFrame:
 
 | IO manager | where it writes the error rows |
 | --- | --- |
-| `PolarsParquetIOManager` | `orders__error_rows.parquet`, in the same directory as `orders.parquet` |
+| `ParquetIOManager` | `orders__error_rows.parquet`, in the same directory as `orders.parquet` |
 | `DuckDBPolarsIOManager` | the table `orders__error_rows`, in the same schema as `orders` |
 
 The first is a `UPathIOManager` and the second is a `DbIOManager`.
@@ -146,7 +144,7 @@ defs = dg.Definitions(
         dd.build_error_rows_spec(OrdersSchema, audited_orders),
     ],
     resources={
-        "io_manager": PolarsParquetIOManager(base_dir="data/warehouse"),
+        "io_manager": ParquetIOManager(base_dir="data/warehouse"),
         "audit": DuckDBPolarsIOManager(database="data/warehouse.duckdb"),
     },
 )
@@ -173,7 +171,7 @@ with tempfile.TemporaryDirectory() as tmp:
     checked = dg.materialize(
         [marketplace_raw, audited_orders],
         resources={
-            "io_manager": PolarsParquetIOManager(base_dir=tmp),
+            "io_manager": ParquetIOManager(base_dir=tmp),
             "audit": DuckDBPolarsIOManager(database=f"{tmp}/warehouse.duckdb"),
         },
     )
@@ -191,7 +189,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert written.fetchone() == (8,)
 ```
 
-`PolarsParquetIOManager` writes the table to `audited_orders.parquet`.
+`ParquetIOManager` writes the table to `audited_orders.parquet`.
 `DuckDBPolarsIOManager` writes the error rows to the table `orders__error_rows` in the schema `audit`.
 The error-rows address is `audit/orders__error_rows`.
 
@@ -220,7 +218,7 @@ The error rows are not in the asset graph, so no asset can depend on them until 
 #| label: filtering-error-rows-4
 defs = dg.Definitions(
     assets=[raw_orders, orders, dd.build_error_rows_spec(OrdersSchema, orders)],
-    resources={"io_manager": PolarsParquetIOManager(base_dir="data/warehouse")},
+    resources={"io_manager": ParquetIOManager(base_dir="data/warehouse")},
 )
 ```
 
@@ -276,7 +274,7 @@ def marketplace_raw() -> pl.DataFrame:
 with tempfile.TemporaryDirectory() as tmp:
     result = dg.materialize(
         [marketplace_raw, orders, dd.build_error_rows_spec(OrdersSchema, orders)],
-        resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
+        resources={"io_manager": ParquetIOManager(base_dir=tmp)},
     )
 
 {
@@ -284,6 +282,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "dagster/row_count"
     ].value
     for event in result.get_asset_materialization_events()
+    if event.asset_key != marketplace_raw.key
 }
 ```
 

@@ -13,7 +13,7 @@ import dagster_dataframely as dd
 from dagster_dataframely.data import OrdersSchema
 ```
 
-Annotate an input as `pl.LazyFrame` under `PolarsParquetIOManager`, and Polars drops the rows and columns your plan does not need while it reads the file.
+Annotate an input as `pl.LazyFrame` under an IO manager that scans the file, such as `dd.data.ParquetIOManager`, and Polars drops the rows and columns your plan does not need while it reads the file.
 Return a `pl.LazyFrame`, and the package collects your whole plan once, on Polars' streaming engine.
 
 <!-- rumdl-disable-next-line MD078 -->

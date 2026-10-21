@@ -313,7 +313,6 @@ def _pluralize() -> pl.DataFrame:
     return clean_orders()
 
 
-# No test here runs the asset, because in a run `dagster-polars` writes the same row-count key.
 class TestRowCount:
     """The key the materialization files the row count under."""
 

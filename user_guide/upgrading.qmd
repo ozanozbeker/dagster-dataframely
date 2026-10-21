@@ -186,7 +186,7 @@ The quarantine is no longer an asset: the asset's own IO manager writes it, and 
 | --- | --- | --- |
 | `dd.dataframely_asset(schema=OrdersSchema)` | `dd.dy_asset(OrdersSchema)` | the schema is positional |
 | `quarantine=dg.AssetOut()` | `quarantine=True` | it is a `bool`, and `True` needs no configuration |
-| `dd.DataframelyParquetIOManager` | `dagster_polars.PolarsParquetIOManager` | this package ships no IO manager |
+| `dd.DataframelyParquetIOManager` | `dagster_polars.PolarsParquetIOManager` | this package ships no production IO manager |
 | `dd.DataframelyCSVIOManager` | none | 0.7 removes the CSV codecs too; use parquet or a warehouse |
 | the quarantine was a second out | `dd.build_quarantine_spec(OrdersSchema, orders)` | and only if you want it in the graph |
 | `dd.errors.SchemaShapeError` | `dd.errors.ColumnSchemaError` | "shape" was Polars' word for something else |

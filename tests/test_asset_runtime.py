@@ -62,7 +62,6 @@ class TestCleanFrame:
         assert_frame_equal(pl.read_parquet(tmp_path / "orders.parquet"), clean_orders())
 
     def test_a_clean_run_emits_row_count(self):
-        # Called directly, because in a run `dagster-polars` writes the same key.
         materialization = dd.testing.DirectInvocationResult.from_invocation(
             orders(clean_orders())
         ).materialization
@@ -877,7 +876,7 @@ class TestColumnSchema:
     def test_the_schemas_column_schema_replaces_the_io_managers(
         self, tmp_path: Path, filtering: bool
     ):
-        """`PolarsParquetIOManager` writes a column schema without constraints, and the package writes the schema's over it."""
+        """`ParquetIOManager` writes a column schema without constraints, and the package writes the schema's over it."""
 
         @dd.asset(OrdersSchema, name="orders", filter=filtering)
         def orders() -> pl.DataFrame:

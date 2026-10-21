@@ -9,7 +9,6 @@ dependencies = [
   "dagster",
   "dagster-dataframely",
   "dagster-dg-cli",
-  "dagster-polars",
   "dagster-webserver",
   "dataframely",
   "polars",

@@ -43,7 +43,8 @@ uv add dagster-dataframely
 You need Python 3.12 or newer.
 The dependencies are `dagster`, `dataframely` and `polars`, plus `universal-pathlib`, which `dagster` already installs.
 
-This package does not include an IO manager.
+This package includes an IO manager only for its examples, `dd.data.ParquetIOManager`.
+In your own project, bind a library one.
 [`dagster-polars`](https://docs.dagster.io/integrations/libraries/polars) writes Polars frames to a filesystem or object store, and [`dagster-duckdb-polars`](https://docs.dagster.io/integrations/libraries/duckdb) writes them to a warehouse.
 Any IO manager that stores by asset key works.
 

@@ -21,12 +21,12 @@ from dagster._core.definitions.reconstruct import ReconstructableRepository
 # The error a context property raises when there is no step.
 from dagster._core.errors import DagsterInvalidPropertyError
 from dagster_duckdb_polars import DuckDBPolarsIOManager
-from dagster_polars import PolarsParquetIOManager
 from polars.testing import assert_frame_equal
 from upath import UPath
 
 import dagster_dataframely as dd
 from dagster_dataframely import _error_rows, build_error_rows_spec
+from dagster_dataframely.data import ParquetIOManager
 from dagster_dataframely.errors import ErrorRowsKeyCollisionError, NoValidRowsError
 from dagster_dataframely.wiring import (
     ErrorRowsWriter,
@@ -779,7 +779,7 @@ def _address(result: dg.ExecuteInProcessResult) -> dg.MetadataValue[Any]:
 
 def _parquet_under_warehouse(tmp_path: Path) -> dict[str, Any]:
     """Build resources whose parquet IO manager has a key other than `io_manager`."""
-    return {"warehouse": PolarsParquetIOManager(base_dir=str(tmp_path))}
+    return {"warehouse": ParquetIOManager(base_dir=str(tmp_path))}
 
 
 def _parquet_with_database_audit(tmp_path: Path) -> dict[str, Any]:

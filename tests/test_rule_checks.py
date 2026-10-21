@@ -8,9 +8,9 @@ import dataframely as dy
 import duckdb
 import polars as pl
 import pytest
-from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
+from dagster_dataframely.data import ParquetIOManager
 from dagster_dataframely.errors import ColumnSchemaError
 from dagster_dataframely.wiring import build_asset_check_specs
 from tests.scenario import WAREHOUSE_SCHEMA, check_evaluations, warehouse
@@ -41,10 +41,10 @@ LAKE = dg.AssetSpec(KEY).with_io_manager_key("lake")
 """A table written outside Dagster, which the `lake` IO manager reads."""
 
 
-def lake(tmp_path: Path, frame: pl.DataFrame) -> dict[str, PolarsParquetIOManager]:
-    """Write `frame` where `PolarsParquetIOManager` reads `events`, and return the resources that read it."""
+def lake(tmp_path: Path, frame: pl.DataFrame) -> dict[str, ParquetIOManager]:
+    """Write `frame` where `ParquetIOManager` reads `events`, and return the resources that read it."""
     frame.write_parquet(tmp_path / "events.parquet")
-    return {"lake": PolarsParquetIOManager(base_dir=str(tmp_path))}
+    return {"lake": ParquetIOManager(base_dir=str(tmp_path))}
 
 
 def stored(tmp_path: Path, amount_type: str) -> Mapping[str, object]:
@@ -268,7 +268,7 @@ class TestPartitions:
         definitions = dg.Definitions(
             assets=[events],
             asset_checks=[checks],
-            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+            resources={"io_manager": ParquetIOManager(base_dir=str(tmp_path))},
         )
         job = definitions.resolve_implicit_global_asset_job_def()
         for partition in ["clean", "failing"]:

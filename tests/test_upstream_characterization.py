@@ -26,12 +26,12 @@ from dagster._core.storage.upath_io_manager import (
     escape_leading_slash,
 )
 from dagster_duckdb_polars import DuckDBPolarsIOManager
-from dagster_polars import PolarsParquetIOManager
 from dagster_shared.utils.warnings import PreviewWarning
 from dataframely._rule import Rule, RuleFactory
 from upath import UPath
 
 from dagster_dataframely._rules import DAGSTER_NAME
+from dagster_dataframely.data import ParquetIOManager
 from dagster_dataframely.wiring import get_error_rows_path
 from tests.scenario import events
 
@@ -546,7 +546,7 @@ class TestDagster:
 
         dg.materialize(
             [refunds, definition],
-            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+            resources={"io_manager": ParquetIOManager(base_dir=str(tmp_path))},
         )
 
         assert loaded == {"book_refunds": pl.LazyFrame}
@@ -623,34 +623,10 @@ class TestDagster:
         assert rebuilt.asset_key == result.asset_key
         assert rebuilt.value is result.value
 
-    def test_dagster_polars_writes_its_own_row_count_over_the_steps(
-        self, tmp_path: Path
-    ):
-        """`PolarsParquetIOManager` writes its own `dagster/row_count` over the step's, so tests assert this package's row count on what the step yields."""
-
-        @dg.asset
-        def counted() -> dg.MaterializeResult[pl.DataFrame]:
-            return dg.MaterializeResult(
-                value=pl.DataFrame({"a": [1, 2, 3]}),
-                metadata={"dagster/row_count": 999},
-            )
-
-        result = dg.materialize(
-            [counted],
-            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
-        )
-        recorded = next(
-            event.step_materialization_data.materialization.metadata
-            for event in result.get_asset_materialization_events()
-        )
-
-        assert result.success
-        assert recorded["dagster/row_count"].value == 3
-
     def test_add_asset_metadata_takes_precedence_over_the_io_managers_column_schema(
         self, tmp_path: Path
     ):
-        """`dd.asset` writes its column schema with `add_asset_metadata`, because only that takes precedence over the one `PolarsParquetIOManager` writes."""
+        """`dd.asset` writes its column schema with `add_asset_metadata`, because only that takes precedence over the one `ParquetIOManager` writes."""
         declared = dg.TableSchema(
             columns=[
                 dg.TableColumn(
@@ -677,7 +653,7 @@ class TestDagster:
 
         result = dg.materialize(
             [returned, added],
-            resources={"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))},
+            resources={"io_manager": ParquetIOManager(base_dir=str(tmp_path))},
         )
         recorded = {
             event.asset_key: event.step_materialization_data.materialization.metadata[
@@ -829,13 +805,13 @@ class TestPrivateDagsterApis:
 
         result = dg.materialize(
             [orders],
-            resources={"warehouse": PolarsParquetIOManager(base_dir=str(tmp_path))},
+            resources={"warehouse": ParquetIOManager(base_dir=str(tmp_path))},
         )
 
         assert result.success
         assert copied["metadata"]["owner"] == "finance"
         assert copied["resource_config"] is not None
-        assert copied["manager"] == "PolarsParquetIOManager"
+        assert copied["manager"] == "ParquetIOManager"
 
     def test_a_steps_run_config_still_holds_each_resources_config(self, tmp_path: Path):
         """A step's `resolved_run_config.resources` holds the config of each resource its op requires, which `_error_rows.build_io_manager_writer` reads for `error_rows_io_manager_key`."""

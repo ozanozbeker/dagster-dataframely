@@ -99,12 +99,13 @@ reference:
     - title: Data
       desc: >-
         `OrdersSchema`, `storefront_orders` and `marketplace_orders` are the example data that
-        most examples on this site use. The package ships them, so an example copied from an
+        most examples on this site use, and `ParquetIOManager` is the IO manager they write through. The package ships them, so an example copied from an
         editor hover runs as written.
       contents:
         - data.OrdersSchema
         - data.storefront_orders
         - data.marketplace_orders
+        - data.ParquetIOManager
 
     - title: Testing
       desc: >-

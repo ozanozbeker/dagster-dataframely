@@ -45,7 +45,7 @@ Merge it last, as `dd.asset` does, so its entry takes precedence over any `dagst
 `get_table_schema(schema)` returns the `dg.TableSchema` in that entry.
 Put it under `dagster/column_schema` in a metadata dict you build yourself.
 
-An IO manager can write its own column schema to the materialization: `PolarsParquetIOManager` writes one from the frame, with no constraints.
+An IO manager can write its own column schema to the materialization: `dd.data.ParquetIOManager` writes one from the frame, with no constraints.
 After a run under such an IO manager, the Columns tab takes the dtypes, nullability and constraints from that schema, and only the descriptions and tags from the definition.
 Dagster merges an IO manager's metadata over a returned `dg.MaterializeResult`'s, and merges `add_asset_metadata` over both.
 So in a run, `dd.asset` also calls `context.add_asset_metadata(get_column_schema_metadata(schema))`, and a hand-wired asset needs the same call to keep the full schema after a run.

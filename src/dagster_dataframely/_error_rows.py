@@ -217,7 +217,7 @@ def build_io_manager_writer(
 ) -> ErrorRowsWriter:
     """Return a writer that passes the error rows to the asset's own IO manager, or to the one `error_rows_io_manager_key` names.
 
-    The manager stores the rows under the error-rows key, as it stores any other asset: `PolarsParquetIOManager` writes a parquet file beside the table, and `DuckDBPolarsIOManager` writes a table beside it.
+    The manager stores the rows under the error-rows key, as it stores any other asset: `dd.data.ParquetIOManager` writes a Parquet file beside the table, and `DuckDBPolarsIOManager` writes a table beside it.
     After each write, the writer logs a materialization for the error-rows key, so the spec from `build_error_rows_spec` has a history.
     It logs one for the empty write of a clean run too, so the history matches the stored rows.
     It logs none when the run's code location has no spec for the key, so the catalog does not list a key that nobody declared.

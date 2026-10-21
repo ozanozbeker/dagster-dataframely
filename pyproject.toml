@@ -49,9 +49,8 @@ Repository = "https://github.com/ozanozbeker/dagster-dataframely"
 
 [dependency-groups]
 dev = [
-  # One subclass each of `UPathIOManager` and `DbIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
+  # A `DbIOManager` subclass beside `dd.data.ParquetIOManager`'s `UPathIOManager`, so the delegation tests cover nearly every first-party IO manager (ADR-0006).
   "dagster-duckdb-polars>=0.29.24",
-  "dagster-polars>=0.27.12",
   # An older bound, because `dagster-duckdb` already requires it. The tests import it directly.
   "duckdb>=1.1",
   "prek>=0.5.3",

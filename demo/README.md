@@ -76,7 +76,7 @@ The lineage view draws them with a dashed outline, because they are external ass
 | --- | --- |
 | `defs/silver/customers.py` | The module defines `CustomersSchema` and its asset, and the README and the Get started page copy it. |
 | `defs/bronze/`, `defs/silver/`, `defs/gold/` | The pipeline has one folder per layer. Each `defs.yaml` sets the group, so no asset repeats it. |
-| `defs/resources.py` | It binds the IO manager that writes every table, and the Get started page copies it. |
+| `defs/resources.py` | It binds `dd.data.ParquetIOManager`, which writes every table, and the Get started page copies it. |
 | `_data.py` | It defines the sample rows only the demo uses, and the helpers that select a day's or a region's orders. |
 
 A comment that starts with `# demo:` explains the demo, not the pipeline.

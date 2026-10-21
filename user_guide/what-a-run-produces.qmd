@@ -50,7 +50,7 @@ The two counts are integers, and the error-rows address is a string.
 The Columns tab shows the schema from the asset definition before the first run.
 After a run, it shows the `dagster/column_schema` on the latest materialization, with the descriptions and tags from the definition.
 That entry replaces any column schema your IO manager writes.
-For example, `PolarsParquetIOManager` writes one from the frame, with no constraints.
+For example, `dd.data.ParquetIOManager` writes one from the frame, with no constraints.
 So after you edit the schema, the tab shows the new descriptions and tags at once, and the new dtypes, nullability and constraints after the next run.
 
 ## The statistics tables

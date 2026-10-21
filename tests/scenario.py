@@ -11,17 +11,17 @@ import dataframely as dy
 import duckdb
 import polars as pl
 from dagster_duckdb_polars import DuckDBPolarsIOManager
-from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
+from dagster_dataframely.data import ParquetIOManager
 
 WAREHOUSE_SCHEMA = "analytics"
 """The database schema `warehouse` writes to."""
 
 
-def storage(tmp_path: Path) -> dict[str, PolarsParquetIOManager]:
+def storage(tmp_path: Path) -> dict[str, ParquetIOManager]:
     """Build the resources for a run that only needs somewhere to write."""
-    return {"io_manager": PolarsParquetIOManager(base_dir=str(tmp_path))}
+    return {"io_manager": ParquetIOManager(base_dir=str(tmp_path))}
 
 
 def warehouse(tmp_path: Path) -> dict[str, DuckDBPolarsIOManager]:

@@ -38,10 +38,20 @@ _WIRING = {
 
 _TESTING = {"DirectInvocationResult"}
 
-_DATA = {"OrdersSchema", "marketplace_orders", "storefront_orders"}
+_DATA = {"OrdersSchema", "ParquetIOManager", "marketplace_orders", "storefront_orders"}
 
-# `dd.data` imports these to build its schema and frames; the set lists them so a new import fails a test.
-_DATA_IMPORTS = {"dt", "dy", "pl", "Decimal"}
+# `dd.data` imports these to build its schema, frames and IO manager; the set lists them so a new import fails a test.
+_DATA_IMPORTS = {
+    "ClassVar",
+    "Decimal",
+    "UPath",
+    "dg",
+    "dt",
+    "dy",
+    "get_args",
+    "override",
+    "pl",
+}
 
 # `dd.testing` imports these; the set lists them so a new import fails a test.
 _TESTING_IMPORTS = {"Iterable", "Self", "dataclass", "dg", "pl"}
@@ -85,7 +95,7 @@ def test_the_wiring_module_exports_exactly_the_assembled_parts():
     assert set(dd.wiring.__all__) == _WIRING
 
 
-def test_the_data_module_exports_exactly_the_example_data():
+def test_the_data_module_exports_exactly_the_example_data_and_io_manager():
     assert set(dd.data.__all__) == _DATA
 
 

@@ -1,4 +1,4 @@
-"""The module ships the example schema and frames that the guide, the reference pages and the demo share.
+"""The module ships the example schema, frames and IO manager that the guide, the reference pages, the demo and the tests share.
 
 A docstring example imports from here, so it runs for any user who has the package installed, as dplyr's examples use `starwars`.
 The rows are hard-coded, not generated, so every run and screenshot shows the same values.
@@ -6,11 +6,19 @@ The rows are hard-coded, not generated, so every run and screenshot shows the sa
 
 import datetime as dt
 from decimal import Decimal
+from typing import ClassVar, get_args, override
 
+import dagster as dg
 import dataframely as dy
 import polars as pl
+from upath import UPath
 
-__all__ = ["OrdersSchema", "marketplace_orders", "storefront_orders"]
+__all__ = [
+    "OrdersSchema",
+    "ParquetIOManager",
+    "marketplace_orders",
+    "storefront_orders",
+]
 
 # The fulfilment tool rejects an operator note of this many characters or more.
 _NOTE_MAX_CHARS = 100
@@ -182,3 +190,85 @@ marketplace_orders: pl.DataFrame = pl.DataFrame(
 )
 """The storefront's lines plus eight marketplace lines, each of which fails at least one rule of `OrdersSchema`."""
 # fmt: on
+
+
+# Built like `dagster-polars`' `PolarsParquetIOManager`, so the tests run a configurable `UPathIOManager` (ADR-0006).
+class ParquetIOManager(dg.ConfigurableIOManager, dg.UPathIOManager):
+    """An IO manager that writes each output to a Parquet file under `base_dir`.
+
+    It loads an input as a `pl.LazyFrame` when the input's annotation names one, and as a `pl.DataFrame` otherwise.
+    It writes the frame's column schema to the materialization, so a plain `@dg.asset` has columns in the catalog.
+    The examples use it, so they need no IO manager library.
+    In your own project, use a library IO manager such as `dagster-polars`' `PolarsParquetIOManager`.
+
+    Attributes
+    ----------
+    base_dir
+        The directory the files are written in.
+
+    Examples
+    --------
+    ```python
+    import tempfile
+
+    import dagster as dg
+    import polars as pl
+
+    import dagster_dataframely as dd
+    from dagster_dataframely.data import (
+        OrdersSchema,
+        ParquetIOManager,
+        storefront_orders,
+    )
+
+
+    @dd.asset(OrdersSchema)
+    def orders() -> pl.DataFrame:
+        return storefront_orders
+
+
+    with tempfile.TemporaryDirectory() as base_dir:
+        result = dg.materialize(
+            [orders], resources={"io_manager": ParquetIOManager(base_dir=base_dir)}
+        )
+    result.success
+    ```
+    """
+
+    base_dir: str
+    # A `ClassVar`, or pydantic raises on a field without an annotation.
+    extension: ClassVar[str] = ".parquet"  # pyrefly: ignore[bad-override]
+
+    @override
+    def setup_for_execution(self, context: dg.InitResourceContext) -> None:
+        self._base_path = UPath(self.base_dir)
+
+    @override
+    def dump_to_path(
+        self, context: dg.OutputContext, obj: pl.DataFrame | pl.LazyFrame, path: UPath
+    ) -> None:
+        obj.lazy().sink_parquet(str(path))
+
+    @override
+    def load_from_path(
+        self, context: dg.InputContext, path: UPath
+    ) -> pl.DataFrame | pl.LazyFrame:
+        frame = pl.scan_parquet(str(path))
+        # `get_args` reads the frame type out of a partitioned input's `dict[str, pl.LazyFrame]`.
+        annotation = context.dagster_type.typing_type
+        lazy = pl.LazyFrame in (annotation, *get_args(annotation))
+        return frame if lazy else frame.collect()
+
+    @override
+    def get_metadata(
+        self, context: dg.OutputContext, obj: pl.DataFrame | pl.LazyFrame
+    ) -> dict[str, dg.MetadataValue]:
+        columns = [
+            dg.TableColumn(name, str(dtype))
+            for name, dtype in obj.collect_schema().items()
+        ]
+        return {
+            "dagster/column_schema": dg.MetadataValue.table_schema(
+                dg.TableSchema(columns=columns)
+            )
+        }

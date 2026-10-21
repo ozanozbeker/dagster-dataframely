@@ -67,7 +67,7 @@ def priority_orders(orders: pl.DataFrame) -> pl.DataFrame:
 It is the same function you would write without partitioning.
 
 **Under a `UPathIOManager`, an unpartitioned asset downstream of a partitioned one receives one frame per partition.**
-`PolarsParquetIOManager` loads every partition and passes a dict keyed by partition key:
+`dd.data.ParquetIOManager` loads every partition and passes a dict keyed by partition key:
 
 ```{python}
 #| label: partitioning-3
@@ -189,9 +189,8 @@ Every one of those events has the range's row count under `dagster/partition_row
 
 The IO manager must write a range in one output.
 `DuckDBPolarsIOManager` does, through the asset's `partition_expr` metadata.
-`PolarsParquetIOManager` raises on an output for more than one partition, so a single-run backfill fails under it whatever `filter` is set to.
-`PolarsParquetIOManager` subclasses `UPathIOManager`, which raises the error.
-The package has tested a single-run backfill only under `PolarsParquetIOManager` and `DuckDBPolarsIOManager`.
+A `UPathIOManager`, such as `dd.data.ParquetIOManager`, raises on an output for more than one partition, so a single-run backfill fails under it whatever `filter` is set to.
+The package has tested a single-run backfill only under `ParquetIOManager` and `DuckDBPolarsIOManager`.
 
 ## A partition with no data
 

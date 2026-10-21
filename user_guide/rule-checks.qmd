@@ -14,9 +14,9 @@ import dataframely as dy
 import duckdb
 import polars as pl
 from dagster_duckdb_polars import DuckDBPolarsIOManager
-from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
+from dagster_dataframely.data import ParquetIOManager
 from dagster_dataframely.errors import ColumnSchemaError
 ```
 
@@ -213,7 +213,7 @@ with tempfile.TemporaryDirectory() as tmp:
     job = dg.Definitions(
         assets=[daily_events],
         asset_checks=[daily_checks],
-        resources={"io_manager": PolarsParquetIOManager(base_dir=tmp)},
+        resources={"io_manager": ParquetIOManager(base_dir=tmp)},
     ).resolve_implicit_global_asset_job_def()
     for day in days.get_partition_keys():
         job.get_subset(

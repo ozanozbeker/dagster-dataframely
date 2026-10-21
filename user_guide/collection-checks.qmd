@@ -13,10 +13,9 @@ from typing import Annotated
 import dagster as dg
 import dataframely as dy
 import polars as pl
-from dagster_polars import PolarsParquetIOManager
 
 import dagster_dataframely as dd
-from dagster_dataframely.data import OrdersSchema, storefront_orders
+from dagster_dataframely.data import OrdersSchema, ParquetIOManager, storefront_orders
 ```
 
 A Dataframely `Collection` groups several tables.
@@ -161,7 +160,7 @@ def order_count(orders: pl.DataFrame) -> int:
 with tempfile.TemporaryDirectory() as storage:
     result = dg.materialize(
         [customers, orders, order_count, shop_checks],
-        resources={"io_manager": PolarsParquetIOManager(base_dir=storage)},
+        resources={"io_manager": ParquetIOManager(base_dir=storage)},
         raise_on_error=False,
     )
     orders_table = pl.read_parquet(f"{storage}/orders.parquet")
@@ -234,7 +233,7 @@ A run that selects `customers` alone evaluates no check on `orders`, because Dag
 def list_evaluated_checks(selection: str, storage: str) -> list[str]:
     run = dg.materialize(
         [customers, orders, shop_checks],
-        resources={"io_manager": PolarsParquetIOManager(base_dir=storage)},
+        resources={"io_manager": ParquetIOManager(base_dir=storage)},
         selection=selection,
         raise_on_error=False,
     )
@@ -292,7 +291,7 @@ A `"warn"` check is not blocking and fails at `WARN`, as dagster-dbt sets a dbt 
 ## How the checks read the members
 
 **Each input has the type the Collection declares.**
-A `dy.LazyFrame[...]` member is a `pl.LazyFrame` input, which `PolarsParquetIOManager` loads as a scan.
+A `dy.LazyFrame[...]` member is a `pl.LazyFrame` input, which `ParquetIOManager` loads as a scan.
 A `dy.DataFrame[...]` member is a `pl.DataFrame` input.
 A pickling IO manager such as `dg.FilesystemIOManager` loads the `pl.DataFrame` the asset wrote.
 Dagster then fails the step with `DagsterTypeCheckDidNotPass` for a lazy member, so declare eager members when you use one:
