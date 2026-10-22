@@ -57,8 +57,8 @@ _DATA_IMPORTS = {
 # `dd.testing` imports these; the set lists them so a new import fails a test.
 _TESTING_IMPORTS = {"Iterable", "Self", "dataclass", "dg", "pl"}
 
-# `dd.errors` imports these for its annotations; the set lists them so a third import fails a test.
-_ERROR_IMPORTS = {"Mapping", "Sequence"}
+# `dd.errors` imports these for its annotations and its base class; the set lists them so another import fails a test.
+_ERROR_IMPORTS = {"Mapping", "Sequence", "dg"}
 
 _ERRORS = {
     "CheckNameCollisionError",

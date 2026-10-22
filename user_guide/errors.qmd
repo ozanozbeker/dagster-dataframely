@@ -16,6 +16,7 @@ from dagster_dataframely.data import OrdersSchema, storefront_orders
 
 Every error this package defines is in `dd.errors` and subclasses `dd.errors.DagsterDataframelyError`.
 Catch one by name, or catch `DagsterDataframelyError` to catch every one.
+Each one is a `dg.Failure` with `allow_retries=False`, so a retry policy does not rerun a step that fails the same way every time.
 Every message names what failed and what to do.
 
 | error | raised | what to do |

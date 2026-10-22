@@ -6,6 +6,8 @@ Each message names what failed and how to fix it, with no colon in its first sen
 
 from collections.abc import Mapping, Sequence
 
+import dagster as dg
+
 __all__ = [
     "CheckNameCollisionError",
     "CollectionNotSupportedError",
@@ -36,8 +38,15 @@ def _pluralize(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-class DagsterDataframelyError(Exception):
-    """Base class for every error this package defines."""
+class DagsterDataframelyError(dg.Failure):
+    """Base class for every error this package defines.
+
+    It is a `dg.Failure` with `allow_retries=False`, because each error fails the same way on every attempt, so a retry policy would only rerun the step.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Pass the message to `dg.Failure` as its description."""
+        super().__init__(message, allow_retries=False)
 
 
 class InvalidSettingError(DagsterDataframelyError):

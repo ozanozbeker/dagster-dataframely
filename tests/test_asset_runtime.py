@@ -336,6 +336,20 @@ class TestErrorRowsWithoutFilter:
         )
         assert not list(tmp_path.rglob("*.parquet"))
 
+    def test_a_retry_policy_does_not_rerun_the_abort(self, tmp_path: Path):
+        calls: list[None] = []
+
+        @dd.asset(
+            OrdersSchema, name="orders", retry_policy=dg.RetryPolicy(max_retries=2)
+        )
+        def retried() -> pl.DataFrame:
+            calls.append(None)
+            return mixed_orders()
+
+        materialize(tmp_path, retried, raise_on_error=False)
+
+        assert len(calls) == 1
+
     def test_every_failing_rule_check_is_an_error(self, tmp_path: Path):
         evaluations = check_evaluations(
             materialize(tmp_path, _mixed, raise_on_error=False)
