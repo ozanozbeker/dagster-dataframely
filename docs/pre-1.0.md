@@ -454,7 +454,7 @@ The remaining reason stands on its own: it requires `_lf` and `_rule_columns`, t
 
 This was traced while disk staging was live, to show that a file opened inside the asset body is still open when the manager writes.
 Disk staging is gone, and the fact it established now carries a different weight: `delegating_writer` calls `manager.handle_output` from inside the asset body, before the step's own output is handled.
-`tests/test_upstream_characterization.py` pins the three private APIs this needs, in `test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use`, `test_keys_by_output_name_still_omits_the_check_outputs` and `test_an_output_context_still_clones_and_re_points_by_attribute`.
+`tests/test_upstream_characterization.py` pins the two private APIs this needs, in `test_a_step_still_hands_over_the_output_context_and_manager_it_was_going_to_use` and `test_an_output_context_still_clones_and_re_points_by_attribute`.
 
 #### Schema.filter projects to the schema's columns, in the schema's order
 

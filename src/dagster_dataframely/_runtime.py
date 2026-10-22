@@ -88,17 +88,9 @@ def _unpack_return(
 def _add_address(
     checks: list[dg.AssetCheckResult], address: str
 ) -> list[dg.AssetCheckResult]:
-    """Copy the error-rows address onto every check result.
-
-    `_replace` skips the constructor's normalization, so `_add_address` wraps the address itself.
-    """
+    """Copy the error-rows address onto every check result."""
     return [
-        check._replace(
-            metadata={
-                **(check.metadata or {}),
-                _ADDRESS_KEY: dg.MetadataValue.text(address),
-            }
-        )
+        check.with_metadata({**check.metadata, _ADDRESS_KEY: address})
         for check in checks
     ]
 

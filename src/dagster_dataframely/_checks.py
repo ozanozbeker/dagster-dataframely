@@ -231,10 +231,7 @@ _INVALID = "invalid"
 
 
 def _read_failure_examples(
-    schema: type[dy.Schema],
-    failure: dy.FailureInfo,
-    counts: dict[str, int],
-    limit: int,
+    failure: dy.FailureInfo, counts: dict[str, int], limit: int
 ) -> dict[str, list[Row]]:
     """Return up to `limit` rows that failed each rule in `counts`, under the same key."""
     if not limit or not counts:
@@ -242,11 +239,9 @@ def _read_failure_examples(
     # `details()` rebuilds the frame on every call.
     details: pl.DataFrame = failure.details()
     # The examples omit the rule columns, because the check already shows the rule.
-    columns: list[str] = schema.column_names()
+    invalid: pl.DataFrame = failure.invalid()
     return {
-        rule: sample_rows(
-            details.filter(pl.col(rule) == _INVALID).select(columns), limit
-        )
+        rule: sample_rows(invalid.filter(details[rule] == _INVALID), limit)
         for rule in counts
     }
 
@@ -323,7 +318,7 @@ def evaluate_rule_checks(
     """
     counts: dict[str, int] = failure.counts()
     sampled: dict[str, list[Row]] = _read_failure_examples(
-        schema, failure, counts, MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
+        failure, counts, MAX_FAILURE_EXAMPLES.resolve(max_failure_examples)
     )
     results: list[dg.AssetCheckResult] = []
     for rule_set in _build_rule_sets(schema, check_granularity):

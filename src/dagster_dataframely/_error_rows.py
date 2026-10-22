@@ -382,9 +382,9 @@ def build_io_manager_writer(
     ```
     """
     step = context.get_step_execution_context()
-    # `keys_by_output_name` omits check outputs; a characterization test pins it.
-    (output_name,) = context.assets_def.keys_by_output_name
-    handle = StepOutputHandle(step.step.key, output_name)
+    handle = StepOutputHandle(
+        step.step.key, context.output_for_asset_key(context.asset_key)
+    )
     original: dg.OutputContext = step.get_output_context(handle)
     if error_rows_io_manager_key is None:
         manager = step.get_io_manager(handle)
@@ -627,7 +627,7 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
     io_manager_key: str | None = None
     if isinstance(asset, dg.AssetsDefinition):
         if partitions_def is not None:
-            both = f"`dd.build_error_rows_spec` received both the definition '{'/'.join(asset.key.path)}' and a `partitions_def`. The spec uses the definition's partitions, so remove the `partitions_def` argument. Pass a `partitions_def` only with an asset key."
+            both = f"`dd.build_error_rows_spec` received both the definition '{asset.key.to_user_string()}' and a `partitions_def`. The spec uses the definition's partitions, so remove the `partitions_def` argument. Pass a `partitions_def` only with an asset key."
             raise dg.DagsterInvariantViolationError(both)
         parent, partitions_def = asset.key, asset.partitions_def
         definition_spec = asset.get_asset_spec()
@@ -659,11 +659,10 @@ def build_error_rows_spec(  # noqa: PLR0913 - takes the spec's attributes
         parent = asset if isinstance(asset, dg.AssetKey) else dg.AssetKey(asset)
         key = get_error_rows_key(parent)
 
-    rendered: str = "/".join(parent.path)
     spec = dg.AssetSpec(
         key=key,
         deps=[parent],
-        description=f"Rows from {rendered} that failed an 'error' rule, with one column per rule.",
+        description=f"Rows from {parent.to_user_string()} that failed an 'error' rule, with one column per rule.",
         metadata={
             **definition_metadata,
             COLUMN_SCHEMA_KEY: _build_error_rows_table_schema(schema),

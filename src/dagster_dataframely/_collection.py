@@ -233,15 +233,13 @@ def build_collection_checks(
                 "dataframely/filter": check.filter_name
             }
             if failed:
-                # `details()` adds the rule columns, so select only the member's own columns.
-                columns: list[str] = lazy_frames[check.member].collect_schema().names()
-                details: pl.DataFrame = failure[check.member].details()
+                info: dy.FailureInfo = failure[check.member]
                 metadata["dataframely/failed_row_count"] = failed
                 metadata |= build_sample_metadata(
                     "dataframely/failed_examples",
                     sample_rows(
-                        details.filter(pl.col(check.filter_name) == "invalid").select(
-                            columns
+                        info.invalid().filter(
+                            info.details()[check.filter_name] == "invalid"
                         ),
                         limit,
                     ),

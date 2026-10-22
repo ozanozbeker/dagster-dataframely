@@ -10,6 +10,7 @@ from typing import Any
 
 import dagster as dg
 import polars as pl
+import polars.selectors as cs
 
 from dagster_dataframely._samples import Cell, render_cell
 
@@ -19,8 +20,6 @@ _PLACES = 4
 
 _DURATION_STYLE = "polars"
 """The default of `dt.to_string()` is ISO-8601, and a cast to `String` raises, as a characterization test pins (#23)."""
-
-_STRING_GROUP = (pl.String, pl.Categorical, pl.Enum, pl.Binary)
 
 
 def _render_cell(value: object) -> Cell:
@@ -113,25 +112,15 @@ def _aggregate_boolean(name: str, _dtype: pl.DataType) -> pl.Expr:
     ).alias(name)
 
 
-_AGGREGATES: dict[str, Callable[[str, pl.DataType], pl.Expr]] = {
-    "numeric": _aggregate_numeric,
-    "temporal": _aggregate_temporal,
-    "string": _aggregate_string,
-    "boolean": _aggregate_boolean,
+_GROUPS: dict[str, tuple[cs.Selector, Callable[[str, pl.DataType], pl.Expr]]] = {
+    "numeric": (cs.numeric(), _aggregate_numeric),
+    "temporal": (cs.temporal(), _aggregate_temporal),
+    "string": (
+        cs.string(include_categorical=True) | cs.enum() | cs.binary(),
+        _aggregate_string,
+    ),
+    "boolean": (cs.boolean(), _aggregate_boolean),
 }
-
-
-def _get_dtype_group(dtype: pl.DataType) -> str | None:
-    """Name the dtype group a dtype belongs to, or `None` when it belongs to none."""
-    if dtype.is_numeric():
-        return "numeric"
-    if dtype.is_temporal():
-        return "temporal"
-    if dtype in _STRING_GROUP:
-        return "string"
-    if dtype == pl.Boolean:
-        return "boolean"
-    return None
 
 
 def _build_group_table(
@@ -152,14 +141,11 @@ def build_statistics_metadata(
     """Summarize a frame as one table per dtype group present in it."""
     if not enabled:
         return {}
-    groups: dict[str, dict[str, pl.DataType]] = {}
-    for name, dtype in frame.collect_schema().items():
-        group: str | None = _get_dtype_group(dtype)
-        if group is not None:
-            groups.setdefault(group, {})[name] = dtype
-    return {
-        f"dataframely/table_statistics/{group}": _build_group_table(
-            frame, columns, _AGGREGATES[group]
-        )
-        for group, columns in groups.items()
-    }
+    tables: dict[str, dg.TableMetadataValue] = {}
+    for group, (selector, aggregate) in _GROUPS.items():
+        columns: pl.Schema = frame.select(selector).schema
+        if columns:
+            tables[f"dataframely/table_statistics/{group}"] = _build_group_table(
+                frame, columns, aggregate
+            )
+    return tables

@@ -99,24 +99,6 @@ class OrdersSchema(dy.Schema):  # numpydoc ignore=EX01
         )
 
 
-# Without these dtypes, Polars infers `Int64`, `String` and `Decimal(38, 2)`, which differ from the schema's.
-_SOURCE_SCHEMA: dict[str, pl.DataType] = {
-    "order_id": pl.String(),
-    "line_no": pl.Int32(),
-    "email": pl.String(),
-    "amount": pl.Decimal(10, 2),
-    "quantity": pl.Int32(),
-    "priority": pl.Int32(),
-    "status": pl.Enum(["new", "paid", "shipped", "cancelled"]),
-    "tracking_id": pl.String(),
-    "is_gift": pl.Boolean(),
-    "ordered_at": pl.Datetime("us"),
-    "fulfilled_in": pl.Duration("us"),
-    "tags": pl.List(pl.String()),
-    "note": pl.String(),
-}
-
-
 def _line(  # noqa: PLR0913 - one parameter per column
     order_id: str,
     line_no: int,
@@ -170,7 +152,7 @@ storefront_orders: pl.DataFrame = pl.DataFrame(
         _line("ORD-0009", 1, "ivy@example.com", "6.75", status="paid", ordered_at=_at(5, 9, 55), fulfilled_in=dt.timedelta(hours=2)),
         _line("ORD-0010", 1, "jo@example.com", "512.40", quantity=6, priority=1, status="shipped", ordered_at=_at(5, 15, 30), fulfilled_in=dt.timedelta(hours=30), tags=["bulk", "priority"], note="Split across two pallets."),
     ],
-    schema=_SOURCE_SCHEMA,
+    schema=OrdersSchema.create_empty().schema,
 )
 """The storefront's twelve order lines for the first week of August 2026, every one of which passes `OrdersSchema`."""
 
@@ -186,7 +168,7 @@ marketplace_orders: pl.DataFrame = pl.DataFrame(
         _line("ORD-0016", 1, "pat@example.com", "14.00", ordered_at=_at(6, 14, 0)),  # this order has lines 1 and 3 and no line 2
         _line("ORD-0016", 3, "pat@example.com", "16.00", ordered_at=_at(6, 14, 0)),
     ],
-    schema=_SOURCE_SCHEMA,
+    schema=OrdersSchema.create_empty().schema,
 )
 """The storefront's lines plus eight marketplace lines, each of which fails at least one rule of `OrdersSchema`."""
 # fmt: on

@@ -1062,7 +1062,6 @@ class TestOutcomeSelection:
         checks = _checks(yielded)
 
         assert checks
-        # `_add_address` wraps the address, because `_replace` skips normalization.
         assert all(
             (c.metadata or {})["dataframely/error_rows_address"]
             == dg.MetadataValue.text(_ADDRESS)

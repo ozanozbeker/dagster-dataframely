@@ -588,41 +588,6 @@ class TestDagster:
         """`dg.MaterializeResult().value` defaults to a sentinel, not `None`, so one `isinstance` check in `_runtime._unpack_return` covers a missing and a non-frame `value`."""
         assert dg.MaterializeResult().value is not None
 
-    def test_replace_still_skips_the_constructors_normalization_and_keeps_every_other_field(
-        self,
-    ):
-        """`_replace` skips the constructor's normalization and keeps every field the caller does not pass, and `_runtime._add_address` calls it."""
-        check = dg.AssetCheckResult(
-            check_name="dy_schema__columns",
-            asset_key=dg.AssetKey(["orders"]),
-            passed=False,
-            severity=dg.AssetCheckSeverity.ERROR,
-            metadata={"rows": 3},
-        )
-        result = dg.MaterializeResult(
-            asset_key=dg.AssetKey(["orders"]),
-            metadata={"rows": 3},
-            tags={"team": "sales"},
-        )
-
-        assert isinstance(check, tuple)
-        assert isinstance(result, tuple)
-        assert check.metadata == {"rows": dg.MetadataValue.int(3)}
-
-        # A raw string on purpose: the assertion below shows `_replace` does not wrap it.
-        readdressed = check._replace(
-            metadata={"dataframely/error_rows_address": "here"}  # pyrefly: ignore[bad-assignment]
-        )
-        rebuilt = result._replace(metadata={"dagster/row_count": 1})
-
-        assert readdressed.metadata == {"dataframely/error_rows_address": "here"}
-        assert readdressed.severity == dg.AssetCheckSeverity.ERROR
-        assert not readdressed.passed
-        assert readdressed.check_name == "dy_schema__columns"
-        assert rebuilt.tags == {"team": "sales"}
-        assert rebuilt.asset_key == result.asset_key
-        assert rebuilt.value is result.value
-
     def test_add_asset_metadata_takes_precedence_over_the_io_managers_column_schema(
         self, tmp_path: Path
     ):
@@ -793,12 +758,9 @@ class TestPrivateDagsterApis:
         )
         def orders(context: dg.AssetExecutionContext) -> pl.DataFrame:
             step = context.get_step_execution_context()
-            (output_name,) = [
-                name
-                for name, key in context.assets_def.keys_by_output_name.items()
-                if key == context.asset_key
-            ]
-            handle = StepOutputHandle(step.step.key, output_name)
+            handle = StepOutputHandle(
+                step.step.key, context.output_for_asset_key(context.asset_key)
+            )
             original = step.get_output_context(handle)
             copied["metadata"] = dict(original.definition_metadata or {})
             copied["resource_config"] = original.resource_config
@@ -864,20 +826,6 @@ class TestPrivateDagsterApis:
             return "called"
 
         assert orders(dg.build_asset_context()) == "called"
-
-    def test_keys_by_output_name_still_omits_the_check_outputs(self):
-        """`keys_by_output_name` omits check outputs, so `_error_rows.build_io_manager_writer` unpacks the asset's one output name from it."""
-        key = dg.AssetKey(["orders"])
-
-        @dg.asset(
-            name="orders", check_specs=[dg.AssetCheckSpec(name="probe", asset=key)]
-        )
-        def orders():
-            yield dg.MaterializeResult(asset_key=key)
-            yield dg.AssetCheckResult(check_name="probe", asset_key=key, passed=True)
-
-        assert orders.keys_by_output_name == {"result": key}
-        assert len(orders.op.output_defs) == 2
 
     def test_dagster_still_reads_the_context_parameter_off_the_first_name_alone(self):
         """`is_context_provided` reads only the first parameter's name, and `dd.asset` calls it to check whether the decorated function declares `context`."""
