@@ -1,7 +1,59 @@
 # Changelog
 
 Pre-1.0, so a `0.x` minor release is where a breaking change lands.
-Each release below carries the migration, not just the list.
+[Upgrading](https://ozanozbeker.com/dagster-dataframely/user-guide/upgrading.html) has the migration for each one.
+
+## 0.12.0 - 2026-10-21
+
+### Breaking in 0.12
+
+[Upgrading](https://ozanozbeker.com/dagster-dataframely/user-guide/upgrading.html#v0.12) has the migration for each change below.
+
+**Every asset built with `dd.asset` takes a `context` parameter.**
+A direct invocation passes a context first: `orders(frame)` becomes `orders(dg.build_asset_context(), frame)`.
+
+**`stream_results` takes the asset's `context` in place of `asset_key=` and `partitioned=`.**
+It reads the asset key and the run's partition from the context.
+Its second parameter is `returned`, not `frame`.
+
+**Every `dd.wiring` function that reads the error-rows key requires it as a positional `dg.AssetKey`.**
+`build_file_writer` takes the `context` in place of the asset key and `partition_key`, and raises `dg.DagsterInvariantViolationError` on a partition range.
+`get_error_rows_path` no longer takes the asset key.
+
+**A partitioned asset that runs without a partition key records its row count under `dagster/row_count`.**
+That covers `dg.materialize` without `partition_key` and a direct invocation.
+
+### Added in 0.12
+
+`dd.data` ships `OrdersSchema`, the `storefront_orders` and `marketplace_orders` frames, and `ParquetIOManager`, so every example in the reference runs for any user.
+The demo, the tests and the guide write through `ParquetIOManager`, so nothing in the repo needs dagster-polars.
+
+`stream_results` takes a `dg.MaterializeResult` whose `value` is the frame, and merges its metadata, data version and tags into the materialization.
+
+`dd.wiring.get_error_rows_key(asset_key)` returns the default error-rows key.
+
+The floors are `dagster>=1.13.6` and `dataframely>=3.0.0`, the oldest releases the suite passes on.
+The suite also passes on Polars 2.0.0.
+
+### Fixed in 0.12
+
+Every error this package defines is a `dg.Failure` with `allow_retries=False`, so a retry policy no longer reruns a step that fails the same way on every attempt.
+The error reaches the step failure unwrapped, not inside `DagsterExecutionStepExecutionError`.
+
+The error rows hold the declared columns only, so a `FailureInfo` from `cast=True` no longer adds its `<column>|dtype` columns.
+
+The `universal-pathlib` floor is 0.2.2, because 0.2.0 and 0.2.1 raise on an S3 error-rows path when `s3fs` is not installed.
+
+`InvalidSettingError` includes the type of the value.
+`MaterializeResultValueError` tells a hand-wired asset to call `dd.wiring.get_column_schema_metadata`.
+The other error messages use plainer words.
+
+### Documentation in 0.12
+
+The site follows pkgdown's layout: Get started is the tour, Guide and Details hold the articles, and Reference has a Data group.
+[Upgrading](https://ozanozbeker.com/dagster-dataframely/user-guide/upgrading.html) holds the migration for every breaking release.
+Every public object documents each parameter it owns, its return value, each error it raises, and one example that runs.
+The README is a short landing page, and the site uses the Nord palette.
 
 ## 0.11.0 - 2026-10-20
 
